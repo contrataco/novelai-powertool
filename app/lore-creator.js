@@ -2534,10 +2534,34 @@ async function scanForLore(storyText, settings, existingEntries, state, generate
     }
   }
 
+  // Pass 6: Lorebook optimization (if profile configured)
+  let optimized = 0;
+  if (settings._lorebookProfile && settings._confirmedFields && settings._confirmedFields.length > 0) {
+    if (onProgress) onProgress({ phase: 'optimizing' });
+    console.log(`${LOG_PREFIX} Pass 6: Optimizing lorebook entries with profile "${settings._lorebookProfile}"`);
+
+    try {
+      const lorebookOptimizer = require('./lorebook-optimizer');
+      const optResult = await lorebookOptimizer.optimizeLoreEntries(
+        existingEntries, settings._lorebookProfile, settings._entityProfiles || {},
+        hybrid.getProviders, settings._confirmedFields,
+        (p) => { if (onProgress) onProgress({ ...p, phase: 'optimizing' }); }
+      );
+      optimized = optResult.optimized;
+      updatedState._pendingOptimizations = optResult.details;
+
+      if (optimized > 0) {
+        console.log(`${LOG_PREFIX} Optimization computed for ${optimized} entries`);
+      }
+    } catch (e) {
+      console.error(`${LOG_PREFIX} Pass 6 optimization failed: ${e.message}`);
+    }
+  }
+
   // Reset scan tracking
   updatedState.charsSinceLastScan = 0;
 
-  const summary = { generated, mergesFound, updatesFound, relationshipUpdatesFound, reformatsFound, nameProposals };
+  const summary = { generated, mergesFound, updatesFound, relationshipUpdatesFound, reformatsFound, nameProposals, optimized };
   console.log(`${LOG_PREFIX} Scan complete:`, summary);
 
   return { state: updatedState, summary };
@@ -2559,17 +2583,19 @@ function categorizeError(err) {
   return 'other';
 }
 
-async function retryLLM(fn, { maxRetries = 1, passName = 'unknown', logPrefix = LOG_PREFIX } = {}) {
+async function retryLLM(fn, { maxRetries = 1, passName = 'unknown', logPrefix = LOG_PREFIX, onRetry } = {}) {
   let lastError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const result = await fn();
       if (result !== null && result !== undefined) return result;
       console.log(`${logPrefix} retryLLM(${passName}): null result on attempt ${attempt + 1}`);
+      if (onRetry && attempt < maxRetries) onRetry(attempt + 1, 'null-result', `null result on attempt ${attempt + 1}`);
     } catch (err) {
       lastError = err;
       const category = categorizeError(err);
       console.warn(`${logPrefix} retryLLM(${passName}): ${category} on attempt ${attempt + 1}: ${err.message}`);
+      if (onRetry) onRetry(attempt + 1, category, err.message, attempt >= maxRetries);
       if (category === 'rate-limit' && attempt < maxRetries) {
         const backoff = INTER_CALL_DELAY * 3 * (attempt + 1);
         console.log(`${logPrefix} retryLLM(${passName}): rate-limit backoff ${backoff}ms`);
@@ -2641,6 +2667,7 @@ module.exports = {
   // LLM retry
   retryLLM,
   categorizeError,
+  createHybridProviders,
 
   // Constants
   DEFAULT_SETTINGS,

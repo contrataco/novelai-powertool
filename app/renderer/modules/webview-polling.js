@@ -297,4 +297,45 @@ export function init() {
       // Ignore errors during polling
     }
   }, 10000);
+
+  // Continuous lorebook adjustment — lightweight, no LLM, max once per 30s
+  setInterval(async () => {
+    if (!state.currentStoryId || state.loreIsScanning) return;
+    if (!state.loreProxyReady) return;
+    const confirmedFields = state.loreOptConfirmedFields
+      || state.storySettings?.loreOptConfirmedFields;
+    if (!confirmedFields || confirmedFields.length === 0) return;
+
+    const now = Date.now();
+    if (now - state.loreOptLastAdjust < 30000) return;
+
+    // Check if enough new text since last adjustment
+    const storyLen = state.lastKnownStoryLength || 0;
+    const lastLen = state._loreOptLastLen || 0;
+    if (storyLen - lastLen < 500) return;
+
+    state.loreOptLastAdjust = now;
+    state._loreOptLastLen = storyLen;
+
+    try {
+      const { loreCall } = await import('./lore-creator.js');
+      const entries = await loreCall('getEntriesExpanded');
+      if (!entries || entries.length === 0) return;
+
+      const profileId = state.loreOptProfile || 'general';
+      const result = await window.sceneVisualizer.loreAdjustEntries(
+        entries, profileId, state.currentStoryId
+      );
+
+      if (result.success && result.adjustments && result.adjustments.length > 0) {
+        // Apply adjustments via proxy
+        const updates = result.adjustments.map(a => ({ id: a.entryId, fields: a.delta }));
+        await loreCall('batchUpdateAdvanced', updates);
+        console.log(`[LoreOpt] Continuous adjustment: ${updates.length} entries updated`);
+      }
+    } catch (e) {
+      // Silent fail for continuous adjustment
+      console.log('[LoreOpt] Continuous adjustment error:', e.message);
+    }
+  }, 15000);
 }

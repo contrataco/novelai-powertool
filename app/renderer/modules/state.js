@@ -29,6 +29,8 @@ export const state = {
   // Prompt state
   currentPrompt: '',
   currentNegativePrompt: '',
+  currentBaseCaption: '',
+  currentCharCaptions: [],
   currentStoryExcerpt: '',
   isGenerating: false,
   isGeneratingPrompt: false,
@@ -83,4 +85,9 @@ export const state = {
 
   // Per-story settings (TTS config, image settings, scene settings)
   storySettings: null,
+
+  // Lorebook optimizer state
+  loreOptProfile: 'general',
+  loreOptConfirmedFields: null,  // fields confirmed writable by discovery
+  loreOptLastAdjust: 0,          // timestamp of last continuous adjustment
 };

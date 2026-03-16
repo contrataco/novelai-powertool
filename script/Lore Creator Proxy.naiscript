@@ -4,14 +4,14 @@ id: f7c2a1d8-9e3b-4f5a-b6c1-d8e9f0a1b2c3
 name: Lore Creator Proxy
 createdAt: 1772092800000
 updatedAt: 1772092800000
-version: 3.8.4
+version: 3.9.0
 author: Contrataco
 description: Unified proxy for Scene Visualizer Electron (lore + memory)
 memoryLimit: 16
 ---*/
 
 // ============================================================================
-// UNIFIED PROXY v3.8.4
+// UNIFIED PROXY v3.9.0
 //
 // Combines Lore Creator + Memory Manager proxy into a single script so both
 // command channels share one sidebarPanel and are always in the DOM.
@@ -54,7 +54,7 @@ async function updateLorebookEntry(rawEntry: any, updates: Record<string, any>):
     }
   } catch (_) {}
 
-  // Strategy 3: Delete + recreate
+  // Strategy 3: Delete + recreate (preserve advanced fields)
   try {
     await (api.v1.lorebook as any).removeEntry(entryId);
     const recreated: any = {
@@ -65,6 +65,13 @@ async function updateLorebookEntry(rawEntry: any, updates: Record<string, any>):
     };
     const finalCategory = updates.category ?? rawEntry.category;
     if (finalCategory) recreated.category = finalCategory;
+    // Preserve advanced fields from original entry
+    const advancedKeys = ['searchRange', 'forceActivation', 'keyRelative', 'nonStoryActivatable',
+      'budgetPriority', 'contextConfig', 'loreBias', 'contextSize'];
+    for (const key of advancedKeys) {
+      const val = updates[key] ?? rawEntry[key];
+      if (val !== undefined) recreated[key] = val;
+    }
     await (api.v1.lorebook as any).createEntry(recreated);
     api.v1.log(`${LOG_PREFIX} Updated via delete+recreate: ${recreated.displayName}`);
     return true;
@@ -234,6 +241,200 @@ async function proxyCountTokens(text: string): Promise<number> {
 }
 
 // ============================================================================
+// ADVANCED FIELD OPERATIONS (Discovery + Batch Update)
+// ============================================================================
+
+async function proxyInspectEntry(): Promise<any> {
+  try {
+    const entries = await api.v1.lorebook.entries();
+    if (entries.length === 0) return { fields: [], protoFields: [], sample: null };
+    const sample = entries[0] as any;
+    const fields = Object.keys(sample);
+    const proto = Object.getPrototypeOf(sample);
+    const protoFields = proto ? Object.getOwnPropertyNames(proto).filter((k: string) => k !== 'constructor') : [];
+    // Serialize sample (strip non-serializable)
+    const serialized: Record<string, any> = {};
+    for (const key of fields) {
+      try {
+        const val = sample[key];
+        if (typeof val !== 'function') {
+          serialized[key] = JSON.parse(JSON.stringify(val));
+        } else {
+          serialized[key] = '[function]';
+        }
+      } catch (_) {
+        serialized[key] = '[non-serializable]';
+      }
+    }
+    return { fields, protoFields, sample: serialized };
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} inspectEntry error:`, e);
+    return { fields: [], protoFields: [], sample: null, error: String(e) };
+  }
+}
+
+async function proxyInspectCategory(): Promise<any> {
+  try {
+    if (typeof (api.v1.lorebook as any).categories !== 'function') {
+      return { fields: [], sample: null, error: 'categories() not available' };
+    }
+    const cats = await (api.v1.lorebook as any).categories();
+    if (!Array.isArray(cats) || cats.length === 0) return { fields: [], sample: null };
+    const sample = cats[0] as any;
+    const fields = Object.keys(sample);
+    const serialized: Record<string, any> = {};
+    for (const key of fields) {
+      try {
+        const val = sample[key];
+        if (typeof val !== 'function') {
+          serialized[key] = JSON.parse(JSON.stringify(val));
+        } else {
+          serialized[key] = '[function]';
+        }
+      } catch (_) {
+        serialized[key] = '[non-serializable]';
+      }
+    }
+    return { fields, sample: serialized };
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} inspectCategory error:`, e);
+    return { fields: [], sample: null, error: String(e) };
+  }
+}
+
+async function proxyTestAdvancedWrite(): Promise<any> {
+  const results: Record<string, { success: boolean; readBack?: any; error?: string }> = {};
+  let testEntryId: string | null = null;
+
+  try {
+    // Create a temp disabled entry
+    const testEntry = await (api.v1.lorebook as any).createEntry({
+      displayName: '__test_advanced__', text: 'test', keys: ['__test__'], enabled: false,
+    });
+    testEntryId = (testEntry && testEntry.id) ? testEntry.id : testEntry;
+    if (!testEntryId) return { error: 'Failed to create test entry' };
+
+    const fieldsToTest: Record<string, any> = {
+      searchRange: 2000,
+      forceActivation: true,
+      keyRelative: true,
+      nonStoryActivatable: true,
+      budgetPriority: 100,
+      contextConfig: { prefix: '[test prefix]', suffix: '[test suffix]', budgetPriority: 100, reservedTokens: 0 },
+      loreBias: [{ bias: 0.1, ensure_sequence_finish: false, generate_once: false, enabled: true, phrases: ['test'] }],
+    };
+
+    for (const [field, testValue] of Object.entries(fieldsToTest)) {
+      try {
+        // Try updateEntry first
+        let writeOk = false;
+        try {
+          await (api.v1.lorebook as any).updateEntry(testEntryId, { [field]: testValue });
+          writeOk = true;
+        } catch (_) {
+          // Try direct mutation
+          try {
+            const entries = await api.v1.lorebook.entries();
+            const raw = entries.find((e: any) => e.id === testEntryId) as any;
+            if (raw) {
+              raw[field] = testValue;
+              if (typeof raw.save === 'function') await raw.save();
+              writeOk = true;
+            }
+          } catch (_2) {}
+        }
+
+        if (!writeOk) {
+          results[field] = { success: false, error: 'write failed' };
+          continue;
+        }
+
+        // Read back
+        const entries = await api.v1.lorebook.entries();
+        const readBack = entries.find((e: any) => e.id === testEntryId) as any;
+        if (readBack && readBack[field] !== undefined) {
+          results[field] = { success: true, readBack: JSON.parse(JSON.stringify(readBack[field])) };
+        } else {
+          results[field] = { success: false, error: 'read-back missing' };
+        }
+      } catch (e) {
+        results[field] = { success: false, error: String(e) };
+      }
+    }
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} testAdvancedWrite error:`, e);
+    return { error: String(e) };
+  } finally {
+    // Clean up test entry
+    if (testEntryId) {
+      try { await (api.v1.lorebook as any).removeEntry(testEntryId); } catch (_) {}
+    }
+  }
+
+  return results;
+}
+
+async function proxyGetEntriesExpanded(): Promise<any[]> {
+  try {
+    const entries = await api.v1.lorebook.entries();
+    return entries.map((entry: any) => {
+      const base: Record<string, any> = {
+        id: entry.id,
+        displayName: entry.displayName || '',
+        keys: entry.keys || [],
+        text: entry.text || '',
+        category: entry.category || null,
+        enabled: entry.enabled !== false,
+      };
+      // Include all advanced fields if present
+      const advancedKeys = [
+        'searchRange', 'forceActivation', 'keyRelative', 'nonStoryActivatable',
+        'budgetPriority', 'contextConfig', 'loreBias', 'contextSize',
+      ];
+      for (const key of advancedKeys) {
+        if (entry[key] !== undefined) {
+          try { base[key] = JSON.parse(JSON.stringify(entry[key])); } catch (_) {}
+        }
+      }
+      return base;
+    });
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error reading expanded entries:`, e);
+    return [];
+  }
+}
+
+async function proxyBatchUpdateAdvanced(updates: Array<{ id: string; fields: Record<string, any> }>): Promise<{ success: number; failed: number; errors: string[] }> {
+  let success = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const update of updates) {
+    try {
+      const entries = await api.v1.lorebook.entries();
+      const rawEntry = entries.find((e: any) => e.id === update.id);
+      if (!rawEntry) {
+        errors.push(`Entry not found: ${update.id}`);
+        failed++;
+        continue;
+      }
+      const ok = await updateLorebookEntry(rawEntry as any, update.fields);
+      if (ok) {
+        success++;
+      } else {
+        errors.push(`Update failed for ${update.id}`);
+        failed++;
+      }
+    } catch (e) {
+      errors.push(`${update.id}: ${String(e)}`);
+      failed++;
+    }
+  }
+
+  return { success, failed, errors };
+}
+
+// ============================================================================
 // REQUEST HANDLERS
 // ============================================================================
 
@@ -246,6 +447,11 @@ async function handleLoreRequest(req: { id: string; method: string; args: any[] 
     case 'createCategory': return proxyCreateCategory(req.args[0]);
     case 'getCategories': return proxyGetCategories();
     case 'getStoryText': return proxyGetStoryText();
+    case 'getEntriesExpanded': return proxyGetEntriesExpanded();
+    case 'inspectEntry': return proxyInspectEntry();
+    case 'inspectCategory': return proxyInspectCategory();
+    case 'testAdvancedWrite': return proxyTestAdvancedWrite();
+    case 'batchUpdateAdvanced': return proxyBatchUpdateAdvanced(req.args[0]);
     case 'ping': return { ok: true, ts: Date.now() };
     default:
       return { __error: 'Unknown lore method: ' + req.method };
@@ -356,7 +562,7 @@ async function buildPanel(): Promise<any> {
   return api.v1.ui.part.column({
     content: [
       api.v1.ui.part.text({
-        text: 'Unified Proxy v3.8.4 — Electron Bridge',
+        text: 'Unified Proxy v3.9.0 — Electron Bridge',
       }),
       // Lore command channel
       api.v1.ui.part.textInput({
@@ -385,7 +591,7 @@ async function buildPanel(): Promise<any> {
 // ============================================================================
 
 (async () => {
-  api.v1.log(`${LOG_PREFIX} v3.8.4 initializing...`);
+  api.v1.log(`${LOG_PREFIX} v3.9.0 initializing...`);
 
   let hasPermissions = false;
   try {
@@ -448,12 +654,17 @@ async function buildPanel(): Promise<any> {
   (globalThis as any).__loreCreator = {
     isReady: () => true,
     getEntries: proxyGetEntries,
+    getEntriesExpanded: proxyGetEntriesExpanded,
     createEntry: proxyCreateEntry,
     updateEntry: proxyUpdateEntry,
     deleteEntry: proxyDeleteEntry,
     createCategory: proxyCreateCategory,
     getCategories: proxyGetCategories,
     getStoryText: proxyGetStoryText,
+    inspectEntry: proxyInspectEntry,
+    inspectCategory: proxyInspectCategory,
+    testAdvancedWrite: proxyTestAdvancedWrite,
+    batchUpdateAdvanced: proxyBatchUpdateAdvanced,
   };
 
   (globalThis as any).__memoryProxy = {

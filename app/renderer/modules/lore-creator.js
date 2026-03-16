@@ -27,6 +27,7 @@ import {
   loreCategoryToggles, loreAddCategoryBtn, loreDetectCategoriesBtn,
   loreAddCategoryForm, loreNewCategoryName, loreNewCategoryColor,
   loreAddCategoryConfirm, loreAddCategoryCancel, dynamicCategoriesStyle,
+  loreOptProfile, loreOptimizeAllBtn, loreDiscoverFieldsBtn, loreOptStatus,
 } from './dom-refs.js';
 import { escapeHtml, showToast } from './utils.js';
 import { parseMetadataClient } from './metadata.js';
@@ -751,6 +752,7 @@ function buildMetaBadges(text) {
     source: { bg: '#1e3a5f', fg: '#60a5fa' },
     role: { bg: '#3b1f5e', fg: '#c084fc' },
     protagonist: { bg: '#5f1e1e', fg: '#f87171' },
+    'opt-v': { bg: '#1e4d3a', fg: '#6ee7b7' },
   };
   const DEFAULT_COLOR = { bg: '#374151', fg: '#9ca3af' };
   const SKIP = new Set(['type', 'v', 'updated']);
@@ -758,8 +760,13 @@ function buildMetaBadges(text) {
   for (const [key, val] of Object.entries(meta.all)) {
     if (SKIP.has(key)) continue;
     const c = BADGE_COLORS[key] || DEFAULT_COLOR;
-    const label = key === 'protagonist' ? '@protagonist' : `@${key}: ${val}`;
-    badges.push(`<span style="background:${c.bg};color:${c.fg};font-size:9px;padding:1px 4px;border-radius:3px;margin-left:4px;">${escapeHtml(label)}</span>`);
+    let label;
+    if (key === 'protagonist') label = '@protagonist';
+    else if (key === 'opt-v') label = 'optimized';
+    else if (key === 'opt-at') continue; // skip date, shown via opt-v
+    else if (key === 'opt-speech') continue; // internal cache
+    else label = `@${key}: ${val}`;
+    badges.push(`<span style="background:${c.bg};color:${c.fg};font-size:9px;padding:1px 4px;border-radius:3px;margin-left:4px;" title="${key === 'opt-v' ? 'Lorebook optimizer applied' : ''}">${escapeHtml(label)}</span>`);
   }
   return badges.join('');
 }
@@ -1297,6 +1304,7 @@ async function runLoreScan(scanType = 'all') {
         if (result.summary.updatesFound > 0) parts.push(`${result.summary.updatesFound} updates`);
         if (result.summary.relationshipUpdatesFound > 0) parts.push(`${result.summary.relationshipUpdatesFound} relationship updates`);
         if (result.summary.nameProposals > 0) parts.push(`${result.summary.nameProposals} name updates`);
+        if (result.summary.optimized > 0) parts.push(`${result.summary.optimized} optimized`);
         showToast(`Found ${parts.join(' and ')}`);
       }
     } else {
@@ -2490,8 +2498,14 @@ export function init() {
       'updating-relationships': 'Updating relationships...',
       'enriching': 'Enriching character details...',
       'propagating-names': 'Propagating family names...',
+      'optimizing': 'Optimizing lorebook settings...',
     };
-    loreScanPhase.textContent = phaseLabels[progress.phase] || 'Scanning...';
+    // Show per-entry detail for optimization phase
+    if (progress.phase === 'optimizing' && progress.characterName) {
+      loreScanPhase.textContent = `Optimizing: ${progress.characterName} (${progress.current}/${progress.total})`;
+    } else {
+      loreScanPhase.textContent = phaseLabels[progress.phase] || 'Scanning...';
+    }
 
     // Update progress bar
     const phaseProgress = {
@@ -2504,6 +2518,7 @@ export function init() {
       'updating-relationships': 80,
       enriching: 90,
       'propagating-names': 95,
+      'optimizing': 97,
     };
     loreScanProgressFill.style.width = (phaseProgress[progress.phase] || 0) + '%';
 
@@ -2804,4 +2819,169 @@ export function init() {
   webview.addEventListener('dom-ready', () => {
     setTimeout(() => checkLoreProxy(), 3000);
   });
+
+  // =========================================================================
+  // Lorebook Optimizer — profile selection, discover, optimize all
+  // =========================================================================
+
+  // Restore profile from story settings if available
+  bus.on('story:changed', () => {
+    const profile = state.storySettings?.lorebookProfile || 'general';
+    state.loreOptProfile = profile;
+    if (loreOptProfile) loreOptProfile.value = profile;
+  });
+
+  // Profile change
+  if (loreOptProfile) {
+    loreOptProfile.addEventListener('change', async () => {
+      state.loreOptProfile = loreOptProfile.value;
+      // Persist to per-story settings
+      if (state.currentStoryId) {
+        const existing = state.storySettings || {};
+        existing.lorebookProfile = loreOptProfile.value;
+        await window.sceneVisualizer.storySettingsSet(state.currentStoryId, existing);
+        state.storySettings = existing;
+      }
+    });
+  }
+
+  // Discover fields button
+  if (loreDiscoverFieldsBtn) {
+    loreDiscoverFieldsBtn.addEventListener('click', async () => {
+      if (!state.loreProxyReady) {
+        showToast('Proxy not connected — open Script Manager first');
+        return;
+      }
+      loreDiscoverFieldsBtn.disabled = true;
+      loreDiscoverFieldsBtn.textContent = 'Discovering...';
+      try {
+        // Run discovery via proxy
+        const inspectResult = await loreCall('inspectEntry');
+        const writeTestResult = await loreCall('testAdvancedWrite');
+        const report = await window.sceneVisualizer.loreParseDiscovery(inspectResult, writeTestResult);
+
+        state.loreOptConfirmedFields = report.writableFields;
+
+        // Persist confirmed fields in story settings
+        if (state.currentStoryId) {
+          const existing = state.storySettings || {};
+          existing.loreOptConfirmedFields = report.writableFields;
+          await window.sceneVisualizer.storySettingsSet(state.currentStoryId, existing);
+          state.storySettings = existing;
+        }
+
+        // Show results
+        const msg = `Discovered ${report.readableFields.length} readable, ${report.writableFields.length} writable fields`;
+        if (loreOptStatus) {
+          loreOptStatus.style.display = '';
+          loreOptStatus.textContent = msg;
+          setTimeout(() => { loreOptStatus.style.display = 'none'; }, 5000);
+        }
+        showToast(msg);
+
+        console.log('[LoreOpt] Discovery report:', report);
+      } catch (e) {
+        showToast('Discovery failed: ' + (e.message || 'Unknown error'));
+      } finally {
+        loreDiscoverFieldsBtn.disabled = false;
+        loreDiscoverFieldsBtn.textContent = 'Discover';
+      }
+    });
+  }
+
+  // Optimize All button
+  if (loreOptimizeAllBtn) {
+    loreOptimizeAllBtn.addEventListener('click', async () => {
+      if (state.loreIsScanning || !state.currentStoryId) return;
+      if (!state.loreProxyReady) {
+        showToast('Proxy not connected — open Script Manager first');
+        return;
+      }
+
+      const confirmedFields = state.loreOptConfirmedFields
+        || state.storySettings?.loreOptConfirmedFields
+        || [];
+      if (confirmedFields.length === 0) {
+        showToast('Run "Discover" first to find writable fields');
+        return;
+      }
+
+      state.loreIsScanning = true;
+      loreOptimizeAllBtn.disabled = true;
+      loreScanStatus.style.display = '';
+      loreScanPhase.textContent = 'Optimizing lorebook...';
+      loreScanProgressFill.style.width = '0%';
+
+      try {
+        // Get expanded entries (with current advanced field values)
+        const entries = await loreCall('getEntriesExpanded');
+        if (!entries || entries.length === 0) {
+          showToast('No lorebook entries to optimize');
+          return;
+        }
+
+        const result = await window.sceneVisualizer.loreOptimizeEntries(
+          entries, state.loreOptProfile, state.currentStoryId, confirmedFields
+        );
+
+        if (result.success && result.details && result.details.length > 0) {
+          // Apply changes via proxy batch update
+          const updates = result.details
+            .filter(d => d.delta && Object.keys(d.delta).length > 0)
+            .map(d => ({ id: d.entryId, fields: d.delta }));
+
+          if (updates.length > 0) {
+            loreScanPhase.textContent = `Applying ${updates.length} optimizations...`;
+            loreScanProgressFill.style.width = '60%';
+
+            // Batch in chunks of 10
+            for (let i = 0; i < updates.length; i += 10) {
+              const chunk = updates.slice(i, i + 10);
+              const batchResult = await loreCall('batchUpdateAdvanced', chunk);
+              console.log(`[LoreOpt] Batch ${Math.floor(i / 10) + 1}: ${batchResult.success} ok, ${batchResult.failed} failed`);
+              loreScanProgressFill.style.width = `${60 + (i / updates.length) * 35}%`;
+            }
+          }
+
+          // Build summary
+          const summary = [];
+          const s = result;
+          if (s.optimized > 0) summary.push(`${s.optimized} optimized`);
+          if (s.skipped > 0) summary.push(`${s.skipped} unchanged`);
+          showToast(`Lorebook optimization: ${summary.join(', ')}`);
+
+          if (loreOptStatus) {
+            const details = result.details;
+            const forceCount = details.filter(d => d.delta?.forceActivation).length;
+            const budgetCount = details.filter(d => d.delta?.budgetPriority !== undefined || d.delta?.contextSize !== undefined).length;
+            const rangeCount = details.filter(d => d.delta?.searchRange !== undefined).length;
+            const prefixCount = details.filter(d => d.delta?.prefix).length;
+            const parts = [];
+            if (forceCount) parts.push(`${forceCount} force-activated`);
+            if (budgetCount) parts.push(`${budgetCount} budget-adjusted`);
+            if (rangeCount) parts.push(`${rangeCount} range-changed`);
+            if (prefixCount) parts.push(`${prefixCount} with prefixes`);
+            loreOptStatus.style.display = '';
+            loreOptStatus.textContent = `Optimized ${details.length} entries: ${parts.join(', ') || 'no changes'}`;
+          }
+        } else if (result.success) {
+          showToast('All entries already optimized');
+        } else {
+          showToast('Optimization failed: ' + (result.error || 'Unknown'));
+        }
+      } catch (e) {
+        showToast('Optimization failed: ' + (e.message || 'Unknown error'));
+      } finally {
+        loreScanProgressFill.style.width = '100%';
+        loreScanPhase.textContent = 'Optimization complete';
+        state.loreIsScanning = false;
+        loreOptimizeAllBtn.disabled = false;
+        setTimeout(() => {
+          loreScanStatus.style.display = 'none';
+          loreScanProgressFill.style.width = '0%';
+        }, 1500);
+      }
+    });
+  }
+
 }

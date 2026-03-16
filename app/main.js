@@ -21,6 +21,8 @@ const scenePromptPipeline = require('./scene-prompt-pipeline');
 const loreComprehension = require('./lore-comprehension');
 const memoryManager = require('./memory-manager');
 const litrpgTracker = require('./litrpg-tracker');
+const { extractTransientFields } = require('./litrpg-tracker');
+const lorebookOptimizer = require('./lorebook-optimizer');
 const portraitManager = require('./portrait-manager');
 const mediaGallery = require('./media-gallery');
 const db = require('./db');
@@ -404,7 +406,7 @@ ipcMain.handle('get-negative-prompt-suffix', () => {
   return { styleNegative: '', ucPresetNegative: '', combined: '' };
 });
 
-ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawPrompt, rawNegativePrompt, storyId }) => {
+ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawPrompt, rawNegativePrompt, storyId, baseCaption, charCaptions }) => {
   // Apply per-story settings temporarily for this generation
   const ss = storyId ? db.getStorySettings(storyId) : null;
   const savedStoreValues = {};
@@ -445,7 +447,42 @@ ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawProm
   const genOpts = {
     ...(rawPrompt ? { rawPrompt: true } : {}),
     ...(rawNegativePrompt ? { rawNegativePrompt: true } : {}),
+    ...(baseCaption ? { baseCaption } : {}),
+    ...(charCaptions?.length ? { charCaptions } : {}),
   };
+
+  // Auto-save generated image to character albums (fire-and-forget)
+  const autoSaveToCharacterAlbums = (imageData) => {
+    if (!storyId || !charCaptions?.length) return;
+    try {
+      const rpgState = db.getLitrpgState(storyId);
+      if (!rpgState?.characters) return;
+      const charNames = charCaptions.map(c => c._name).filter(Boolean);
+      if (charNames.length === 0) return;
+
+      // Decode image data URL to buffer
+      const base64Match = imageData.match(/^data:image\/\w+;base64,(.+)$/);
+      if (!base64Match) return;
+      const buffer = Buffer.from(base64Match[1], 'base64');
+
+      // Match each pipeline character name to LitRPG characters via fuzzy match
+      for (const name of charNames) {
+        for (const [charId, char] of Object.entries(rpgState.characters)) {
+          const nameScore = loreCreator.fuzzyNameScore(name, char.name);
+          const aliasScore = (char.aliases || []).reduce((best, a) =>
+            Math.max(best, loreCreator.fuzzyNameScore(name, a)), 0);
+          if (Math.max(nameScore, aliasScore) >= 0.7) {
+            portraitManager.saveToAlbum(storyId, charId, buffer);
+            console.log(`[Main] Auto-saved scene image to album for ${char.name} (${charId})`);
+            break; // one match per pipeline name
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Main] Auto-save to character albums failed:', err.message);
+    }
+  };
+
   let lastError = null;
 
   // --- Attempt 1: normal generation ---
@@ -454,6 +491,7 @@ ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawProm
     const imageData = await provider.generate(prompt, negativePrompt, store, genOpts);
     if (!isBlankImage(imageData)) {
       broadcastVeniceBalance();
+      autoSaveToCharacterAlbums(imageData);
       return { success: true, imageData, meta: makeMeta() };
     }
     console.log('[Main] Blank image detected, retrying with new seed...');
@@ -465,6 +503,7 @@ ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawProm
       const fb = await tryModelFallback(provider, providerId, prompt, negativePrompt, genOpts);
       if (fb) {
         broadcastVeniceBalance();
+        autoSaveToCharacterAlbums(fb.imageData);
         return {
           success: true,
           imageData: fb.imageData,
@@ -480,6 +519,7 @@ ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawProm
     const imageData = await provider.generate(prompt, negativePrompt, store, genOpts);
     if (!isBlankImage(imageData)) {
       broadcastVeniceBalance();
+      autoSaveToCharacterAlbums(imageData);
       return { success: true, imageData, meta: makeMeta({ retried: true }) };
     }
     console.log('[Main] Blank image on retry, trying model fallback...');
@@ -491,6 +531,7 @@ ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawProm
       const fb = await tryModelFallback(provider, providerId, prompt, negativePrompt, genOpts);
       if (fb) {
         broadcastVeniceBalance();
+        autoSaveToCharacterAlbums(fb.imageData);
         return {
           success: true,
           imageData: fb.imageData,
@@ -505,6 +546,7 @@ ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawProm
   const fb = await tryModelFallback(provider, providerId, prompt, negativePrompt, genOpts);
   if (fb) {
     broadcastVeniceBalance();
+    autoSaveToCharacterAlbums(fb.imageData);
     return {
       success: true,
       imageData: fb.imageData,
@@ -1187,7 +1229,7 @@ ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artS
       const visualProfiles = storyId ? db.getVisualProfiles(storyId) : {};
 
       const result = await scenePromptPipeline.generateScenePromptV2({
-        storyText, entries, artStyle: style, storyId,
+        storyText, entries, storyId,
         primaryGenerateTextFn: primaryGenFn,
         secondaryGenerateTextFn: secondaryGenFn,
         narrativeContext, rpgData, visualProfiles,
@@ -1634,6 +1676,23 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       }
     }
 
+    // Inject lorebook optimizer settings for Pass 6
+    const storySettingsData = db.getStorySettings(storyId);
+    if (storySettingsData) {
+      const optProfile = storySettingsData.lorebookProfile;
+      const optFields = storySettingsData.loreOptConfirmedFields;
+      if (optProfile && optFields && optFields.length > 0) {
+        effectiveSettings._lorebookProfile = optProfile;
+        effectiveSettings._confirmedFields = optFields;
+        // Load entity profiles for optimization rules
+        const compStateForOpt = db.getComprehension(storyId);
+        if (compStateForOpt && compStateForOpt.entityProfiles) {
+          effectiveSettings._entityProfiles = compStateForOpt.entityProfiles;
+        }
+        console.log(`[Main] Pass 6 enabled: profile=${optProfile}, fields=${optFields.length}`);
+      }
+    }
+
     const result = await loreCreator.scanForLore(
       storyText, effectiveSettings, existingEntries, state, generateTextFn,
       (progress) => {
@@ -1644,6 +1703,10 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       comprehensionContext || undefined,
       secondaryGenerateTextFn
     );
+
+    // Extract transient optimization data before saving (renderer-only, not persisted)
+    const pendingOptimizations = result.state._pendingOptimizations || [];
+    delete result.state._pendingOptimizations;
 
     // Save updated state
     db.setLoreState(storyId, result.state);
@@ -1663,14 +1726,13 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
               }
             },
             comprehensionContext || undefined,
-            secondaryGenerateTextFn
+            secondaryGenerateTextFn,
+            {} // options — no forceReEnrich for chained scans
           );
           // Extract transient fields before saving (not persisted in DB)
-          const roleUpdates = rpgResult.state._pendingRoleUpdates || [];
-          delete rpgResult.state._pendingRoleUpdates;
-          const pendingLoreEntries = rpgResult.state._pendingLoreEntries || [];
-          delete rpgResult.state._pendingLoreEntries;
-          delete rpgResult.state._r4Skipped;
+          const transient = extractTransientFields(rpgResult.state);
+          const roleUpdates = transient._pendingRoleUpdates || [];
+          const pendingLoreEntries = transient._pendingLoreEntries || [];
 
           db.setLitrpgState(storyId, rpgResult.state);
           if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1678,6 +1740,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
               state: rpgResult.state,
               roleUpdates,
               pendingLoreEntries,
+              report: rpgResult.report,
             });
           }
         } catch (rpgErr) {
@@ -1700,7 +1763,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       }
     }
 
-    return { success: true, ...result };
+    return { success: true, ...result, pendingOptimizations };
   } catch (e) {
     console.error('[Main] Lore scan failed:', e.message);
     return { success: false, error: e.message };
@@ -2087,6 +2150,79 @@ ipcMain.handle('lore:incremental-update', async (event, { storyId, storyText, ex
 });
 
 // ---------------------------------------------------------------------------
+// IPC Handlers — Lorebook Optimizer
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('lore:get-profiles', () => {
+  return lorebookOptimizer.PROFILES;
+});
+
+ipcMain.handle('lore:get-profile', (event, profileId) => {
+  return lorebookOptimizer.getProfile(profileId);
+});
+
+ipcMain.handle('lore:optimize-entries', async (event, { entries, profileId, storyId, confirmedFields }) => {
+  try {
+    const generateTextFn = makeLoreGenerateTextFn();
+
+    // Set up hybrid providers (same pattern as lore:scan)
+    let secondaryFn = null;
+    const primaryProvider = store.get('loreLlmProvider') || 'novelai';
+    if (primaryProvider === 'novelai') {
+      if (await isOllamaAvailable()) secondaryFn = makeOllamaGenerateTextFn();
+    } else {
+      secondaryFn = makeNovelaiGenerateTextFn();
+    }
+    const hybrid = loreCreator.createHybridProviders(generateTextFn, secondaryFn);
+
+    // Load entity profiles from comprehension state
+    const compState = db.getComprehension(storyId);
+    const entityProfiles = (compState && compState.entityProfiles) || {};
+
+    const result = await lorebookOptimizer.optimizeLoreEntries(
+      entries, profileId, entityProfiles, hybrid.getProviders, confirmedFields,
+      (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('lore:scan-progress', progress);
+        }
+      }
+    );
+
+    // Save optimization state in lore state
+    const loreState = db.getLoreState(storyId) || {};
+    loreState.optimizationState = {
+      lastRun: Date.now(),
+      profileId,
+      summary: lorebookOptimizer.buildOptimizationSummary(result.details),
+      confirmedFields,
+    };
+    db.setLoreState(storyId, loreState);
+
+    return { success: true, ...result };
+  } catch (e) {
+    console.error('[Main] Lorebook optimization failed:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('lore:adjust-entries', async (event, { entries, profileId, storyId }) => {
+  try {
+    const compState = db.getComprehension(storyId);
+    const entityProfiles = (compState && compState.entityProfiles) || {};
+
+    const adjustments = lorebookOptimizer.adjustOnNewText(entries, profileId, entityProfiles);
+    return { success: true, adjustments };
+  } catch (e) {
+    console.error('[Main] Lorebook adjustment failed:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('lore:parse-discovery', (event, { inspectResult, writeTestResult }) => {
+  return lorebookOptimizer.parseDiscoveryResults(inspectResult, writeTestResult);
+});
+
+// ---------------------------------------------------------------------------
 // IPC Handlers — Memory Manager
 // ---------------------------------------------------------------------------
 
@@ -2222,7 +2358,7 @@ ipcMain.handle('litrpg:detect', async (event, { storyText, storyId }) => {
   }
 });
 
-ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries }) => {
+ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, forceReEnrich }) => {
   try {
     const rpgState = db.getLitrpgState(storyId) || { ...db.LITRPG_STATE_DEFAULTS };
     if (!rpgState.enabled) return { success: false, error: 'LitRPG mode not enabled' };
@@ -2258,19 +2394,18 @@ ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries })
         }
       },
       comprehensionContext || undefined,
-      secondaryGenerateTextFn
+      secondaryGenerateTextFn,
+      { forceReEnrich: !!forceReEnrich }
     );
 
     // Extract transient fields before saving (not persisted in DB)
-    const roleUpdates = result.state._pendingRoleUpdates || [];
-    delete result.state._pendingRoleUpdates;
-    const pendingLoreEntries = result.state._pendingLoreEntries || [];
-    delete result.state._pendingLoreEntries;
-    const r4Skipped = result.state._r4Skipped || 0;
-    delete result.state._r4Skipped;
+    const transient = extractTransientFields(result.state);
+    const roleUpdates = transient._pendingRoleUpdates || [];
+    const pendingLoreEntries = transient._pendingLoreEntries || [];
+    const r4Skipped = transient._r4Skipped || 0;
 
     db.setLitrpgState(storyId, result.state);
-    return { success: true, state: result.state, roleUpdates, pendingLoreEntries, r4Skipped };
+    return { success: true, state: result.state, roleUpdates, pendingLoreEntries, r4Skipped, report: result.report };
   } catch (e) {
     console.error('[Main] LitRPG scan failed:', e.message);
     return { success: false, error: e.message };
@@ -2379,36 +2514,43 @@ ipcMain.handle('litrpg:reverse-sync-all', (event, { entries, storyId }) => {
   const rpgState = db.getLitrpgState(storyId) || { ...db.LITRPG_STATE_DEFAULTS };
   const results = [];
   let updatedCount = 0;
+  let failedCount = 0;
 
   for (const entry of entries) {
-    const result = litrpgTracker.reverseSyncCharacter(entry.text, entry.displayName, rpgState);
-    if (result.changed && result.charId) {
-      // Apply parsed data to character
-      const char = rpgState.characters[result.charId];
-      const parsed = result.parsed;
-      if (parsed.class) char.class = parsed.class;
-      if (parsed.subclass) char.subclass = parsed.subclass;
-      if (parsed.level != null) char.level = parsed.level;
-      if (parsed.race) char.race = parsed.race;
-      if (parsed.cultivationRealm) char.cultivationRealm = parsed.cultivationRealm;
-      if (parsed.cultivationStage) char.cultivationStage = parsed.cultivationStage;
-      if (parsed.xp) char.xp = { ...(char.xp || {}), ...parsed.xp };
-      if (parsed.stats) char.stats = { ...(char.stats || {}), ...parsed.stats };
-      if (parsed.currency) char.currency = { ...(char.currency || {}), ...parsed.currency };
-      if (parsed.abilities && parsed.abilities.length > 0) char.abilities = parsed.abilities;
-      if (parsed.equipment && parsed.equipment.length > 0) char.equipment = parsed.equipment;
-      if (parsed.inventory && parsed.inventory.length > 0) char.inventory = parsed.inventory;
-      if (parsed.statusEffects && parsed.statusEffects.length > 0) char.statusEffects = parsed.statusEffects;
-      updatedCount++;
+    try {
+      const result = litrpgTracker.reverseSyncCharacter(entry.text, entry.displayName, rpgState);
+      if (result.changed && result.charId) {
+        // Apply parsed data to character
+        const char = rpgState.characters[result.charId];
+        const parsed = result.parsed;
+        if (parsed.class) char.class = parsed.class;
+        if (parsed.subclass) char.subclass = parsed.subclass;
+        if (parsed.level != null) char.level = parsed.level;
+        if (parsed.race) char.race = parsed.race;
+        if (parsed.cultivationRealm) char.cultivationRealm = parsed.cultivationRealm;
+        if (parsed.cultivationStage) char.cultivationStage = parsed.cultivationStage;
+        if (parsed.xp) char.xp = { ...(char.xp || {}), ...parsed.xp };
+        if (parsed.stats) char.stats = { ...(char.stats || {}), ...parsed.stats };
+        if (parsed.currency) char.currency = { ...(char.currency || {}), ...parsed.currency };
+        if (parsed.abilities && parsed.abilities.length > 0) char.abilities = parsed.abilities;
+        if (parsed.equipment && parsed.equipment.length > 0) char.equipment = parsed.equipment;
+        if (parsed.inventory && parsed.inventory.length > 0) char.inventory = parsed.inventory;
+        if (parsed.statusEffects && parsed.statusEffects.length > 0) char.statusEffects = parsed.statusEffects;
+        updatedCount++;
+      }
+      results.push({ entryName: entry.displayName, success: true, ...result });
+    } catch (err) {
+      console.error(`[Main] Reverse sync failed for ${entry.displayName}:`, err.message);
+      failedCount++;
+      results.push({ entryName: entry.displayName, success: false, error: err.message });
     }
-    results.push({ entryName: entry.displayName, ...result });
   }
 
   if (updatedCount > 0) {
     db.setLitrpgState(storyId, rpgState);
   }
 
-  return { success: true, results, updatedCount, state: rpgState };
+  return { success: true, results, updatedCount, failedCount, state: rpgState };
 });
 
 // IPC Handlers — Portraits

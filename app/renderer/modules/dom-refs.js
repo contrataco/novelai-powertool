@@ -185,6 +185,12 @@ export const loreEnrichAcceptBtn = document.getElementById('loreEnrichAcceptBtn'
 export const loreEnrichEditBtn = document.getElementById('loreEnrichEditBtn');
 export const loreEnrichRejectBtn = document.getElementById('loreEnrichRejectBtn');
 
+// Lorebook Optimizer elements
+export const loreOptProfile = document.getElementById('loreOptProfile');
+export const loreOptimizeAllBtn = document.getElementById('loreOptimizeAllBtn');
+export const loreDiscoverFieldsBtn = document.getElementById('loreDiscoverFieldsBtn');
+export const loreOptStatus = document.getElementById('loreOptStatus');
+
 // Lore settings elements
 export const loreAutoScan = document.getElementById('loreAutoScan');
 export const loreAutoUpdates = document.getElementById('loreAutoUpdates');

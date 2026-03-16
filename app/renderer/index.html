@@ -3740,6 +3740,23 @@
           <button id="loreClearBtn">Clear</button>
         </div>
 
+        <!-- Optimizer Bar -->
+        <div class="lore-optimizer-bar" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;padding:4px 0;">
+          <label style="font-size:11px;color:#aaa;white-space:nowrap;">Profile:</label>
+          <select id="loreOptProfile" style="flex:1;font-size:11px;padding:2px 4px;background:#2a2a3e;color:#ccc;border:1px solid #444;border-radius:3px;">
+            <option value="general">General</option>
+            <option value="litrpg">LitRPG / GameLit</option>
+            <option value="romance">Romance</option>
+            <option value="mystery">Mystery / Thriller</option>
+            <option value="epic-fantasy">Epic Fantasy</option>
+            <option value="scifi">Science Fiction</option>
+            <option value="slice-of-life">Slice of Life</option>
+          </select>
+          <button id="loreOptimizeAllBtn" style="font-size:11px;padding:2px 8px;white-space:nowrap;" title="Run lorebook optimization on all entries">Optimize</button>
+          <button id="loreDiscoverFieldsBtn" style="font-size:11px;padding:2px 8px;white-space:nowrap;color:#888;" title="Discover which advanced lorebook fields NovelAI supports">Discover</button>
+        </div>
+        <div id="loreOptStatus" style="display:none;font-size:11px;color:#8a8;margin-bottom:4px;"></div>
+
         <!-- Scan Status -->
         <div class="lore-scan-status" id="loreScanStatus" style="display:none;">
           <span class="spinner"></span>

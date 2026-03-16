@@ -151,6 +151,16 @@ contextBridge.exposeInMainWorld('sceneVisualizer', {
     ipcRenderer.on('lore:organize-progress', (event, data) => callback(data));
   },
 
+  // Lorebook Optimizer
+  loreGetProfiles: () => ipcRenderer.invoke('lore:get-profiles'),
+  loreGetProfile: (profileId) => ipcRenderer.invoke('lore:get-profile', profileId),
+  loreOptimizeEntries: (entries, profileId, storyId, confirmedFields) =>
+    ipcRenderer.invoke('lore:optimize-entries', { entries, profileId, storyId, confirmedFields }),
+  loreAdjustEntries: (entries, profileId, storyId) =>
+    ipcRenderer.invoke('lore:adjust-entries', { entries, profileId, storyId }),
+  loreParseDiscovery: (inspectResult, writeTestResult) =>
+    ipcRenderer.invoke('lore:parse-discovery', { inspectResult, writeTestResult }),
+
   // Lore Comprehension (progressive scan)
   loreStartProgressiveScan: (storyId, storyText, existingEntries) =>
     ipcRenderer.invoke('lore:start-progressive-scan', { storyId, storyText, existingEntries }),
