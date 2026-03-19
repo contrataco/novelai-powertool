@@ -10,6 +10,9 @@ import { renderSuggestions, updateBadge } from './suggestions.js';
 import { refreshLoreUI, renderComprehensionState, loadCategoryRegistry } from './lore-creator.js';
 import { renderMemoryUI } from './memory-manager.js';
 import { generateScenePromptFromEditor } from './image-gen.js';
+import { PollingCoordinator } from './polling.js';
+
+export const polling = new PollingCoordinator();
 
 // =========================================================================
 // DOM-BASED MEMORY HELPERS
@@ -129,6 +132,18 @@ async function handleStoryContextChange(storyId, storyTitle) {
 
   bus.emit('story:changed', { storyId, storyTitle });
 
+  // Cancel any in-progress operations from previous story
+  if (state.loreIsScanning) {
+    state.loreIsScanning = false;
+    const scanStatus = document.getElementById('loreScanStatus');
+    if (scanStatus) scanStatus.style.display = 'none';
+  }
+  if (state.isGenerating) {
+    state.isGenerating = false;
+  }
+  state.isGeneratingPrompt = false;
+  state.loreLastScanAt = null;
+
   // SINGLE CALL: load all per-story data from SQLite
   try {
     const allData = await window.sceneVisualizer.storyLoadAll(storyId, storyTitle);
@@ -158,22 +173,21 @@ async function handleStoryContextChange(storyId, storyTitle) {
       updateBadge(0);
     }
 
-    // Eagerly restore lore state
-    if (allData.loreState) {
-      state.loreState = allData.loreState;
-      loadCategoryRegistry().then(() => refreshLoreUI());
-    }
+    // Eagerly restore lore state (always initialize — new stories have no DB row)
+    state.loreState = allData.loreState || {
+      pendingEntries: [], pendingUpdates: [], pendingMerges: [],
+      acceptedEntryIds: [], rejectedNames: [], dismissedUpdateNames: [],
+      rejectedMergeNames: [], dismissedReformatNames: [], charsSinceLastScan: 0,
+      loreCategoryIds: {}, pendingCleanups: [], dismissedCleanupIds: [],
+    };
+    loadCategoryRegistry().then(() => refreshLoreUI());
 
     // Eagerly restore comprehension
-    if (allData.comprehension) {
-      renderComprehensionState(allData.comprehension);
-    }
+    renderComprehensionState(allData.comprehension || { entities: [], summary: '', chunkCount: 0 });
 
     // Eagerly restore memory state
-    if (allData.memoryState) {
-      state.memoryState = allData.memoryState;
-      renderMemoryUI();
-    }
+    state.memoryState = allData.memoryState || {};
+    renderMemoryUI();
 
     // Eagerly restore LitRPG state
     if (allData.litrpgState) {
@@ -227,62 +241,70 @@ export function init() {
     status.className = 'status';
   });
 
+  // Track webview readiness for the story-context poll condition
+  let webviewReady = false;
+  let lastPolledStoryId = null;
+
   webview.addEventListener('did-finish-load', () => {
     status.textContent = 'Connected';
     status.className = 'status connected';
-
-    // Poll webview for story context. The script sandbox can't use
-    // contextBridge or write to page DOM, so we extract story identity
-    // directly from NovelAI's page state via executeJavaScript.
-    let lastPolledStoryId = null;
-    setInterval(async () => {
-      try {
-        const ctx = await webview.executeJavaScript(`
-          (function() {
-            // Extract story ID from NovelAI URL query param (/stories?id=uuid)
-            var params = new URLSearchParams(window.location.search);
-            var storyId = params.get('id');
-            if (storyId) {
-              // Try document.title (NovelAI sets it to "Story Title - NovelAI")
-              var title = '';
-              var dt = document.title || '';
-              var sep = dt.lastIndexOf(' - NovelAI');
-              if (sep > 0) {
-                title = dt.substring(0, sep).trim();
-              }
-              return { storyId: storyId, storyTitle: title };
-            }
-            return null;
-          })()
-        `);
-        if (ctx && ctx.storyId && ctx.storyId !== lastPolledStoryId) {
-          lastPolledStoryId = ctx.storyId;
-          console.log('[Renderer] Story context from webview poll:', ctx.storyId, ctx.storyTitle);
-          handleStoryContextChange(ctx.storyId, ctx.storyTitle);
-        }
-      } catch (e) {
-        // Webview not ready or navigating
-      }
-    }, 3000);
+    webviewReady = true;
   });
 
   webview.addEventListener('did-fail-load', (e) => {
     status.textContent = 'Failed to load';
     status.className = 'status error';
+    webviewReady = false;
     console.error('Webview load failed:', e);
   });
 
-  // Story text change detection -- triggers Electron-side prompt generation
-  // Uses sceneSettings for auto-gen toggle and min text change threshold
+  // -- Scene settings cache (used by auto-gen poll) --
   let cachedSceneSettings = null;
-  // Load scene settings once at startup, refresh periodically
   async function refreshSceneSettings() {
     try { cachedSceneSettings = await window.sceneVisualizer.getSceneSettings(); } catch (e) { /* ignore */ }
   }
   refreshSceneSettings();
-  setInterval(refreshSceneSettings, 30000);
 
-  setInterval(async () => {
+  // =====================================================================
+  // Register polling tasks
+  // =====================================================================
+
+  // 1. Story context poll (~3s) — extract story identity from NovelAI page
+  polling.register('story-context', async () => {
+    try {
+      const ctx = await webview.executeJavaScript(`
+        (function() {
+          // Extract story ID from NovelAI URL query param (/stories?id=uuid)
+          var params = new URLSearchParams(window.location.search);
+          var storyId = params.get('id');
+          if (storyId) {
+            // Try document.title (NovelAI sets it to "Story Title - NovelAI")
+            var title = '';
+            var dt = document.title || '';
+            var sep = dt.lastIndexOf(' - NovelAI');
+            if (sep > 0) {
+              title = dt.substring(0, sep).trim();
+            }
+            return { storyId: storyId, storyTitle: title };
+          }
+          return null;
+        })()
+      `);
+      if (ctx && ctx.storyId && ctx.storyId !== lastPolledStoryId) {
+        lastPolledStoryId = ctx.storyId;
+        console.log('[Renderer] Story context from webview poll:', ctx.storyId, ctx.storyTitle);
+        handleStoryContextChange(ctx.storyId, ctx.storyTitle);
+      }
+    } catch (e) {
+      // Webview not ready or navigating
+    }
+  }, 3000, { condition: () => webviewReady });
+
+  // 2. Scene settings refresh (~30s) — keep cached settings up to date
+  polling.register('scene-settings', refreshSceneSettings, 30000);
+
+  // 3. Auto-gen / story change detection (~10s)
+  polling.register('auto-gen', async () => {
     if (state.isGenerating || state.isGeneratingPrompt) return;
     // Check auto-generate setting
     if (cachedSceneSettings && cachedSceneSettings.autoGeneratePrompts === false) return;
@@ -298,8 +320,8 @@ export function init() {
     }
   }, 10000);
 
-  // Continuous lorebook adjustment — lightweight, no LLM, max once per 30s
-  setInterval(async () => {
+  // 4. Continuous lorebook optimizer adjustment (~15s, extra guards inside)
+  polling.register('lore-adjust', async () => {
     if (!state.currentStoryId || state.loreIsScanning) return;
     if (!state.loreProxyReady) return;
     const confirmedFields = state.loreOptConfirmedFields
@@ -338,4 +360,7 @@ export function init() {
       console.log('[LoreOpt] Continuous adjustment error:', e.message);
     }
   }, 15000);
+
+  // Start the coordinator
+  polling.start();
 }

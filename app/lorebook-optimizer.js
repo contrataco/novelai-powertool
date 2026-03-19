@@ -4,8 +4,10 @@
 
 const LOG_PREFIX = '[LoreOpt]';
 
-const { parseMetadata, setMetadata, getEntryType, fuzzyNameScore, retryLLM, recoverJSON } = require('./lore-creator');
+const { retryLLM } = require('./lore-creator');
+const { parseMetadata, setMetadata, getEntryType } = require('./metadata');
 const { PARTY_SIDE_ROLES } = require('./litrpg-tracker');
+const { FUZZY_MATCH_THRESHOLD, fuzzyNameScore, recoverJSON } = require('./shared-utils');
 
 // ============================================================================
 // STORY PROFILES
@@ -176,7 +178,7 @@ function matchEntityProfile(entry, entityProfiles) {
   let bestScore = 0;
   for (const [entityName, profile] of Object.entries(entityProfiles)) {
     const score = fuzzyNameScore(name, entityName);
-    if (score > bestScore && score >= 0.7) {
+    if (score > bestScore && score >= FUZZY_MATCH_THRESHOLD) {
       bestScore = score;
       bestMatch = profile;
     }

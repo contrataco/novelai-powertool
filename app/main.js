@@ -26,6 +26,20 @@ const lorebookOptimizer = require('./lorebook-optimizer');
 const portraitManager = require('./portrait-manager');
 const mediaGallery = require('./media-gallery');
 const db = require('./db');
+const { FUZZY_MATCH_THRESHOLD, LLM_TIMEOUT_MS, SCAN_TIMEOUT_MS, withTimeout } = require('./shared-utils');
+
+// Hydrate portrait base64 data onto characters (for renderer display)
+function hydratePortraits(state, storyId) {
+  if (!state || !state.characters) return;
+  for (const [charId, char] of Object.entries(state.characters)) {
+    if (char.portraitPath && portraitManager.hasPortrait(storyId, charId)) {
+      char._portraitData = portraitManager.getPortraitAsBase64(storyId, charId, false);
+      char._thumbnailData = portraitManager.getPortraitAsBase64(storyId, charId, true);
+    } else if (char.portraitPath) {
+      char.portraitPath = false;
+    }
+  }
+}
 
 const PROVIDERS = {
   [novelaiProvider.id]: novelaiProvider,
@@ -64,7 +78,7 @@ const store = new Store({
     veniceHideWatermark: { type: 'boolean', default: true },
     veniceVideoModel: { type: 'string', default: '' },
     veniceVideoDuration: { type: 'string', default: '5s' },
-    veniceVideoResolution: { type: 'string', default: '720p' },
+    veniceVideoResolution: { type: 'string', default: '1080p' },
     imageSettings: {
       type: 'object',
       default: {
@@ -75,8 +89,8 @@ const store = new Store({
         height: 1216,
         // Generation params
         steps: 28,
-        scale: 5,
-        sampler: 'k_euler',
+        scale: 6,
+        sampler: 'k_euler_ancestral',
         noiseSchedule: 'native',
         // SMEA (only for V3 models)
         smea: false,
@@ -185,6 +199,29 @@ function setupTokenInterception() {
     }
   );
 }
+
+// ============================================================================
+// IPC HANDLER UTILITIES
+// ============================================================================
+
+/**
+ * Wrap an async IPC handler with consistent error logging and response.
+ * Returns { error: string } on failure instead of throwing.
+ */
+function wrapHandler(name, fn) {
+  return async (event, ...args) => {
+    try {
+      return await fn(event, ...args);
+    } catch (err) {
+      console.error(`[IPC:${name}]`, err.message);
+      return { success: false, error: err.message };
+    }
+  };
+}
+
+// ============================================================================
+// IPC HANDLERS — Settings & Token
+// ============================================================================
 
 // Token status query
 ipcMain.handle('get-token-status', () => ({ hasToken: !!store.get('apiToken') }));
@@ -389,6 +426,80 @@ async function tryModelFallback(provider, providerId, prompt, negativePrompt, ge
 // IPC Handlers — Image generation (with retry + model fallback)
 // ---------------------------------------------------------------------------
 
+/**
+ * Apply per-story image settings as temporary overrides on electron-store.
+ * Returns { restore } — a function that restores original settings.
+ */
+function applyPerStoryOverrides(store, storyId, db) {
+  const ss = storyId ? db.getStorySettings(storyId) : null;
+  const savedStoreValues = {};
+  if (ss) {
+    const overrides = {
+      provider: ss.imageProvider,
+      imageSettings: ss.imageSettings,
+      novelaiArtStyle: ss.novelaiArtStyle,
+    };
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v !== undefined) { savedStoreValues[k] = store.get(k); store.set(k, v); }
+    }
+  }
+  return {
+    restore: () => {
+      for (const [k, v] of Object.entries(savedStoreValues)) store.set(k, v);
+    },
+  };
+}
+
+/**
+ * Single generation attempt. Returns { imageData } on success, or throws.
+ * Returns null if the image is blank (caller should retry).
+ */
+async function attemptGeneration(provider, prompt, negativePrompt, store, genOpts) {
+  const imageData = await provider.generate(prompt, negativePrompt, store, genOpts);
+  if (isBlankImage(imageData)) return null;
+  return { imageData };
+}
+
+/**
+ * Retry logic for blank/failed images: one new-seed retry, then model fallback.
+ * Returns { imageData, meta } on success, or { failed: true, error, ... } if exhausted.
+ */
+async function handleBlankRetry(provider, providerId, prompt, negativePrompt, store, genOpts, makeMeta) {
+  let lastError = null;
+
+  // --- Attempt 2: retry with new seed (transient blank or error) ---
+  try {
+    const imageData = await provider.generate(prompt, negativePrompt, store, genOpts);
+    if (!isBlankImage(imageData)) {
+      return { imageData, meta: makeMeta({ retried: true }) };
+    }
+    console.log('[Main] Blank image on retry, trying model fallback...');
+  } catch (e) {
+    lastError = e;
+    console.error('[Main] Generation attempt 2 failed:', e.message);
+    if (isContentRestrictionError(e.message)) {
+      const fb = await tryModelFallback(provider, providerId, prompt, negativePrompt, genOpts);
+      if (fb) {
+        return { imageData: fb.imageData, meta: makeMeta({ retried: true, fallbackModel: fb.fallbackModel }) };
+      }
+      return { failed: true, error: e.message, contentRestricted: true };
+    }
+  }
+
+  // --- Attempt 3: model fallback ---
+  const fb = await tryModelFallback(provider, providerId, prompt, negativePrompt, genOpts);
+  if (fb) {
+    return { imageData: fb.imageData, meta: makeMeta({ retried: true, fallbackModel: fb.fallbackModel }) };
+  }
+
+  // --- All attempts exhausted ---
+  return {
+    failed: true,
+    error: lastError?.message || 'Image generation failed (blank image detected)',
+    blankDetected: !lastError,
+  };
+}
+
 // IPC Handler — Get the prompt suffix (art style + quality tags) that the provider would append
 ipcMain.handle('get-prompt-suffix', () => {
   const provider = getActiveProvider();
@@ -407,22 +518,7 @@ ipcMain.handle('get-negative-prompt-suffix', () => {
 });
 
 ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawPrompt, rawNegativePrompt, storyId, baseCaption, charCaptions }) => {
-  // Apply per-story settings temporarily for this generation
-  const ss = storyId ? db.getStorySettings(storyId) : null;
-  const savedStoreValues = {};
-  if (ss) {
-    const overrides = {
-      provider: ss.imageProvider,
-      imageSettings: ss.imageSettings,
-      novelaiArtStyle: ss.novelaiArtStyle,
-    };
-    for (const [k, v] of Object.entries(overrides)) {
-      if (v !== undefined) { savedStoreValues[k] = store.get(k); store.set(k, v); }
-    }
-  }
-  const restoreStore = () => {
-    for (const [k, v] of Object.entries(savedStoreValues)) store.set(k, v);
-  };
+  const { restore } = applyPerStoryOverrides(store, storyId, db);
 
   try {
   const provider = getActiveProvider();
@@ -471,7 +567,7 @@ ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawProm
           const nameScore = loreCreator.fuzzyNameScore(name, char.name);
           const aliasScore = (char.aliases || []).reduce((best, a) =>
             Math.max(best, loreCreator.fuzzyNameScore(name, a)), 0);
-          if (Math.max(nameScore, aliasScore) >= 0.7) {
+          if (Math.max(nameScore, aliasScore) >= FUZZY_MATCH_THRESHOLD) {
             portraitManager.saveToAlbum(storyId, charId, buffer);
             console.log(`[Main] Auto-saved scene image to album for ${char.name} (${charId})`);
             break; // one match per pipeline name
@@ -480,89 +576,45 @@ ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawProm
       }
     } catch (err) {
       console.warn('[Main] Auto-save to character albums failed:', err.message);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('portrait:auto-save-failed', { error: err.message });
+      }
     }
   };
 
-  let lastError = null;
+  // Helper: wrap a successful result with balance broadcast + album save
+  const onSuccess = (imageData, meta) => {
+    broadcastVeniceBalance();
+    autoSaveToCharacterAlbums(imageData);
+    return { success: true, imageData, meta };
+  };
 
   // --- Attempt 1: normal generation ---
   try {
     console.log(`[Main] Generating via ${provider.name}...${rawPrompt ? ' (raw prompt, no suffix)' : ''}`);
-    const imageData = await provider.generate(prompt, negativePrompt, store, genOpts);
-    if (!isBlankImage(imageData)) {
-      broadcastVeniceBalance();
-      autoSaveToCharacterAlbums(imageData);
-      return { success: true, imageData, meta: makeMeta() };
-    }
+    const result = await attemptGeneration(provider, prompt, negativePrompt, store, genOpts);
+    if (result) return onSuccess(result.imageData, makeMeta());
     console.log('[Main] Blank image detected, retrying with new seed...');
   } catch (e) {
-    lastError = e;
     console.error('[Main] Generation attempt 1 failed:', e.message);
     broadcastVeniceBalance();
     if (isContentRestrictionError(e.message)) {
       const fb = await tryModelFallback(provider, providerId, prompt, negativePrompt, genOpts);
-      if (fb) {
-        broadcastVeniceBalance();
-        autoSaveToCharacterAlbums(fb.imageData);
-        return {
-          success: true,
-          imageData: fb.imageData,
-          meta: makeMeta({ retried: true, fallbackModel: fb.fallbackModel }),
-        };
-      }
+      if (fb) return onSuccess(fb.imageData, makeMeta({ retried: true, fallbackModel: fb.fallbackModel }));
       return { success: false, error: e.message, contentRestricted: true };
     }
   }
 
-  // --- Attempt 2: retry (blank image or transient error) ---
-  try {
-    const imageData = await provider.generate(prompt, negativePrompt, store, genOpts);
-    if (!isBlankImage(imageData)) {
-      broadcastVeniceBalance();
-      autoSaveToCharacterAlbums(imageData);
-      return { success: true, imageData, meta: makeMeta({ retried: true }) };
-    }
-    console.log('[Main] Blank image on retry, trying model fallback...');
-  } catch (e) {
-    lastError = e;
-    console.error('[Main] Generation attempt 2 failed:', e.message);
-    broadcastVeniceBalance();
-    if (isContentRestrictionError(e.message)) {
-      const fb = await tryModelFallback(provider, providerId, prompt, negativePrompt, genOpts);
-      if (fb) {
-        broadcastVeniceBalance();
-        autoSaveToCharacterAlbums(fb.imageData);
-        return {
-          success: true,
-          imageData: fb.imageData,
-          meta: makeMeta({ retried: true, fallbackModel: fb.fallbackModel }),
-        };
-      }
-      return { success: false, error: e.message, contentRestricted: true };
-    }
-  }
-
-  // --- Attempt 3: model fallback ---
-  const fb = await tryModelFallback(provider, providerId, prompt, negativePrompt, genOpts);
-  if (fb) {
-    broadcastVeniceBalance();
-    autoSaveToCharacterAlbums(fb.imageData);
-    return {
-      success: true,
-      imageData: fb.imageData,
-      meta: makeMeta({ retried: true, fallbackModel: fb.fallbackModel }),
-    };
-  }
-
-  // --- All attempts exhausted ---
+  // --- Attempts 2 & 3: retry + model fallback ---
+  const retryResult = await handleBlankRetry(provider, providerId, prompt, negativePrompt, store, genOpts, makeMeta);
   broadcastVeniceBalance();
-  return {
-    success: false,
-    error: lastError?.message || 'Image generation failed (blank image detected)',
-    blankDetected: !lastError,
-  };
+  if (retryResult.failed) {
+    return { success: false, error: retryResult.error, blankDetected: retryResult.blankDetected, contentRestricted: retryResult.contentRestricted };
+  }
+  return onSuccess(retryResult.imageData, retryResult.meta);
+
   } finally {
-    restoreStore();
+    restore();
   }
 });
 
@@ -667,7 +719,7 @@ ipcMain.handle('get-venice-settings', () => {
     hideWatermark: store.get('veniceHideWatermark') !== false,
     videoModel: store.get('veniceVideoModel') || '',
     videoDuration: store.get('veniceVideoDuration') || '5s',
-    videoResolution: store.get('veniceVideoResolution') || '720p',
+    videoResolution: store.get('veniceVideoResolution') || '1080p',
   };
 });
 
@@ -768,6 +820,31 @@ const BEFORE_ATTR = new RegExp(`${NAME_PATTERN}\\s+${SPEECH_VERBS}\\s*,?\\s*$|${
 const AFTER_DASH_VERB = new RegExp(`^\\s*[\u2014—]\\s*${SPEECH_VERBS}\\s+${NAME_PATTERN}`, 'i');
 const AFTER_DASH_NAME = new RegExp(`^\\s*[\u2014—]\\s*${NAME_PATTERN}\\s+${SPEECH_VERBS}`, 'i');
 
+// Pronoun-based attribution patterns
+const PRONOUN_PATTERN = '(she|he|they)';
+const AFTER_VERB_PRONOUN = new RegExp(`^\\s*,?\\s*${SPEECH_VERBS}\\s+${PRONOUN_PATTERN}\\b`, 'i');
+const AFTER_PRONOUN_VERB = new RegExp(`^\\s*,?\\s*${PRONOUN_PATTERN}\\s+${SPEECH_VERBS}`, 'i');
+const AFTER_DASH_VERB_PRONOUN = new RegExp(`^\\s*[\u2014—]\\s*${SPEECH_VERBS}\\s+${PRONOUN_PATTERN}\\b`, 'i');
+const AFTER_DASH_PRONOUN_VERB = new RegExp(`^\\s*[\u2014—]\\s*${PRONOUN_PATTERN}\\s+${SPEECH_VERBS}`, 'i');
+const BEFORE_PRONOUN_ATTR = new RegExp(`(she|he|they)\\s+${SPEECH_VERBS}\\s*,?\\s*$`, 'i');
+
+// Gender classification for voice IDs (ported from renderer tts.js)
+const NOVELAI_FEMALE_V1 = new Set(['Cyllene', 'Leucosia', 'Crina', 'Hespe', 'Ida']);
+const NOVELAI_MALE_V1 = new Set(['Alseid', 'Daphnis', 'Echo', 'Thel', 'Nomios']);
+const NOVELAI_FEMALE_V2 = new Set(['Aini', 'Orea', 'Claea', 'Lim', 'Aurae', 'Naia']);
+const NOVELAI_MALE_V2 = new Set(['Aulon', 'Elei', 'Ogma', 'Raid', 'Pega', 'Lam', 'Ligeia']);
+
+function classifyVoiceGender(voiceId) {
+  if (!voiceId || typeof voiceId !== 'string') return 'unknown';
+  // Venice: af_/bf_ = female, am_/bm_ = male
+  if (/^[ab]f_/.test(voiceId)) return 'female';
+  if (/^[ab]m_/.test(voiceId)) return 'male';
+  // NovelAI presets
+  if (NOVELAI_FEMALE_V1.has(voiceId) || NOVELAI_FEMALE_V2.has(voiceId)) return 'female';
+  if (NOVELAI_MALE_V1.has(voiceId) || NOVELAI_MALE_V2.has(voiceId)) return 'male';
+  return 'unknown';
+}
+
 /**
  * Parse text into narration vs dialogue segments for TTS voice assignment.
  * @param {string} text
@@ -785,39 +862,56 @@ function matchSpeakerToVoice(speaker, characterVoices) {
     const score = loreCreator.fuzzyNameScore(speaker, key);
     if (score > bestScore) { bestScore = score; bestKey = key; }
   }
-  if (bestScore >= 0.7 && bestKey) return { name: bestKey, voice: characterVoices[bestKey] };
+  if (bestScore >= FUZZY_MATCH_THRESHOLD && bestKey) return { name: bestKey, voice: characterVoices[bestKey] };
   return null;
 }
 
 function extractSpeaker(text, matchIndex, matchEnd, characterVoices) {
   const afterText = text.slice(matchEnd, matchEnd + 80);
 
-  // Check after: "..." said CharName  (verb-name order)
+  // S1: "..." said CharName  (verb-name order)
   const afterVN = AFTER_VERB_NAME.exec(afterText);
-  if (afterVN && afterVN[1]) return afterVN[1].trim();
+  if (afterVN && afterVN[1]) return { name: afterVN[1].trim() };
 
-  // Check after: "..." CharName said  (name-verb order)
+  // S2: "..." CharName said  (name-verb order)
   const afterNV = AFTER_NAME_VERB.exec(afterText);
-  if (afterNV && afterNV[1]) return afterNV[1].trim();
+  if (afterNV && afterNV[1]) return { name: afterNV[1].trim() };
 
-  // Check after em-dash: "..." — said CharName
+  // S3: "..." — said CharName
   const afterDV = AFTER_DASH_VERB.exec(afterText);
-  if (afterDV && afterDV[1]) return afterDV[1].trim();
+  if (afterDV && afterDV[1]) return { name: afterDV[1].trim() };
 
-  // Check after em-dash: "..." — CharName said
+  // S4: "..." — CharName said
   const afterDN = AFTER_DASH_NAME.exec(afterText);
-  if (afterDN && afterDN[1]) return afterDN[1].trim();
+  if (afterDN && afterDN[1]) return { name: afterDN[1].trim() };
 
-  // Check before: CharName said, "..."  or  CharName: "..."
+  // S5: CharName said, "..."  or  CharName: "..."
   const beforeStart = Math.max(0, matchIndex - 80);
   const beforeText = text.slice(beforeStart, matchIndex);
   const beforeMatch = BEFORE_ATTR.exec(beforeText);
   if (beforeMatch) {
     const name = (beforeMatch[1] || beforeMatch[2] || '').trim();
-    if (name) return name;
+    if (name) return { name };
   }
 
-  // Action-based attribution: preceding sentence contains a known character name
+  // S5b: Pronoun-based attribution (checked before fallback heuristics)
+  // "..." said she/he/they
+  const afterVP = AFTER_VERB_PRONOUN.exec(afterText);
+  if (afterVP && afterVP[2]) return { pronoun: afterVP[2].toLowerCase() };
+  // "..." she/he/they said
+  const afterPV = AFTER_PRONOUN_VERB.exec(afterText);
+  if (afterPV && afterPV[1]) return { pronoun: afterPV[1].toLowerCase() };
+  // "..." — said she/he/they
+  const afterDVP = AFTER_DASH_VERB_PRONOUN.exec(afterText);
+  if (afterDVP && afterDVP[2]) return { pronoun: afterDVP[2].toLowerCase() };
+  // "..." — she/he/they said
+  const afterDPV = AFTER_DASH_PRONOUN_VERB.exec(afterText);
+  if (afterDPV && afterDPV[1]) return { pronoun: afterDPV[1].toLowerCase() };
+  // she/he/they said, "..."
+  const beforePronoun = BEFORE_PRONOUN_ATTR.exec(beforeText);
+  if (beforePronoun && beforePronoun[1]) return { pronoun: beforePronoun[1].toLowerCase() };
+
+  // S6: Action-based attribution: preceding sentence contains a known character name
   // Handles: Varian slammed his fist. "How dare you!"
   if (characterVoices && Object.keys(characterVoices).length > 0) {
     const lookbackText = text.slice(Math.max(0, matchIndex - 200), matchIndex);
@@ -826,25 +920,26 @@ function extractSpeaker(text, matchIndex, matchEnd, characterVoices) {
       const sentence = lookbackText.slice(lastSentenceEnd + 1).toLowerCase().trim();
       if (sentence.length > 0 && sentence.length < 150) {
         for (const charName of Object.keys(characterVoices)) {
-          if (sentence.includes(charName.toLowerCase())) return charName;
+          if (sentence.includes(charName.toLowerCase())) return { name: charName };
           const words = charName.split(/\s+/).filter(w => w.length >= 3);
           for (const word of words) {
-            if (sentence.includes(word.toLowerCase())) return charName;
+            if (sentence.includes(word.toLowerCase())) return { name: charName };
           }
         }
       }
     }
   }
 
-  // Fallback: search nearby text for any known character name from voice map
+  // S7: Fallback: search nearby text (EXCLUDING dialogue content) for known character names
   if (characterVoices && Object.keys(characterVoices).length > 0) {
-    const nearby = text.slice(Math.max(0, matchIndex - 100), matchEnd + 100).toLowerCase();
+    const beforeWindow = text.slice(Math.max(0, matchIndex - 100), matchIndex).toLowerCase();
+    const afterWindow = text.slice(matchEnd, matchEnd + 100).toLowerCase();
+    const nearby = beforeWindow + ' ' + afterWindow;
     for (const charName of Object.keys(characterVoices)) {
-      // Check each word of multi-word names (≥3 chars) and full name
-      if (nearby.includes(charName.toLowerCase())) return charName;
+      if (nearby.includes(charName.toLowerCase())) return { name: charName };
       const words = charName.split(/\s+/).filter(w => w.length >= 3);
       for (const word of words) {
-        if (nearby.includes(word.toLowerCase())) return charName;
+        if (nearby.includes(word.toLowerCase())) return { name: charName };
       }
     }
   }
@@ -852,71 +947,140 @@ function extractSpeaker(text, matchIndex, matchEnd, characterVoices) {
   return null;
 }
 
-function parseTextForTTS(text, firstPerson, characterVoices, protagonistName) {
+// Dialogue regex: double quotes (straight + curly), curly single quotes with word boundaries
+// Excludes straight single quotes to avoid false positives from contractions/possessives
+const DIALOGUE_REGEX = /[\u201C\u201F""]([^"\u201C\u201D\u201F""]+)[\u201D""]|(?<!\w)\u2018([^\u2019]+)\u2019(?!\w)/g;
+
+/**
+ * Split text into narration/dialogue segments (pure segmentation, no voice assignment).
+ * Each segment: { type: 'narration'|'dialogue', text, matchIndex?, matchEnd? }
+ */
+function segmentDialogue(text) {
   const segments = [];
-  // Match quoted dialogue: double quotes (straight + curly), curly single quotes with word boundaries
-  // Excludes straight single quotes to avoid false positives from contractions/possessives
-  const regex = /[\u201C\u201F""]([^"\u201C\u201D\u201F""]+)[\u201D""]|(?<!\w)\u2018([^\u2019]+)\u2019(?!\w)/g;
   let lastIndex = 0;
   let match;
-  let lastSpeaker = null;
-
-  while ((match = regex.exec(text)) !== null) {
-    // Add narration before this dialogue
-    const hasNarrationGap = match.index > lastIndex;
-    if (hasNarrationGap) {
+  DIALOGUE_REGEX.lastIndex = 0;
+  while ((match = DIALOGUE_REGEX.exec(text)) !== null) {
+    if (match.index > lastIndex) {
       const narration = text.slice(lastIndex, match.index).trim();
-      if (narration) {
-        segments.push({ type: 'narration', text: narration, speaker: null, isProtagonist: false });
-        lastSpeaker = null; // Reset on narration gap
-      }
+      if (narration) segments.push({ type: 'narration', text: narration });
     }
-
-    const dialogue = match[1] || match[2];
-    let isProtagonist = false;
-    let speaker = null;
-
-    if (firstPerson) {
-      const lookback = text.slice(Math.max(0, match.index - 80), match.index);
-      if (FIRST_PERSON_VERBS.test(lookback)) {
-        isProtagonist = true;
-      }
-    }
-
-    if (!isProtagonist) {
-      speaker = extractSpeaker(text, match.index, regex.lastIndex, characterVoices);
-    }
-
-    // Consecutive dialogue inheritance: if no speaker found and no narration gap, inherit last speaker
-    if (!isProtagonist && !speaker && lastSpeaker && !hasNarrationGap) {
-      speaker = lastSpeaker;
-    }
-
-    if (!isProtagonist && speaker && protagonistName) {
-      if (loreCreator.fuzzyNameScore(speaker, protagonistName) >= 0.7) {
-        isProtagonist = true;
-      }
-    }
-
-    // Track last speaker for consecutive dialogue
-    if (speaker) lastSpeaker = speaker;
-
-    segments.push({ type: 'dialogue', text: dialogue, speaker, isProtagonist });
-    lastIndex = regex.lastIndex;
+    segments.push({
+      type: 'dialogue',
+      text: match[1] || match[2],
+      matchIndex: match.index,
+      matchEnd: DIALOGUE_REGEX.lastIndex,
+    });
+    lastIndex = DIALOGUE_REGEX.lastIndex;
   }
-
-  // Trailing narration
   if (lastIndex < text.length) {
     const narration = text.slice(lastIndex).trim();
-    if (narration) segments.push({ type: 'narration', text: narration, speaker: null, isProtagonist: false });
+    if (narration) segments.push({ type: 'narration', text: narration });
   }
-
-  // If no dialogue was found, return the whole text as narration
   if (segments.length === 0 && text.trim()) {
-    segments.push({ type: 'narration', text: text.trim(), speaker: null, isProtagonist: false });
+    segments.push({ type: 'narration', text: text.trim() });
+  }
+  return segments;
+}
+
+/**
+ * Resolve speaker and protagonist status for a dialogue segment.
+ * Pure function — depends only on its inputs (no side effects beyond returning state updates).
+ */
+function resolveSpeaker(seg, fullText, ctx) {
+  if (seg.type !== 'dialogue') return { speaker: null, isProtagonist: false };
+
+  let isProtagonist = false;
+  let speaker = null;
+
+  if (ctx.firstPerson) {
+    const lookback = fullText.slice(Math.max(0, seg.matchIndex - 80), seg.matchIndex);
+    if (FIRST_PERSON_VERBS.test(lookback)) isProtagonist = true;
   }
 
-  return segments;
+  let extracted = null;
+  if (!isProtagonist) {
+    extracted = extractSpeaker(fullText, seg.matchIndex, seg.matchEnd, ctx.characterVoices);
+  }
+
+  // Resolve extracted result — name vs pronoun
+  if (extracted && extracted.name) {
+    speaker = extracted.name;
+  } else if (extracted && extracted.pronoun) {
+    const p = extracted.pronoun;
+    if (p === 'she' && ctx.lastFemaleSpeaker) speaker = ctx.lastFemaleSpeaker;
+    else if (p === 'he' && ctx.lastMaleSpeaker) speaker = ctx.lastMaleSpeaker;
+    else if (p === 'they' && ctx.lastSpeaker) speaker = ctx.lastSpeaker;
+  }
+
+  // Consecutive dialogue inheritance
+  if (!isProtagonist && !speaker && ctx.lastSpeaker && !ctx.hasNarrationGap) {
+    speaker = ctx.lastSpeaker;
+  }
+
+  if (!isProtagonist && speaker && ctx.protagonistName) {
+    if (loreCreator.fuzzyNameScore(speaker, ctx.protagonistName) >= FUZZY_MATCH_THRESHOLD) {
+      isProtagonist = true;
+    }
+  }
+
+  return { speaker, isProtagonist };
+}
+
+function parseTextForTTS(text, firstPerson, characterVoices, protagonistName, genderMap) {
+  const rawSegments = segmentDialogue(text);
+
+  // Speaker tracking context
+  const ctx = {
+    firstPerson,
+    characterVoices,
+    protagonistName,
+    lastSpeaker: null,
+    lastMaleSpeaker: null,
+    lastFemaleSpeaker: null,
+    hasNarrationGap: false,
+  };
+
+  // Seed gendered trackers from known voice assignments
+  if (genderMap && characterVoices) {
+    for (const name of Object.keys(characterVoices)) {
+      const g = genderMap[name];
+      if (g === 'male' && !ctx.lastMaleSpeaker) ctx.lastMaleSpeaker = name;
+      else if (g === 'female' && !ctx.lastFemaleSpeaker) ctx.lastFemaleSpeaker = name;
+      if (ctx.lastMaleSpeaker && ctx.lastFemaleSpeaker) break;
+    }
+  }
+
+  const results = [];
+  for (const seg of rawSegments) {
+    if (seg.type === 'narration') {
+      results.push({ type: 'narration', text: seg.text, speaker: null, isProtagonist: false });
+      ctx.lastSpeaker = null;
+      ctx.hasNarrationGap = true;
+      continue;
+    }
+
+    const { speaker, isProtagonist } = resolveSpeaker(seg, text, ctx);
+
+    // Update tracking context
+    if (speaker) {
+      ctx.lastSpeaker = speaker;
+      if (genderMap) {
+        let gender = genderMap[speaker];
+        if (!gender && characterVoices) {
+          const mapped = matchSpeakerToVoice(speaker, characterVoices);
+          if (mapped) gender = genderMap[mapped.name];
+        }
+        if (gender === 'female') ctx.lastFemaleSpeaker = speaker;
+        else if (gender === 'male') ctx.lastMaleSpeaker = speaker;
+      }
+    }
+    ctx.hasNarrationGap = false;
+
+    results.push({ type: 'dialogue', text: seg.text, speaker, isProtagonist });
+  }
+
+  return results;
 }
 
 ipcMain.handle('tts:get-settings', () => ({
@@ -942,6 +1106,9 @@ ipcMain.handle('tts:get-voices', () => {
 });
 
 ipcMain.handle('tts:generate-speech', async (_, { text, voice, storyId }) => {
+  if (!text || !voice) {
+    return { success: false, error: 'Text and voice are required' };
+  }
   const ss = storyId ? db.getStorySettings(storyId) : null;
   const provider = ss?.ttsProvider || store.get('ttsProvider');
   if (provider === 'venice') return veniceProvider.generateSpeech(text, voice, store);
@@ -950,6 +1117,9 @@ ipcMain.handle('tts:generate-speech', async (_, { text, voice, storyId }) => {
 });
 
 ipcMain.handle('tts:narrate-scene', async (_, { text, storyId, protagonistName }) => {
+  if (!text) {
+    return { success: false, error: 'Text is required for narration' };
+  }
   const ss = storyId ? db.getStorySettings(storyId) : null;
   const provider = ss?.ttsProvider || store.get('ttsProvider');
   const narratorVoice = ss?.ttsNarratorVoice || store.get('ttsNarratorVoice');
@@ -957,7 +1127,12 @@ ipcMain.handle('tts:narrate-scene', async (_, { text, storyId, protagonistName }
   const firstPerson = ss?.ttsFirstPerson ?? store.get('ttsFirstPerson');
   const ttsState = storyId ? db.getTtsState(storyId) : { characterVoices: {} };
   const characterVoices = ttsState.characterVoices || {};
-  const segments = parseTextForTTS(text, firstPerson, characterVoices, protagonistName);
+  // Build gender map from voice assignments for pronoun resolution
+  const genderMap = {};
+  for (const [name, voiceId] of Object.entries(characterVoices)) {
+    genderMap[name] = classifyVoiceGender(voiceId);
+  }
+  const segments = parseTextForTTS(text, firstPerson, characterVoices, protagonistName, genderMap);
   const results = [];
 
   for (const seg of segments) {
@@ -971,10 +1146,25 @@ ipcMain.handle('tts:narrate-scene', async (_, { text, storyId, protagonistName }
       voice = dialogueVoice;
     }
     const isVenice = provider === 'venice';
-    // Auto-detect TTS version from the voice preset
-    const audio = isVenice
-      ? await veniceProvider.generateSpeech(seg.text, voice, store)
-      : await novelaiProvider.generateSpeech(seg.text, voice, store, 'auto');
+    // Auto-detect TTS version from the voice preset — single retry on failure
+    let audio;
+    try {
+      audio = isVenice
+        ? await veniceProvider.generateSpeech(seg.text, voice, store)
+        : await novelaiProvider.generateSpeech(seg.text, voice, store, 'auto');
+    } catch (firstErr) {
+      console.warn('[Main] TTS segment retry after error:', firstErr.message);
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        audio = isVenice
+          ? await veniceProvider.generateSpeech(seg.text, voice, store)
+          : await novelaiProvider.generateSpeech(seg.text, voice, store, 'auto');
+      } catch (retryErr) {
+        console.error('[Main] TTS segment failed after retry:', retryErr.message);
+        results.push({ type: seg.type, text: seg.text, speaker: seg.speaker, isProtagonist: seg.isProtagonist, error: retryErr.message });
+        continue;
+      }
+    }
     results.push({ type: seg.type, text: seg.text, speaker: seg.speaker, isProtagonist: seg.isProtagonist, ...audio });
   }
 
@@ -1184,6 +1374,9 @@ Types: "action" for physical actions, "dialogue" for speech, "narrative" for des
 // IPC Handler — Electron-side scene prompt generation (v1 classic + v2 enhanced pipeline)
 ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artStyle, storyId }) => {
   try {
+    if (!storyText || storyText.length < 10) {
+      return { success: false, error: 'Story text too short for prompt generation' };
+    }
     const ss = storyId ? db.getStorySettings(storyId) : null;
     const sceneSettings = { ...SCENE_SETTINGS_DEFAULTS, ...store.get('sceneSettings'), ...(ss?.sceneSettings || {}) };
     const pipelineVersion = sceneSettings.pipelineVersion || 1;
@@ -1228,13 +1421,17 @@ ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artS
       // Get stored visual profiles
       const visualProfiles = storyId ? db.getVisualProfiles(storyId) : {};
 
-      const result = await scenePromptPipeline.generateScenePromptV2({
-        storyText, entries, storyId,
-        primaryGenerateTextFn: primaryGenFn,
-        secondaryGenerateTextFn: secondaryGenFn,
-        narrativeContext, rpgData, visualProfiles,
-        forceSequential,
-      });
+      const result = await withTimeout(
+        scenePromptPipeline.generateScenePromptV2({
+          storyText, entries, storyId,
+          primaryGenerateTextFn: primaryGenFn,
+          secondaryGenerateTextFn: secondaryGenFn,
+          narrativeContext, rpgData, visualProfiles,
+          forceSequential,
+        }),
+        LLM_TIMEOUT_MS * 2,
+        'Scene prompt pipeline'
+      );
 
       // Persist updated visual profiles
       if (result.success && result.updatedProfiles && storyId) {
@@ -1490,7 +1687,7 @@ function makeOllamaGenerateTextFn() {
     const ollamaModel = store.get('loreOllamaModel') || 'mistral:7b';
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120000);
+    const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
     let response;
     try {
@@ -1510,7 +1707,7 @@ function makeOllamaGenerateTextFn() {
       });
     } catch (err) {
       clearTimeout(timeout);
-      if (err.name === 'AbortError') throw new Error('Ollama API timed out after 120s');
+      if (err.name === 'AbortError') throw new Error(`Ollama API timed out after ${Math.round(LLM_TIMEOUT_MS / 1000)}s`);
       throw err;
     }
 
@@ -1544,13 +1741,16 @@ function makeAnthropicGenerateTextFn() {
   };
 }
 
+const LLM_FACTORY = {
+  novelai: makeNovelaiGenerateTextFn,
+  ollama: makeOllamaGenerateTextFn,
+  openai: makeOpenaiGenerateTextFn,
+  anthropic: makeAnthropicGenerateTextFn,
+};
+
 function makeGenerateTextFn(providerName) {
-  switch (providerName) {
-    case 'ollama': return makeOllamaGenerateTextFn();
-    case 'openai': return makeOpenaiGenerateTextFn();
-    case 'anthropic': return makeAnthropicGenerateTextFn();
-    default: return makeNovelaiGenerateTextFn();
-  }
+  const factory = LLM_FACTORY[providerName] || LLM_FACTORY.novelai;
+  return factory();
 }
 
 function makeLoreGenerateTextFn() {
@@ -1611,6 +1811,9 @@ function buildUnifiedContext(storyId, options = {}) {
 
 ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId, scanOptions }) => {
   try {
+    if (!storyText || storyText.length < 50) {
+      return { success: false, state: {}, error: 'Story text too short for scanning' };
+    }
     const settings = store.get('loreSettings') || loreCreator.DEFAULT_SETTINGS;
     const state = db.getLoreState(storyId) || {
       pendingEntries: [], pendingUpdates: [], pendingMerges: [],
@@ -1683,7 +1886,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       const optFields = storySettingsData.loreOptConfirmedFields;
       if (optProfile && optFields && optFields.length > 0) {
         effectiveSettings._lorebookProfile = optProfile;
-        effectiveSettings._confirmedFields = optFields;
+        effectiveSettings.confirmedOptFields = optFields;
         // Load entity profiles for optimization rules
         const compStateForOpt = db.getComprehension(storyId);
         if (compStateForOpt && compStateForOpt.entityProfiles) {
@@ -1693,15 +1896,19 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       }
     }
 
-    const result = await loreCreator.scanForLore(
-      storyText, effectiveSettings, existingEntries, state, generateTextFn,
-      (progress) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('lore:scan-progress', progress);
-        }
-      },
-      comprehensionContext || undefined,
-      secondaryGenerateTextFn
+    const result = await withTimeout(
+      loreCreator.scanForLore(
+        storyText, effectiveSettings, existingEntries, state, generateTextFn,
+        (progress) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('lore:scan-progress', progress);
+          }
+        },
+        comprehensionContext || undefined,
+        secondaryGenerateTextFn
+      ),
+      SCAN_TIMEOUT_MS,
+      'Lore scan'
     );
 
     // Extract transient optimization data before saving (renderer-only, not persisted)
@@ -1735,6 +1942,8 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
           const pendingLoreEntries = transient._pendingLoreEntries || [];
 
           db.setLitrpgState(storyId, rpgResult.state);
+          // Hydrate portrait data before sending to renderer (filesystem → base64)
+          hydratePortraits(rpgResult.state, storyId);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('litrpg:state-updated', {
               state: rpgResult.state,
@@ -2043,28 +2252,32 @@ ipcMain.handle('lore:start-progressive-scan', async (event, { storyId, storyText
     const loreState = db.getLoreState(storyId) || {};
     const categories = loreCreator.buildCategoryRegistry(loreState.customCategories || []);
 
-    const updatedState = await loreComprehension.runProgressiveScan(
-      storyText,
-      existingState,
-      generateTextFn,
-      (progress) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('lore:progressive-scan-progress', {
-            storyId,
-            ...progress,
-          });
+    const updatedState = await withTimeout(
+      loreComprehension.runProgressiveScan(
+        storyText,
+        existingState,
+        generateTextFn,
+        (progress) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('lore:progressive-scan-progress', {
+              storyId,
+              ...progress,
+            });
+          }
+        },
+        () => {
+          const ctrl = progressiveScans.get(storyId);
+          if (!ctrl) return true;
+          return ctrl.cancel;
+        },
+        {
+          secondaryGenerateTextFn,
+          categories,
+          knownEntries: existingEntries || [],
         }
-      },
-      () => {
-        const ctrl = progressiveScans.get(storyId);
-        if (!ctrl) return true;
-        return ctrl.cancel;
-      },
-      {
-        secondaryGenerateTextFn,
-        categories,
-        knownEntries: existingEntries || [],
-      }
+      ),
+      SCAN_TIMEOUT_MS,
+      'Progressive scan'
     );
 
     // Save state
@@ -2247,8 +2460,12 @@ ipcMain.handle('memory:process', async (event, { storyText, storyId }) => {
       );
     }
 
-    const result = await memoryManager.processNewContent(
-      storyText, state, settings, generateTextFn, comprehensionContext || undefined
+    const result = await withTimeout(
+      memoryManager.processNewContent(
+        storyText, state, settings, generateTextFn, comprehensionContext || undefined
+      ),
+      SCAN_TIMEOUT_MS,
+      'Memory processing'
     );
 
     db.setMemoryState(storyId, result.updatedState);
@@ -2295,15 +2512,19 @@ ipcMain.handle('memory:force-refresh', async (event, { storyText, storyId }) => 
       );
     }
 
-    const result = await memoryManager.forceRefresh(
-      storyText, settings, generateTextFn,
-      (progress) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('memory:progress', progress);
-        }
-      },
-      comprehensionContext || undefined,
-      secondaryGenerateTextFn
+    const result = await withTimeout(
+      memoryManager.forceRefresh(
+        storyText, settings, generateTextFn,
+        (progress) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('memory:progress', progress);
+          }
+        },
+        comprehensionContext || undefined,
+        secondaryGenerateTextFn
+      ),
+      SCAN_TIMEOUT_MS,
+      'Memory refresh'
     );
 
     db.setMemoryState(storyId, result.updatedState);
@@ -2386,16 +2607,20 @@ ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, f
       );
     }
 
-    const result = await litrpgTracker.scanForRPGData(
-      storyText, rpgState, loreEntries || [], generateTextFn,
-      (progress) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('litrpg:scan-progress', progress);
-        }
-      },
-      comprehensionContext || undefined,
-      secondaryGenerateTextFn,
-      { forceReEnrich: !!forceReEnrich }
+    const result = await withTimeout(
+      litrpgTracker.scanForRPGData(
+        storyText, rpgState, loreEntries || [], generateTextFn,
+        (progress) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('litrpg:scan-progress', progress);
+          }
+        },
+        comprehensionContext || undefined,
+        secondaryGenerateTextFn,
+        { forceReEnrich: !!forceReEnrich }
+      ),
+      SCAN_TIMEOUT_MS,
+      'LitRPG scan'
     );
 
     // Extract transient fields before saving (not persisted in DB)
@@ -2405,6 +2630,8 @@ ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, f
     const r4Skipped = transient._r4Skipped || 0;
 
     db.setLitrpgState(storyId, result.state);
+    // Hydrate portrait data before sending to renderer (filesystem → base64)
+    hydratePortraits(result.state, storyId);
     return { success: true, state: result.state, roleUpdates, pendingLoreEntries, r4Skipped, report: result.report };
   } catch (e) {
     console.error('[Main] LitRPG scan failed:', e.message);
@@ -2671,17 +2898,7 @@ ipcMain.handle('story:load-all', (event, { storyId, storyTitle }) => {
   const allData = db.loadAllStoryData(storyId);
 
   // Hydrate portrait data from filesystem for characters with portraitPath
-  if (allData.litrpgState && allData.litrpgState.characters) {
-    for (const [charId, char] of Object.entries(allData.litrpgState.characters)) {
-      if (char.portraitPath && portraitManager.hasPortrait(storyId, charId)) {
-        char._portraitData = portraitManager.getPortraitAsBase64(storyId, charId, false);
-        char._thumbnailData = portraitManager.getPortraitAsBase64(storyId, charId, true);
-      } else if (char.portraitPath) {
-        // Portrait file missing — clear stale flag
-        char.portraitPath = false;
-      }
-    }
-  }
+  hydratePortraits(allData.litrpgState, storyId);
 
   return allData;
 });
@@ -2718,6 +2935,43 @@ app.whenReady().then(() => {
     db.migrateFromStore(store);
     store.set('migratedToSqlite', true);
     console.log('[Main] Migration complete');
+  }
+
+  // One-time: bump default guidance scale from 5 → 6
+  if (!store.get('migratedScale6')) {
+    const img = store.get('imageSettings');
+    if (img && img.scale === 5) {
+      img.scale = 6;
+      store.set('imageSettings', img);
+      console.log('[Main] Migrated guidance scale 5 → 6');
+    }
+    store.set('migratedScale6', true);
+  }
+
+  // One-time: improve image quality defaults (sampler, UC preset, etc.)
+  if (!store.get('migratedImageQuality1')) {
+    const img = store.get('imageSettings');
+    if (img) {
+      if (img.sampler === 'k_euler') img.sampler = 'k_euler_ancestral';
+      if (['k_dpmpp_2m', 'k_dpmpp_sde'].includes(img.sampler)) img.sampler = 'k_euler_ancestral';
+      if (img.ucPreset === 'light') img.ucPreset = 'heavy';
+      img.cfgRescale = 0;
+      img.noiseSchedule = 'native';
+      if (img.steps && img.steps < 20) img.steps = 28;
+      store.set('imageSettings', img);
+      console.log('[Main] Migrated image quality defaults');
+    }
+    store.set('migratedImageQuality1', true);
+  }
+
+  // One-time: migrate removed Venice video resolutions (720p/480p → 1080p)
+  if (!store.get('migratedVeniceVideoRes')) {
+    const res = store.get('veniceVideoResolution');
+    if (res === '720p' || res === '480p') {
+      store.set('veniceVideoResolution', '1080p');
+      console.log('[Main] Migrated Venice video resolution to 1080p');
+    }
+    store.set('migratedVeniceVideoRes', true);
   }
 
   setupTokenInterception();

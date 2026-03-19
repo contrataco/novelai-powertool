@@ -1,7 +1,7 @@
 // litrpg-panel.js — LitRPG RPG tab: stat sheets, quest log, party view, NPC registry, inventory, currency, status effects
 
 import { state, bus } from './state.js';
-import { saveLoreState, refreshLoreUI } from './lore-creator.js';
+import { saveLoreState, refreshLoreUI, loreCall } from './lore-creator.js';
 import {
   rpgTab, rpgContent,
   rpgDetectionBanner, rpgEnableBtn, rpgDismissBtn,
@@ -52,6 +52,61 @@ const ROLE_COLORS = {
   'mount': '#a1887f',
   'npc': '#90a4ae',
 };
+
+// =========================================================================
+// REVERSE SYNC HELPERS
+// =========================================================================
+
+// Client-side change scoring for reverse sync
+function scoreChange(change) {
+  const { field, before, after } = change;
+
+  if (field === 'Level') {
+    const oldVal = parseInt(before) || 0;
+    const newVal = parseInt(after) || 0;
+    if (newVal > oldVal) return { ...change, confidence: 'high', reason: 'Level increase' };
+    if (newVal < oldVal) return { ...change, confidence: 'low', reason: 'Level decrease' };
+  }
+  if (field.startsWith('Stat:')) {
+    const oldVal = typeof before === 'object' ? (before?.value || 0) : (parseInt(before) || 0);
+    const newVal = typeof after === 'object' ? (after?.value || 0) : (parseInt(after) || 0);
+    if (newVal > oldVal) return { ...change, confidence: 'high', reason: 'Stat increase' };
+    if (newVal < oldVal) return { ...change, confidence: 'low', reason: 'Stat decrease' };
+  }
+  if (field === 'Currency' || field.startsWith('Currency:') || field === 'XP') {
+    return { ...change, confidence: 'high', reason: 'Progression update' };
+  }
+  if (field === 'Cultivation Realm' || field === 'Cultivation Stage') {
+    return { ...change, confidence: 'high', reason: 'Cultivation progression' };
+  }
+  if (!before && after) return { ...change, confidence: 'high', reason: 'New data added' };
+  if (before && !after) return { ...change, confidence: 'low', reason: 'Data removed' };
+  if (field === 'Class' || field === 'Subclass' || field === 'Race' || field === 'Role') {
+    return { ...change, confidence: 'medium', reason: `${field} changed` };
+  }
+  return { ...change, confidence: 'medium', reason: 'Field update' };
+}
+
+function applyChangeToChar(char, scoredChange) {
+  const { field, after } = scoredChange;
+  if (field === 'Level') char.level = parseInt(after) || char.level;
+  else if (field === 'Class') char.class = after;
+  else if (field === 'Subclass') char.subclass = after;
+  else if (field === 'Race') char.race = after;
+  else if (field === 'Role') char.role = after;
+  else if (field === 'XP') char.xp = after;
+  else if (field === 'Cultivation Realm') char.cultivationRealm = after;
+  else if (field === 'Cultivation Stage') char.cultivationStage = after;
+  else if (field.startsWith('Stat:')) {
+    const statName = field.replace('Stat: ', '');
+    if (!char.stats) char.stats = {};
+    char.stats[statName] = after;
+  } else if (field.startsWith('Currency:')) {
+    const currKey = field.replace('Currency: ', '');
+    if (!char.currency) char.currency = {};
+    char.currency[currKey] = after;
+  }
+}
 
 // =========================================================================
 // STATE HELPERS
@@ -147,7 +202,7 @@ function renderParty(rpg) {
   if (partyMembers.length === 0) {
     rpgPartyList.innerHTML = `<div class="rpg-party-empty">
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L4 7v6c0 5.5 3.4 10.7 8 12 4.6-1.3 8-6.5 8-12V7l-8-5z"/></svg>
-      <div style="font-size:11px;">No party members detected yet.</div>
+      <div style="font-size:11px;">No party members detected. Run a <b>Lore Scan</b> — party members are identified automatically from your story.</div>
     </div>`;
     return;
   }
@@ -161,9 +216,9 @@ function renderParty(rpg) {
       <div class="rpg-card-bg-gradient" style="background:linear-gradient(90deg, ${roleColor}14 0%, transparent 100%);"></div>
       <div class="rpg-portrait-ring" style="border: 2px solid ${roleColor};">
         <div class="rpg-portrait-inner">
-          ${char.portraitPath
-            ? `<img src="data:image/png;base64,${char._thumbnailData || ''}" alt="${escapeHtml(char.name)}">`
-            : `<svg width="24" height="24" viewBox="0 0 40 40" fill="#666" opacity="0.3"><ellipse cx="20" cy="14" rx="9" ry="10"/><ellipse cx="20" cy="42" rx="16" ry="14"/></svg>`}
+          ${char._thumbnailData
+            ? `<img src="data:image/png;base64,${char._thumbnailData}" alt="${escapeHtml(char.name)}">`
+            : `<span class="rpg-portrait-initial">${escapeHtml((char.name || '?')[0].toUpperCase())}</span>`}
         </div>
         ${char.level ? `<span class="rpg-level-badge">${char.level}</span>` : ''}
       </div>
@@ -346,9 +401,11 @@ function buildStatSheetHTML(char) {
   return `
     <div class="rpg-stat-header">
       <div class="rpg-portrait-large-v2" style="border: 3px solid ${roleColor}; border-radius: 8px;">
-        ${char.portraitPath
-          ? `<img src="data:image/png;base64,${char._portraitData || ''}" alt="${escapeHtml(char.name)}">`
-          : `<svg width="48" height="48" viewBox="0 0 40 40" fill="#666" opacity="0.3"><ellipse cx="20" cy="14" rx="9" ry="10"/><ellipse cx="20" cy="42" rx="16" ry="14"/></svg>`}
+        ${char._portraitData
+          ? `<img src="data:image/png;base64,${char._portraitData}" alt="${escapeHtml(char.name)}">`
+          : char._thumbnailData
+            ? `<img src="data:image/png;base64,${char._thumbnailData}" alt="${escapeHtml(char.name)}">`
+            : `<span class="rpg-portrait-initial rpg-portrait-initial-lg">${escapeHtml((char.name || '?')[0].toUpperCase())}</span>`}
         <div class="rpg-portrait-actions">
           <button class="rpg-portrait-generate" title="Generate Portrait"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
           <button class="rpg-portrait-upload" title="Upload Portrait"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></button>
@@ -780,7 +837,7 @@ function renderQuests(rpg) {
   rpgQuestCount.textContent = `(${active.length} active)`;
 
   if (active.length === 0) {
-    rpgQuestListActive.innerHTML = '<div style="font-size:11px;color:#666;padding:4px;">No active quests.</div>';
+    rpgQuestListActive.innerHTML = '<div style="font-size:11px;color:#666;padding:4px;">No active quests. Quest tracking activates when your story mentions objectives, missions, or quests.</div>';
   } else {
     rpgQuestListActive.innerHTML = active.map(q => buildQuestCardHTML(q)).join('');
   }
@@ -842,9 +899,9 @@ function buildNpcCardHTML(id, npc, q) {
   return `
   <div class="rpg-npc-card rpg-clickable" data-char-id="${escapeHtml(id)}" style="cursor:pointer;">
     <div class="rpg-portrait" style="width:28px;height:28px;flex-shrink:0;border: 2px solid ${dispColor};border-radius:50%;">
-      ${npc.portraitPath
-        ? `<img src="data:image/png;base64,${npc._thumbnailData || ''}" alt="${escapeHtml(npc.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
-        : `<span class="rpg-portrait-placeholder"><svg width="18" height="18" viewBox="0 0 40 40" fill="#666" opacity="0.3"><ellipse cx="20" cy="14" rx="9" ry="10"/><ellipse cx="20" cy="42" rx="16" ry="14"/></svg></span>`}
+      ${npc._thumbnailData
+        ? `<img src="data:image/png;base64,${npc._thumbnailData}" alt="${escapeHtml(npc.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
+        : `<span class="rpg-portrait-initial rpg-portrait-initial-sm">${escapeHtml((npc.name || '?')[0].toUpperCase())}</span>`}
     </div>
     <div style="flex:1;min-width:0;">
       <span class="rpg-npc-name">${highlightMatch(npc.name, q)}${npc.level ? ` (Lv.${npc.level})` : ''}${npc.class ? ` — ${highlightMatch(npc.class, q)}` : ''}</span>
@@ -879,7 +936,7 @@ function renderNPCs(rpg) {
     : `(${npcEntries.length})`;
 
   if (npcEntries.length === 0) {
-    rpgNpcList.innerHTML = '<div style="font-size:11px;color:#666;padding:4px;">No NPCs tracked yet.</div>';
+    rpgNpcList.innerHTML = '<div style="font-size:11px;color:#666;padding:4px;">No NPCs identified. NPCs are detected during story scanning — keep writing!</div>';
     return;
   }
 
@@ -1522,12 +1579,20 @@ async function runRpgScan() {
       `);
     } catch (_) { /* fallback empty */ }
 
+    const startedForStory = state.currentStoryId;
     const scanOptions = {};
     if (rpgForceReEnrich && rpgForceReEnrich.checked) {
       scanOptions.forceReEnrich = true;
       rpgForceReEnrich.checked = false;
     }
     const result = await window.sceneVisualizer.litrpgScan(storyText, state.currentStoryId, loreEntries, scanOptions);
+
+    // Discard result if story changed during scan
+    if (state.currentStoryId !== startedForStory) {
+      console.log('[LitRPG] Discarding scan result — story changed during scan');
+      return;
+    }
+
     if (result.success) {
       state.litrpgState = result.state;
       refreshRpgUI();
@@ -1686,57 +1751,166 @@ async function applyRoleUpdatesToLorebook(roleUpdates) {
   }
 }
 
-async function reverseSyncFromLorebook() {
-  const rpg = getRpgState();
-  if (!rpg.enabled) return;
+// Smart reverse sync: auto-apply high-confidence, skip regressions, show ambiguous as pending
+async function handleReverseSync() {
+  if (!state.currentStoryId || !state.loreProxyReady) {
+    showToast('Proxy not connected', null, 'warn');
+    return;
+  }
 
-  if (rpgReverseSyncBtn) { rpgReverseSyncBtn.disabled = true; rpgReverseSyncBtn.textContent = '...'; }
+  rpgReverseSyncBtn.disabled = true;
+  rpgReverseSyncBtn.title = 'Sync in progress';
 
   try {
-    // Read lorebook entries via proxy
-    const entries = await webview.executeJavaScript(`
-      (function() {
-        if (window.__loreCreator && window.__loreCreator.getEntries) {
-          return window.__loreCreator.getEntries();
-        }
-        return [];
-      })()
-    `);
+    // Get lorebook entries via proxy
+    const entries = await loreCall('getEntries');
+    if (!entries || entries.length === 0) {
+      showToast('No lorebook entries found', null, 'warn');
+      return;
+    }
 
-    // Filter to character entries (check @type metadata or category)
+    // Filter to character entries
     const characterEntries = entries.filter(e => {
       if (e.text && parseMetadataClient(e.text).type === 'character') return true;
-      // Fallback: check if it's in a characters category
       return e.category === 'character' || (e.text && /^Name:/m.test(e.text) && /^(Age|Gender|Physical Appearance):/m.test(e.text));
     });
 
     if (characterEntries.length === 0) {
-      showToast('No character entries found in lorebook');
+      showToast('No character entries found in lorebook', null, 'warn');
       return;
     }
 
     const result = await window.sceneVisualizer.litrpgReverseSyncAll(characterEntries, state.currentStoryId);
-    if (result.success) {
-      if (result.updatedCount > 0) {
-        state.litrpgState = result.state;
-        refreshRpgUI();
-        const changedNames = (result.results || []).filter(r => r.changed && r.success).map(r => r.entryName);
-        showToast(`Updated ${changedNames.length}: ${changedNames.join(', ')}`, 4000, 'success');
-      } else {
-        showToast('No RPG changes found in lorebook');
-      }
-      if (result.failedCount > 0) {
-        const failedNames = (result.results || []).filter(r => !r.success).map(r => r.entryName);
-        showToast(`Failed to sync: ${failedNames.join(', ')}`, 4000, 'error');
-      }
-    } else {
-      showToast('Reverse sync failed');
+
+    if (!result.success) {
+      showToast(result.error || 'Reverse sync failed', null, 'error');
+      return;
     }
-  } catch (err) {
-    console.error('[LitRPG] Reverse sync error:', err);
-    showToast('Reverse sync failed: ' + (err.message || 'Unknown error'));
+
+    const results = result.results || [];
+    if (results.length === 0) {
+      showToast('No syncable changes found');
+      return;
+    }
+
+    // Score and categorize changes
+    const autoApplied = [];
+    const skipped = [];
+    const ambiguous = [];
+    const snapshots = {}; // for undo: charId -> previous state
+
+    for (const r of results) {
+      if (!r.changed && !r.isNew) continue;
+
+      const scored = (r.changes || []).map(c => scoreChange(c));
+
+      const high = scored.filter(s => s.confidence === 'high');
+      const low = scored.filter(s => s.confidence === 'low');
+      const med = scored.filter(s => s.confidence === 'medium');
+
+      if (high.length > 0 || r.isNew) {
+        // Snapshot for undo
+        if (r.charId && state.litrpgState?.characters?.[r.charId]) {
+          snapshots[r.charId] = JSON.parse(JSON.stringify(state.litrpgState.characters[r.charId]));
+        }
+
+        // Auto-apply: merge parsed data into RPG state
+        if (r.isNew && r.parsed) {
+          // New character
+          const newId = `char_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+          if (!state.litrpgState.characters) state.litrpgState.characters = {};
+          state.litrpgState.characters[newId] = {
+            id: newId,
+            name: r.entryName || 'Unknown',
+            ...r.parsed,
+            lastUpdated: new Date().toISOString(),
+          };
+          autoApplied.push({ name: r.entryName, type: 'new', count: Object.keys(r.parsed).length });
+        } else if (r.charId && r.parsed) {
+          // Apply high-confidence changes
+          const char = state.litrpgState.characters[r.charId];
+          if (char) {
+            for (const sc of high) {
+              applyChangeToChar(char, sc);
+            }
+            char.lastUpdated = new Date().toISOString();
+            autoApplied.push({ name: char.name, type: 'update', count: high.length });
+          }
+        }
+      }
+
+      if (low.length > 0) {
+        skipped.push({ name: r.entryName || r.charId, count: low.length });
+      }
+
+      if (med.length > 0) {
+        // Add as pending updates for user review
+        const rpg = getRpgState();
+        if (!rpg.pendingUpdates) rpg.pendingUpdates = [];
+        for (const mc of med) {
+          rpg.pendingUpdates.push({
+            id: `rsync_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+            charId: r.charId,
+            charName: r.entryName || 'Unknown',
+            field: mc.field,
+            before: mc.before,
+            after: mc.after,
+            reason: mc.reason,
+            source: 'reverse-sync',
+            timestamp: new Date().toISOString(),
+          });
+        }
+        ambiguous.push({ name: r.entryName || r.charId, count: med.length });
+      }
+    }
+
+    // Save state
+    saveLitrpgState();
+
+    // Build summary toast
+    const parts = [];
+    const totalAutoApplied = autoApplied.reduce((sum, a) => sum + a.count, 0);
+    if (totalAutoApplied > 0) {
+      const names = autoApplied.map(a => a.name).slice(0, 3).join(', ');
+      parts.push(`${totalAutoApplied} changes for ${names}`);
+    }
+    if (ambiguous.length > 0) {
+      const ambCount = ambiguous.reduce((sum, a) => sum + a.count, 0);
+      parts.push(`${ambCount} need review`);
+    }
+    if (skipped.length > 0) {
+      console.log('[LitRPG] Reverse sync skipped regressions:', skipped);
+    }
+
+    if (parts.length > 0) {
+      const hasUndo = Object.keys(snapshots).length > 0;
+      showToast(
+        `Synced: ${parts.join(', ')}`,
+        null,
+        'success',
+        hasUndo ? {
+          onUndo: () => {
+            // Restore snapshots
+            for (const [charId, snapshot] of Object.entries(snapshots)) {
+              state.litrpgState.characters[charId] = snapshot;
+            }
+            saveLitrpgState();
+            refreshRpgUI();
+            showToast('Reverse sync undone');
+          },
+        } : {}
+      );
+    } else {
+      showToast('No actionable changes found');
+    }
+
+    refreshRpgUI();
+  } catch (e) {
+    console.error('[LitRPG] Reverse sync error:', e);
+    showToast(e.message || 'Reverse sync failed', null, 'error');
   } finally {
-    if (rpgReverseSyncBtn) { rpgReverseSyncBtn.disabled = false; rpgReverseSyncBtn.textContent = 'Sync from Lorebook'; }
+    rpgReverseSyncBtn.disabled = false;
+    rpgReverseSyncBtn.title = '';
   }
 }
 
@@ -1925,7 +2099,7 @@ export function init() {
   if (rpgDismissBtn) rpgDismissBtn.addEventListener('click', dismissDetection);
   if (rpgScanBtn) rpgScanBtn.addEventListener('click', runRpgScan);
   if (rpgSyncLorebookBtn) rpgSyncLorebookBtn.addEventListener('click', syncToLorebook);
-  if (rpgReverseSyncBtn) rpgReverseSyncBtn.addEventListener('click', reverseSyncFromLorebook);
+  if (rpgReverseSyncBtn) rpgReverseSyncBtn.addEventListener('click', handleReverseSync);
   if (rpgDisableBtn) rpgDisableBtn.addEventListener('click', disableLitRPG);
 
   // Bulk actions (Phase 5B)

@@ -8,7 +8,8 @@
  * Stages 1a and 1b run in parallel on separate LLM providers when available.
  */
 
-const { recoverJSON, retryLLM } = require('./lore-creator');
+const { retryLLM } = require('./lore-creator');
+const { recoverJSON, withTimeout, LLM_TIMEOUT_MS } = require('./shared-utils');
 
 const LOG_PREFIX = '[Pipeline]';
 
@@ -133,7 +134,9 @@ Rules:
 - emotionalTone: the emotional state of the scene
 - cameraAngle: suggested framing (e.g. "close-up", "wide shot", "low angle")
 - Extract only what the text explicitly states or strongly implies
-- Leave fields empty if not determinable`;
+- Leave fields empty if not determinable
+- Use danbooru/booru-style tags, not natural language (e.g. "night sky, moonlight, outdoors" not "The scene takes place under the night sky with soft moonlight")
+- Keep each field to 2-5 comma-separated tags`;
 
   let userContent = `Analyze this scene:\n\n${storyText.slice(-3000)}`;
   if (narrativeContext) {
@@ -213,7 +216,10 @@ Rules:
 - Only include characters present in the current scene
 - For characters with a stored profile, only note DEVIATIONS from baseline
 - Use the RPG data for accurate equipment/class descriptions
-- Leave fields empty if not mentioned`;
+- Leave fields empty if not mentioned
+- Use danbooru/booru-style tags for all visual descriptions (e.g. "long blonde hair, blue eyes, pointy ears" not "She has long blonde hair and blue eyes with pointed ears")
+- Describe clothing with tags (e.g. "white dress, armor, gauntlets" not "wearing a white dress with armor and gauntlets")
+- Keep each field to 2-6 comma-separated tags`;
 
   let userContent = `Extract character visuals from this scene:\n\n${storyText.slice(-3000)}`;
   userContent += '\n\nCharacter Data:\n';
@@ -249,39 +255,73 @@ Rules:
 
 // --- Stage 2: Deterministic Assembly ---
 
-function assemblePrompt(sceneAnalysis, characterData, visualProfiles, artStyle) {
-  const parts = [];
+function assemblePrompt(sceneAnalysis, characterData, visualProfiles) {
+  const sceneParts = [];
+  const charCaptions = [];
 
-  // Characters with full appearance
-  if (characterData?.characters) {
-    for (const char of characterData.characters) {
-      const charParts = [char.name];
-      // Merge stored profile with extracted data
+  // --- Character count tag ---
+  const chars = characterData?.characters || [];
+  if (chars.length > 0) {
+    const genderCounts = { girl: 0, boy: 0, other: 0 };
+    for (const char of chars) {
+      const app = (char.appearance || '').toLowerCase();
       const stored = visualProfiles?.[char.name] || {};
-      const appearance = char.appearance || [stored.hair, stored.eyes, stored.build, stored.race, stored.distinguishingFeatures].filter(Boolean).join(', ');
-      if (appearance) charParts.push(appearance);
-      const clothing = char.clothing || stored.currentClothing || '';
-      if (clothing) charParts.push(clothing);
-      const equipment = char.equipment || (stored.currentEquipment || []).join(', ');
-      if (equipment) charParts.push(equipment);
-      if (char.expression) charParts.push(char.expression);
-      if (char.pose) charParts.push(char.pose);
-      if (char.injuries) charParts.push(char.injuries);
-      parts.push(charParts.join(', '));
+      const storedStr = [stored.hair, stored.eyes, stored.build, stored.race].filter(Boolean).join(' ').toLowerCase();
+      const combined = app + ' ' + storedStr;
+      if (/\b(female|woman|girl|she|her)\b/.test(combined)) genderCounts.girl++;
+      else if (/\b(male|man|boy|he|his)\b/.test(combined)) genderCounts.boy++;
+      else genderCounts.other++;
+    }
+    const countTags = [];
+    const numWord = (n) => n === 1 ? '1' : n === 2 ? '2' : n === 3 ? '3' : `${n}`;
+    if (genderCounts.girl > 0) countTags.push(genderCounts.girl === 1 ? '1girl' : `${numWord(genderCounts.girl)}girls`);
+    if (genderCounts.boy > 0) countTags.push(genderCounts.boy === 1 ? '1boy' : `${numWord(genderCounts.boy)}boys`);
+    if (genderCounts.other > 0) countTags.push(genderCounts.other === 1 ? '1other' : `${numWord(genderCounts.other)}others`);
+    if (chars.length > 2) countTags.push('multiple characters');
+    sceneParts.push(...countTags);
+  }
+
+  // --- Per-character captions (for V4 char_captions) ---
+  for (let i = 0; i < chars.length; i++) {
+    const char = chars[i];
+    const charTags = [];
+    const stored = visualProfiles?.[char.name] || {};
+
+    // Appearance tags
+    const appearance = char.appearance || [stored.hair, stored.eyes, stored.build, stored.race, stored.distinguishingFeatures].filter(Boolean).join(', ');
+    if (appearance) charTags.push(appearance);
+
+    // Clothing
+    const clothing = char.clothing || stored.currentClothing || '';
+    if (clothing) charTags.push(clothing);
+
+    // Equipment
+    const equipment = char.equipment || (stored.currentEquipment || []).join(', ');
+    if (equipment) charTags.push(equipment);
+
+    // Expression & pose
+    if (char.expression) charTags.push(char.expression);
+    if (char.pose) charTags.push(char.pose);
+    if (char.injuries) charTags.push(char.injuries);
+
+    if (charTags.length > 0) {
+      // Compute default center position
+      let cx = 0.5;
+      if (chars.length === 2) cx = i === 0 ? 0.3 : 0.7;
+      else if (chars.length >= 3) cx = (i + 1) / (chars.length + 1);
+
+      charCaptions.push({
+        char_caption: charTags.join(', '),
+        centers: [{ x: Math.round(cx * 100) / 100, y: 0.5 }],
+        _name: char.name, // internal — used for character matching, stripped before API call
+      });
     }
   }
 
-  // Action
-  if (sceneAnalysis?.actionInProgress) {
-    parts.push(sceneAnalysis.actionInProgress);
-  }
+  // --- Scene / environment tags ---
+  if (sceneAnalysis?.actionInProgress) sceneParts.push(sceneAnalysis.actionInProgress);
+  if (sceneAnalysis?.location) sceneParts.push(sceneAnalysis.location);
 
-  // Location
-  if (sceneAnalysis?.location) {
-    parts.push(sceneAnalysis.location);
-  }
-
-  // Mood and atmosphere
   const atmosphere = [
     sceneAnalysis?.mood,
     sceneAnalysis?.lighting,
@@ -289,21 +329,17 @@ function assemblePrompt(sceneAnalysis, characterData, visualProfiles, artStyle) 
     sceneAnalysis?.timeOfDay,
     sceneAnalysis?.emotionalTone,
   ].filter(Boolean);
-  if (atmosphere.length > 0) {
-    parts.push(atmosphere.join(', '));
-  }
+  if (atmosphere.length > 0) sceneParts.push(atmosphere.join(', '));
+  if (sceneAnalysis?.cameraAngle) sceneParts.push(sceneAnalysis.cameraAngle);
 
-  // Camera angle
-  if (sceneAnalysis?.cameraAngle) {
-    parts.push(sceneAnalysis.cameraAngle);
-  }
+  // --- Build flat prompt (backwards compat / display) ---
+  // Flat format: scene tags, then each character's tags separated by pipes for readability
+  const baseCaption = sceneParts.join(', ');
+  const allCharTags = charCaptions.map(c => c.char_caption);
+  const flatParts = [baseCaption, ...allCharTags].filter(Boolean);
+  const prompt = flatParts.join(', ');
 
-  // Art style
-  if (artStyle) {
-    parts.push(artStyle);
-  }
-
-  return parts.join(', ');
+  return { prompt, baseCaption, charCaptions };
 }
 
 // --- Visual Profile Update ---
@@ -355,7 +391,6 @@ function updateVisualProfiles(characterData, existingProfiles) {
  * @param {Object} params
  * @param {string} params.storyText - Full story text
  * @param {Array} params.entries - Lorebook entries
- * @param {string} params.artStyle - Resolved art style tags
  * @param {string} params.storyId - Current story ID
  * @param {Function} params.primaryGenerateTextFn - Primary LLM provider
  * @param {Function|null} params.secondaryGenerateTextFn - Secondary LLM provider (for parallel)
@@ -366,7 +401,7 @@ function updateVisualProfiles(characterData, existingProfiles) {
  * @returns {Promise<{success: boolean, prompt?: string, negativePrompt?: string, updatedProfiles?: Object, error?: string}>}
  */
 async function generateScenePromptV2({
-  storyText, entries, artStyle, storyId,
+  storyText, entries, storyId,
   primaryGenerateTextFn, secondaryGenerateTextFn,
   narrativeContext, rpgData, visualProfiles,
   forceSequential = false,
@@ -423,9 +458,10 @@ async function generateScenePromptV2({
     }
 
     // Stage 2: Deterministic assembly
-    const prompt = assemblePrompt(sceneAnalysis, characterData, visualProfiles, artStyle);
+    const assembled = assemblePrompt(sceneAnalysis, characterData, visualProfiles);
+    const prompt = assembled.prompt;
 
-    if (!prompt || prompt.length < 10) {
+    if (!assembled.prompt || assembled.prompt.length < 10) {
       console.warn(`${LOG_PREFIX} Assembly produced insufficient prompt, falling back`);
       return { success: false, error: 'Pipeline produced empty prompt' };
     }
@@ -433,7 +469,7 @@ async function generateScenePromptV2({
     // Update visual profiles
     const updatedProfiles = updateVisualProfiles(characterData, visualProfiles);
 
-    const negativePrompt = 'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, jpeg artifacts, signature, watermark';
+    const negativePrompt = '';
 
     console.log(`${LOG_PREFIX} v2 prompt generated (${prompt.length} chars, ${characterData?.characters?.length || 0} characters)`);
 
@@ -442,6 +478,8 @@ async function generateScenePromptV2({
       prompt,
       negativePrompt,
       updatedProfiles,
+      baseCaption: assembled.baseCaption,
+      charCaptions: assembled.charCaptions,
     };
   } catch (err) {
     console.error(`${LOG_PREFIX} Pipeline failed:`, err.message);

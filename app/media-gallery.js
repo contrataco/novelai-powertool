@@ -7,6 +7,8 @@ const { nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+const { generateId: _sharedGenerateId } = require('./shared-utils');
+
 const LOG_PREFIX = '[MediaGallery]';
 const IMAGE_CAP = 100;
 const VIDEO_CAP = 20;
@@ -34,7 +36,7 @@ function getStoryDir(storyId) {
 }
 
 function generateId() {
-  return 'mi_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  return _sharedGenerateId('mi');
 }
 
 // ---------------------------------------------------------------------------

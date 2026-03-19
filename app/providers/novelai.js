@@ -1,6 +1,6 @@
 const AdmZip = require('adm-zip');
 
-// Art style presets for NovelAI
+// Art style presets for NovelAI (danbooru-compatible tags)
 const ART_STYLES = {
   'no-style': {
     name: 'No Style',
@@ -9,53 +9,48 @@ const ART_STYLES = {
   },
   'anime': {
     name: 'Anime',
-    prompt: ', anime style, detailed, vibrant colors, clean lines',
+    prompt: ', anime coloring, cel shading, detailed, vibrant colors',
     negative: '',
   },
   'cinematic': {
     name: 'Cinematic',
-    prompt: ', cinematic lighting, dramatic atmosphere, film still, depth of field, 75mm',
+    prompt: ', cinematic lighting, dramatic atmosphere, depth of field, bokeh',
     negative: 'flat lighting, boring composition',
   },
   'digital-painting': {
     name: 'Digital Painting',
-    prompt: ', digital painting, highly detailed, artstation, sharp focus, illustration, concept art',
+    prompt: ', digital media, illustration, highly detailed',
     negative: '',
   },
   'oil-painting': {
     name: 'Oil Painting',
-    prompt: ', oil painting, painterly, canvas texture, brush strokes, rich colors, fine art',
+    prompt: ', oil painting (medium), painterly, traditional media, canvas texture, rich colors',
     negative: '',
   },
   'watercolor': {
     name: 'Watercolor',
-    prompt: ', watercolor painting, soft colors, textured paper, flowing paint, delicate details',
-    negative: 'sharp edges, digital artifacts',
+    prompt: ', watercolor (medium), traditional media, soft edges, textured paper',
+    negative: '',
   },
   'fantasy-art': {
     name: 'Fantasy Art',
-    prompt: ', fantasy art, epic, dramatic lighting, highly detailed, magical atmosphere',
+    prompt: ', fantasy, epic, dramatic lighting, detailed background, magical atmosphere',
     negative: '',
   },
   'manga': {
     name: 'Manga',
-    prompt: ', manga style, black and white, ink drawing, detailed linework, dramatic shading, screentone',
-    negative: 'color, painted',
+    prompt: ', monochrome, greyscale, ink, lineart, screentone',
+    negative: 'color',
   },
   'concept-art': {
     name: 'Concept Art',
-    prompt: ', concept art, illustration, matte painting, cinematic composition, dynamic lighting',
+    prompt: ', concept art, illustration, cinematic composition, dynamic lighting',
     negative: '',
   },
   'painted-anime': {
     name: 'Painted Anime',
-    prompt: ', painted anime, painterly anime style, soft shading, vibrant, detailed background',
-    negative: 'sketch, lineart, flat colors',
-  },
-  'photorealistic': {
-    name: 'Photorealistic',
-    prompt: ', photorealistic, hyperrealistic, professional photography, sharp focus, DSLR, 85mm lens',
-    negative: 'painting, drawn, illustration, cartoon',
+    prompt: ', painterly, no lineart, soft shading, vibrant, detailed background',
+    negative: 'flat colors',
   },
   'pixel-art': {
     name: 'Pixel Art',
@@ -81,10 +76,10 @@ const MODEL_CONFIG = {
 const QUALITY_PRESETS = {
   'nai-diffusion-3': ', best quality, amazing quality, very aesthetic, absurdres',
   'nai-diffusion-furry-3': ', {best quality}, {amazing quality}',
-  'nai-diffusion-4-curated-preview': ', rating:general, best quality, very aesthetic, absurdres',
+  'nai-diffusion-4-curated-preview': ', rating:general, amazing quality, very aesthetic, absurdres',
   'nai-diffusion-4-full': ', no text, best quality, very aesthetic, absurdres',
-  'nai-diffusion-4-5-curated': ', location, very aesthetic, masterpiece, no text, rating:general',
-  'nai-diffusion-4-5-full': ', location, very aesthetic, masterpiece, no text',
+  'nai-diffusion-4-5-curated': ', very aesthetic, masterpiece, absurdres, no text, rating:general',
+  'nai-diffusion-4-5-full': ', very aesthetic, masterpiece, absurdres, no text',
 };
 
 // Negative prompt presets
@@ -92,26 +87,32 @@ const UC_PRESETS = {
   'nai-diffusion-3': {
     heavy: 'lowres, {bad}, error, fewer, extra, missing, worst quality, jpeg artifacts, bad quality, watermark, unfinished, displeasing, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract],',
     light: 'lowres, jpeg artifacts, worst quality, watermark, blurry, very displeasing,',
+    human: 'lowres, {bad}, error, fewer, extra, missing, worst quality, jpeg artifacts, bad quality, watermark, unfinished, displeasing, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract], bad anatomy, bad hands, @_@, mismatched pupils, heart-shaped pupils, glowing eyes,',
   },
   'nai-diffusion-furry-3': {
     heavy: '{{worst quality}}, [displeasing], {unusual pupils}, guide lines, {{unfinished}}, {bad}, url, artist name, {{tall image}}, mosaic, {sketch page}, comic panel, impact (font), [dated], {logo}, ych,',
     light: '{worst quality}, guide lines, unfinished, bad, url, tall image, widescreen, compression artifacts,',
+    human: '{{worst quality}}, [displeasing], {unusual pupils}, guide lines, {{unfinished}}, {bad}, url, artist name, {{tall image}}, mosaic, {sketch page}, comic panel, impact (font), [dated], {logo}, ych, bad anatomy, bad hands,',
   },
   'nai-diffusion-4-curated-preview': {
     heavy: 'blurry, lowres, error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, logo, dated, signature, multiple views, gigantic breasts, white blank page, blank page,',
     light: 'blurry, lowres, error, worst quality, bad quality, jpeg artifacts, very displeasing, logo, dated, signature, white blank page, blank page,',
+    human: 'blurry, lowres, error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, logo, dated, signature, multiple views, gigantic breasts, white blank page, blank page, bad anatomy, bad hands, extra fingers, fewer fingers, extra limbs, missing limbs, fused fingers, poorly drawn hands, poorly drawn face, @_@, mismatched pupils, glowing eyes,',
   },
   'nai-diffusion-4-full': {
     heavy: 'blurry, lowres, error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, multiple views, logo, too many watermarks, white blank page, blank page,',
     light: 'blurry, lowres, error, worst quality, bad quality, jpeg artifacts, very displeasing, white blank page, blank page,',
+    human: 'blurry, lowres, error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, multiple views, logo, too many watermarks, white blank page, blank page, bad anatomy, bad hands, extra fingers, fewer fingers, extra limbs, missing limbs, fused fingers, poorly drawn hands, poorly drawn face, @_@, mismatched pupils, glowing eyes,',
   },
   'nai-diffusion-4-5-curated': {
     heavy: 'blurry, lowres, upscaled, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, halftone, multiple views, logo, too many watermarks, negative space, blank page,',
     light: 'blurry, lowres, upscaled, artistic error, scan artifacts, jpeg artifacts, logo, too many watermarks, negative space, blank page,',
+    human: 'blurry, lowres, upscaled, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, halftone, multiple views, logo, too many watermarks, bad anatomy, bad hands, extra fingers, fewer fingers, extra limbs, missing limbs, fused fingers, poorly drawn hands, poorly drawn face, @_@, mismatched pupils, glowing eyes, negative space, blank page,',
   },
   'nai-diffusion-4-5-full': {
     heavy: 'lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,',
     light: 'lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page,',
+    human: 'lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, bad anatomy, bad hands, extra fingers, fewer fingers, extra limbs, missing limbs, fused fingers, poorly drawn hands, poorly drawn face, @_@, mismatched pupils, glowing eyes, negative space, blank page,',
   },
 };
 
@@ -198,7 +199,13 @@ module.exports = {
       finalNegative = negativePrompt || '';
     } else {
       const ucPresets = UC_PRESETS[model] || UC_PRESETS['nai-diffusion-4-curated-preview'];
-      const ucPreset = settings.ucPreset || 'heavy';
+      let ucPreset = settings.ucPreset || 'heavy';
+      // Auto-upgrade to human-focus UC when characters are detected in prompt or charCaptions
+      if (ucPreset === 'heavy') {
+        const hasChars = options.charCaptions?.length > 0
+          || /\b\d*(girl|boy|woman|man|people|person|character)\b/i.test(prompt);
+        if (hasChars) ucPreset = 'human';
+      }
       const baseNegative = ucPresets[ucPreset] || ucPresets.heavy;
       const styleNegative = artStyle.negative;
       const negParts = [negativePrompt, styleNegative, baseNegative].filter(Boolean);
@@ -215,6 +222,9 @@ module.exports = {
     }
 
     console.log(`[NovelAI] Using model: ${model}, isV4: ${modelConfig.isV4}`);
+    if (options.charCaptions?.length) {
+      console.log(`[NovelAI] Using ${options.charCaptions.length} char_captions for V4+ structured prompt`);
+    }
 
     // Build request body
     const requestBody = {
@@ -230,26 +240,32 @@ module.exports = {
         n_samples: 1,
         seed: seed,
         negative_prompt: finalNegative,
-        cfg_rescale: settings.cfgRescale || 0,
-        noise_schedule: settings.noiseSchedule || 'native',
+        cfg_rescale: 0,
+        noise_schedule: 'native',
       }
     };
 
     // Add model-specific parameters
     if (modelConfig.isV4) {
-      const noiseSchedule = settings.noiseSchedule || 'native';
+      const noiseSchedule = 'native';
       const v4Params = {
         params_version: 1,
         legacy: false,
         legacy_uc: false,
         legacy_v3_extend: false,
         dynamic_thresholding: false,
-        qualityToggle: settings.qualityTags,
+        qualityToggle: false, // we append our own quality tags via QUALITY_PRESETS — API must not double-add
         sm: false,
         sm_dyn: false,
         autoSmea: false,
+        ucPreset: 3,
         use_coords: false,
         uncond_scale: 1.0,
+        controlnet_strength: 1.0,
+        add_original_image: false,
+        reference_image_multiple: [],
+        reference_information_extracted_multiple: [],
+        reference_strength_multiple: [],
         extra_noise_seed: seed,
         v4_prompt: {
           use_coords: false,
@@ -273,6 +289,30 @@ module.exports = {
       if (settings.sampler === 'k_euler_ancestral' && noiseSchedule !== 'native') {
         v4Params.deliberate_euler_ancestral_bug = false;
         v4Params.prefer_brownian = true;
+      }
+
+      // Populate char_captions if structured prompt data provided
+      if (options.charCaptions && options.charCaptions.length > 0) {
+        // Base caption = scene/environment only (with suffixes if not raw)
+        let baseCaption;
+        if (options.rawPrompt) {
+          baseCaption = options.baseCaption || prompt;
+        } else {
+          const qualityTags = settings.qualityTags ? (QUALITY_PRESETS[model] || '') : '';
+          baseCaption = (options.baseCaption || prompt) + artStyle.prompt + qualityTags;
+        }
+        v4Params.v4_prompt.caption.base_caption = baseCaption;
+        // Strip internal _name field before sending to API
+        v4Params.v4_prompt.caption.char_captions = options.charCaptions.map(c => ({
+          char_caption: c.char_caption,
+          centers: c.centers,
+        }));
+        console.log('[NovelAI] V4 char_captions payload:', JSON.stringify(
+          v4Params.v4_prompt.caption.char_captions.map(c => ({
+            centers: c.centers,
+            tags: c.char_caption?.substring(0, 60),
+          })), null, 2));
+        console.log('[NovelAI] V4 base_caption:', v4Params.v4_prompt.caption.base_caption?.substring(0, 80) + '...');
       }
 
       Object.assign(requestBody.parameters, v4Params);
@@ -394,10 +434,12 @@ module.exports = {
   // Text-to-Speech
   // ---------------------------------------------------------------------------
 
-  // V1 preset seeds (legacy TTS)
-  V1_VOICES: ['Aini', 'Orea', 'Claea', 'Liedka', 'Aulon', 'Oyn', 'Naia', 'Aurae', 'Zaia', 'Zyre', 'Ligeia', 'Anthe'],
-  // V2 preset seeds (newer TTS with style/intonation/cadence)
-  V2_VOICES: ['Cyllene', 'Leucosia', 'Crina', 'Hespe', 'Ida', 'Alseid', 'Daphnis', 'Echo', 'Thel', 'Nomios'],
+  // V1 preset voices (use numeric speaker IDs)
+  V1_VOICES: ['Cyllene', 'Leucosia', 'Crina', 'Hespe', 'Ida', 'Alseid', 'Daphnis', 'Echo', 'Thel', 'Nomios'],
+  // V1 speaker ID map (name → numeric sid)
+  V1_SID: { Cyllene: 17, Leucosia: 95, Crina: 44, Hespe: 80, Ida: 106, Alseid: 6, Daphnis: 10, Echo: 16, Thel: 41, Nomios: 77 },
+  // V2 preset seeds (use string seed, voice=-1)
+  V2_VOICES: ['Aini', 'Orea', 'Claea', 'Lim', 'Aurae', 'Naia', 'Ligeia', 'Aulon', 'Elei', 'Ogma', 'Raid', 'Pega', 'Lam'],
   // Set for fast lookup
   _v1Set: null,
   _v2Set: null,
@@ -434,39 +476,22 @@ module.exports = {
   },
 
   /**
-   * Normalize a voice config (string preset or v2 object) into URL params.
-   * If ttsVersion is 'auto' (default), auto-detects from the voice value.
-   * @param {string|object} voice — preset name string or { v: 2, style, intonation, cadence }
+   * Normalize a voice config into URL params.
+   * V1 voices use numeric speaker IDs (sid). V2 voices use string seed with voice=-1.
+   * @param {string} voice — preset name string
    * @param {string} ttsVersion — 'v1', 'v2', or 'auto' (default 'auto')
    * @returns {object} key-value pairs for URLSearchParams
    */
   normalizeVoiceConfig(voice, ttsVersion = 'auto') {
-    // v2 object voice: { v: 2, style, intonation, cadence }
-    if (voice && typeof voice === 'object' && voice.v === 2) {
-      return {
-        voice: '-1',
-        opus: 'false',
-        version: 'v2',
-        style: voice.style || 'Cyllene',
-        intonation: voice.intonation || voice.style || 'Cyllene',
-        cadence: voice.cadence || voice.style || 'Cyllene',
-      };
-    }
-    // String preset — auto-detect or use explicit version
-    const seed = voice || 'Cyllene';
+    const seed = (typeof voice === 'string' && voice) ? voice : 'Aini';
     const resolvedVersion = ttsVersion === 'auto' ? this.detectVoiceVersion(seed) : ttsVersion;
-    if (resolvedVersion === 'v2') {
-      return {
-        voice: '-1',
-        opus: 'false',
-        version: 'v2',
-        style: seed,
-        intonation: seed,
-        cadence: seed,
-      };
+    if (resolvedVersion === 'v1') {
+      // V1: numeric speaker ID + seed name
+      const sid = this.V1_SID[seed];
+      return { seed, voice: String(sid != null ? sid : -1), opus: 'false', version: 'v1' };
     }
-    // v1
-    return { seed, voice: '-1', opus: 'false', version: 'v1' };
+    // V2: string seed, voice=-1
+    return { seed, voice: '-1', opus: 'false', version: 'v2' };
   },
 
   async generateSpeech(text, voice, store, ttsVersion) {
@@ -475,12 +500,15 @@ module.exports = {
 
     const voiceParams = this.normalizeVoiceConfig(voice, ttsVersion || 'auto');
     const params = new URLSearchParams({ text, ...voiceParams });
-    const res = await fetch(`https://api.novelai.net/ai/generate-voice?${params}`, {
+    const url = `https://api.novelai.net/ai/generate-voice?${params}`;
+    console.log('[TTS] Request:', { voice, version: voiceParams.version, url: url.replace(/Bearer\s+\S+/, 'Bearer ***') });
+    const res = await fetch(url, {
       headers: { 'Authorization': `Bearer ${token}` },
     });
 
     if (!res.ok) {
       const errorText = await res.text();
+      console.error('[TTS] Error response:', res.status, errorText.substring(0, 500));
       throw new Error(`NovelAI TTS error ${res.status}: ${errorText.substring(0, 300)}`);
     }
 

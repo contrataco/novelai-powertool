@@ -29,14 +29,10 @@ export const resolutionPreset = document.getElementById('resolutionPreset');
 export const imgWidth = document.getElementById('imgWidth');
 export const imgHeight = document.getElementById('imgHeight');
 export const samplerSelect = document.getElementById('sampler');
-export const noiseScheduleSelect = document.getElementById('noiseSchedule');
 export const stepsInput = document.getElementById('steps');
 export const scaleInput = document.getElementById('scale');
-export const cfgRescaleSlider = document.getElementById('cfgRescale');
-export const cfgRescaleValue = document.getElementById('cfgRescaleValue');
 export const smeaCheckbox = document.getElementById('smea');
 export const smeaDynCheckbox = document.getElementById('smeaDyn');
-export const ucPresetSelect = document.getElementById('ucPreset');
 export const qualityTagsCheckbox = document.getElementById('qualityTags');
 export const v3Options = document.getElementById('v3Options');
 

@@ -29,7 +29,7 @@ import {
   loreAddCategoryConfirm, loreAddCategoryCancel, dynamicCategoriesStyle,
   loreOptProfile, loreOptimizeAllBtn, loreDiscoverFieldsBtn, loreOptStatus,
 } from './dom-refs.js';
-import { escapeHtml, showToast } from './utils.js';
+import { escapeHtml, showToast, timeAgo } from './utils.js';
 import { parseMetadataClient } from './metadata.js';
 import { refreshMemoryUI } from './memory-manager.js';
 import { readStoryTextFromDOM, readMemoryFromDOM, writeMemoryToDOM } from './webview-polling.js';
@@ -447,6 +447,9 @@ async function proxyCall(cmdLabel, resPrefix, resEnd, method, args) {
   // DOM response element written by naiscript's writeDomResponse (works even when panel update fails)
   const domResId = cmdLabel === '__LORE_PROXY_CMD__' ? '__lore_proxy_dom_res__' : '__memory_proxy_dom_res__';
 
+  // DOM command element ID — MutationObserver in proxy watches this
+  const domCmdId = cmdLabel === '__LORE_PROXY_CMD__' ? '__lore_proxy_dom_cmd__' : '__memory_proxy_dom_cmd__';
+
   const code = `
     new Promise(function(resolve, reject) {
       var CMD_LABEL = ${JSON.stringify(cmdLabel)};
@@ -455,6 +458,7 @@ async function proxyCall(cmdLabel, resPrefix, resEnd, method, args) {
       var PAYLOAD = ${JSON.stringify(payload)};
       var REQ_ID = ${JSON.stringify(reqId)};
       var DOM_RES_ID = ${JSON.stringify(domResId)};
+      var DOM_CMD_ID = ${JSON.stringify(domCmdId)};
 
       // Find the command input by placeholder or label marker text
       function findCmdInput() {
@@ -500,16 +504,27 @@ async function proxyCall(cmdLabel, resPrefix, resEnd, method, args) {
         return null;
       }
 
+      // Send command via both channels — proxy deduplicates by request ID
+      // Channel 1: UI panel input onChange (may fail if callbacks invalidated)
       var cmdInput = findCmdInput();
-      if (!cmdInput) { reject(new Error('Proxy panel not found')); return; }
+      if (cmdInput) {
+        try {
+          var setter = cmdInput.tagName === 'TEXTAREA'
+            ? Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+            : Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(cmdInput, PAYLOAD);
+          cmdInput.dispatchEvent(new Event('input', { bubbles: true }));
+          cmdInput.dispatchEvent(new Event('change', { bubbles: true }));
+        } catch(e) { /* onChange might be stale — DOM channel will handle it */ }
+      }
 
-      // Set input value using native setter to trigger the Script API onChange
-      var setter = cmdInput.tagName === 'TEXTAREA'
-        ? Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
-        : Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      setter.call(cmdInput, PAYLOAD);
-      cmdInput.dispatchEvent(new Event('input', { bubbles: true }));
-      cmdInput.dispatchEvent(new Event('change', { bubbles: true }));
+      // Channel 2: DOM element (MutationObserver — survives ui.update())
+      var domCmdEl = document.getElementById(DOM_CMD_ID);
+      if (domCmdEl) {
+        domCmdEl.textContent = PAYLOAD;
+      }
+
+      if (!cmdInput && !domCmdEl) { reject(new Error('Proxy not found (no panel or DOM channel)')); return; }
 
       // Poll for our response
       var polls = 0;
@@ -691,6 +706,12 @@ export function refreshLoreUI() {
   loreMergesCount.textContent = `(${pm.length})`;
   loreUpdatesCount.textContent = `(${pu.length})`;
 
+  // Update last-scanned timestamp
+  const lastScanEl = document.getElementById('loreLastScan');
+  if (lastScanEl) {
+    lastScanEl.textContent = state.loreLastScanAt ? `Last scan: ${timeAgo(state.loreLastScanAt)}` : '';
+  }
+
   const pc = state.loreState.pendingCleanups || [];
 
   loreMergesSection.style.display = pm.length > 0 ? '' : 'none';
@@ -706,7 +727,11 @@ export function refreshLoreUI() {
 
   // Render pending entries
   if (pe.length === 0) {
-    lorePendingList.innerHTML = '<div class="lore-empty">No pending entries. Click "Scan Now" to analyze your story.</div>';
+    const hasAccepted = (state.loreState.acceptedEntryIds || []).length > 0;
+    const emptyMsg = hasAccepted
+      ? 'No pending entries. Click <b>Scan</b> to check for new characters, locations, and updates.'
+      : 'No lore entries yet. Write some story text and click <b>Scan</b> to auto-extract characters, locations, items, and more.';
+    lorePendingList.innerHTML = `<div class="lore-empty">${emptyMsg}</div>`;
   } else {
     lorePendingList.innerHTML = '';
     for (const entry of pe) {
@@ -791,7 +816,7 @@ function createEntryCard(entry) {
       <span class="category-badge editable ${entry.category || ''}" title="Click to change type">${((getCategoryDef(entry.category) || {}).singularName || entry.category || '').toUpperCase()}</span>
       <span class="entry-name">${escapeHtml(entry.displayName)}${metaBadge}</span>
     </div>
-    <div class="lore-card-text">${escapeHtml(entry.text)}</div>
+    <div class="lore-card-text"><span class="expand-hint">&#9660;</span>${escapeHtml(entry.text)}</div>
     <div class="lore-card-keys">Keys: ${(entry.keys || []).map(k => escapeHtml(k)).join(', ')}</div>
     <div class="lore-card-actions">
       <button class="btn-accept" data-action="accept" data-id="${entry.id}">Accept</button>
@@ -828,9 +853,9 @@ function createMergeCard(merge) {
   card.innerHTML = `
     <div class="lore-card-header">
       <span class="category-badge editable ${merge.newCategory || ''}" title="Click to change type">${((getCategoryDef(merge.newCategory) || {}).singularName || merge.newCategory || '').toUpperCase()}</span>
-      <span class="entry-name">${escapeHtml(merge.newName)} &rarr; ${escapeHtml(merge.existingDisplayName)}</span>
+      <span class="entry-name">${escapeHtml(merge.newName)} &rarr; ${escapeHtml(merge.existingDisplayName)} <span class="merge-direction">(merges into)</span></span>
     </div>
-    <div class="lore-card-text">${escapeHtml(merge.proposedText)}</div>
+    <div class="lore-card-text"><span class="expand-hint">&#9660;</span>${escapeHtml(merge.proposedText)}</div>
     <div class="lore-card-keys">Keys: ${(merge.proposedKeys || []).map(k => escapeHtml(k)).join(', ')}</div>
     <div class="lore-card-actions">
       <button class="btn-accept" data-action="accept-merge" data-id="${merge.id}">Apply</button>
@@ -877,7 +902,7 @@ function createUpdateCard(update) {
       <span class="entry-name">${escapeHtml(update.displayName)}${typeBadge}</span>
     </div>
     ${nameReasonHtml}
-    <div class="lore-diff">
+    <div class="lore-card-text lore-diff"><span class="expand-hint">&#9660;</span>
       <div class="lore-diff-col"><h5>Current</h5><div>${escapeHtml(update.originalText)}</div></div>
       <div class="lore-diff-col"><h5>Proposed</h5><div>${escapeHtml(update.updatedText)}</div></div>
     </div>
@@ -888,6 +913,10 @@ function createUpdateCard(update) {
     </div>
   `;
 
+  card.querySelector('.lore-card-text').addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.currentTarget.classList.toggle('expanded');
+  });
   card.querySelector('.category-badge').addEventListener('click', (e) => {
     e.stopPropagation();
     cycleCategoryBadge(e.target, () => update.category, (newCat) => {
@@ -1252,7 +1281,10 @@ async function runLoreScan(scanType = 'all') {
   if (state.loreIsScanning || !state.currentStoryId) return;
 
   state.loreIsScanning = true;
+  const scanStartedForStory = state.currentStoryId;
+  let scanHadError = false;
   loreScanBtn.disabled = true;
+  loreScanBtn.title = 'Scan in progress';
   loreScanStatus.style.display = '';
   loreScanProgressFill.style.width = '0%';
   loreError.style.display = 'none';
@@ -1263,6 +1295,7 @@ async function runLoreScan(scanType = 'all') {
     let storyText = await loreCall('getStoryText');
 
     if (!storyText || storyText.trim().length < 100) {
+      scanHadError = true;
       showLoreError('Not enough story content to analyze (need at least 100 characters).');
       return;
     }
@@ -1276,6 +1309,7 @@ async function runLoreScan(scanType = 'all') {
     const acceptedCount = (state.loreState?.acceptedEntryIds || []).length;
     if (existingEntries.length === 0 && acceptedCount > 0) {
       console.warn('[Lore] getEntries returned empty but we have', acceptedCount, 'accepted entries — lorebook read may have failed');
+      scanHadError = true;
       showLoreError('Could not read lorebook entries. Open Script Manager and ensure the Lore Creator Proxy script is active.');
       return;
     }
@@ -1290,10 +1324,36 @@ async function runLoreScan(scanType = 'all') {
 
     const result = await window.sceneVisualizer.loreScan(storyText, existingEntries, state.currentStoryId, scanOptions);
 
+    // Discard result if story changed during scan
+    if (state.currentStoryId !== scanStartedForStory) {
+      console.log('[Lore] Discarding scan result — story changed during scan');
+      return;
+    }
+
     if (result.success) {
       state.loreState = result.state;
       await saveLoreState();
       state.loreLastStoryLength = storyText.length;
+      state.loreLastScanAt = Date.now();
+
+      // Apply Pass 6 optimizations to lorebook via proxy (fire-and-forget)
+      if (result.pendingOptimizations && result.pendingOptimizations.length > 0 && state.loreProxyReady) {
+        const updates = result.pendingOptimizations
+          .filter(d => d.delta && Object.keys(d.delta).length > 0)
+          .map(d => ({ id: d.entryId, fields: d.delta }));
+        if (updates.length > 0) {
+          (async () => {
+            try {
+              for (let i = 0; i < updates.length; i += 10) {
+                await loreCall('batchUpdateAdvanced', updates.slice(i, i + 10));
+              }
+              console.log(`[LoreOpt] Applied ${updates.length} optimizations from scan`);
+            } catch (e) {
+              console.log('[LoreOpt] Failed to apply scan optimizations:', e.message);
+            }
+          })();
+        }
+      }
 
       if (result.noResults) {
         showToast('No new lore elements found');
@@ -1308,21 +1368,24 @@ async function runLoreScan(scanType = 'all') {
         showToast(`Found ${parts.join(' and ')}`);
       }
     } else {
+      scanHadError = true;
       showLoreError(result.error || 'Scan failed');
     }
   } catch (e) {
+    scanHadError = true;
     showLoreError(e.message || 'Scan failed');
   } finally {
     loreScanProgressFill.style.width = '100%';
     loreScanPhase.textContent = 'Scan complete';
     state.loreIsScanning = false;
     loreScanBtn.disabled = false;
+    loreScanBtn.title = '';
     refreshLoreUI();
     buildFamilyTree();
     setTimeout(() => {
       loreScanStatus.style.display = 'none';
       loreScanProgressFill.style.width = '0%';
-    }, 1500);
+    }, scanHadError ? 10000 : 1500);
   }
 }
 
@@ -1331,6 +1394,7 @@ async function runLoreOrganize() {
 
   state.loreIsOrganizing = true;
   loreOrganizeBtn.disabled = true;
+  loreOrganizeBtn.title = 'Organize in progress';
   loreScanStatus.style.display = '';
   loreScanPhase.textContent = 'Organizing...';
   loreError.style.display = 'none';
@@ -1375,6 +1439,7 @@ async function runLoreOrganize() {
   } finally {
     state.loreIsOrganizing = false;
     loreOrganizeBtn.disabled = false;
+    loreOrganizeBtn.title = '';
     loreScanStatus.style.display = 'none';
     refreshLoreUI();
   }
@@ -1391,7 +1456,7 @@ function createCleanupCard(cleanup) {
         <span class="category-badge cleanup">DUPLICATE</span>
         <span class="entry-name">${cleanup.keepEntry.displayName} + ${cleanup.removeEntry.displayName}</span>
       </div>
-      <div class="cleanup-comparison">
+      <div class="lore-card-text cleanup-comparison"><span class="expand-hint">&#9660;</span>
         <div class="cleanup-col">
           <h5>Keep: ${cleanup.keepEntry.displayName}</h5>
           <div class="cleanup-text">${cleanup.keepEntry.text.slice(0, 200)}</div>
@@ -1541,6 +1606,14 @@ function createCleanupCard(cleanup) {
     });
   }
 
+  const cleanupTextEl = card.querySelector('.lore-card-text');
+  if (cleanupTextEl) {
+    cleanupTextEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.currentTarget.classList.toggle('expanded');
+    });
+  }
+
   card.querySelector('[data-action="accept-cleanup"]').addEventListener('click', () => acceptCleanup(cleanup.id));
   card.querySelector('[data-action="reject-cleanup"]').addEventListener('click', () => rejectCleanup(cleanup.id));
 
@@ -1579,8 +1652,7 @@ async function acceptCleanup(cleanupId) {
     );
     console.log(`[Lore] Remove found: ${removeEntry ? `id=${removeEntry.id}` : 'NOT FOUND'}`);
     if (removeEntry) {
-      const deleteResult = await loreCall('deleteEntry', removeEntry.id);
-      console.log(`[Lore] Delete result:`, deleteResult);
+      await loreCall('deleteEntry', removeEntry.id);
     }
     showToast(`Merged "${cleanup.removeEntry.displayName}" into "${cleanup.keepEntry.displayName}"`);
   } else if (cleanup.type === 'duplicate-group') {
@@ -1613,8 +1685,7 @@ async function acceptCleanup(cleanupId) {
       );
       if (removeEntry) {
         console.log(`[Lore] Deleting: id=${removeEntry.id}, name="${removeEntry.displayName}"`);
-        const deleteResult = await loreCall('deleteEntry', removeEntry.id);
-        console.log(`[Lore] Delete result:`, deleteResult);
+        await loreCall('deleteEntry', removeEntry.id);
         deletedIds.add(removeEntry.id);
         deleted++;
       } else {
@@ -2297,6 +2368,14 @@ export function init() {
   if (rpgTab) rpgTab.addEventListener('click', () => switchPanelTab('rpg'));
   if (mediaTab) mediaTab.addEventListener('click', () => switchPanelTab('media'));
 
+  // Periodically refresh last-scanned timestamp
+  setInterval(() => {
+    const lastScanEl = document.getElementById('loreLastScan');
+    if (lastScanEl && state.loreLastScanAt) {
+      lastScanEl.textContent = `Last scan: ${timeAgo(state.loreLastScanAt)}`;
+    }
+  }, 30000);
+
   // Initialize lore settings
   (async function initLore() {
     try {
@@ -2500,11 +2579,21 @@ export function init() {
       'propagating-names': 'Propagating family names...',
       'optimizing': 'Optimizing lorebook settings...',
     };
+    // Compute percentage from current/total if available
+    const pctText = (progress.current != null && progress.total > 0)
+      ? ` (${Math.round((progress.current / progress.total) * 100)}%)`
+      : '';
+
     // Show per-entry detail for optimization phase
     if (progress.phase === 'optimizing' && progress.characterName) {
       loreScanPhase.textContent = `Optimizing: ${progress.characterName} (${progress.current}/${progress.total})`;
     } else {
-      loreScanPhase.textContent = phaseLabels[progress.phase] || 'Scanning...';
+      const phaseLabel = phaseLabels[progress.phase] || 'Scanning...';
+      if (progress.currentElement) {
+        loreScanPhase.textContent = `${phaseLabel} (${progress.currentElement})${pctText}`;
+      } else {
+        loreScanPhase.textContent = phaseLabel + pctText;
+      }
     }
 
     // Update progress bar
@@ -2824,11 +2913,12 @@ export function init() {
   // Lorebook Optimizer — profile selection, discover, optimize all
   // =========================================================================
 
-  // Restore profile from story settings if available
+  // Restore optimizer state from story settings on switch
   bus.on('story:changed', () => {
     const profile = state.storySettings?.lorebookProfile || 'general';
     state.loreOptProfile = profile;
     if (loreOptProfile) loreOptProfile.value = profile;
+    state.loreOptConfirmedFields = state.storySettings?.loreOptConfirmedFields || null;
   });
 
   // Profile change
@@ -2845,6 +2935,29 @@ export function init() {
     });
   }
 
+  // Shared discovery logic — returns writable fields array or throws
+  async function runDiscovery() {
+    const inspectResult = await loreCall('inspectEntry');
+    const writeTestResult = await loreCall('testAdvancedWrite');
+    const report = await window.sceneVisualizer.loreParseDiscovery(inspectResult, writeTestResult);
+
+    state.loreOptConfirmedFields = report.writableFields;
+
+    // Persist confirmed fields in story settings
+    if (state.currentStoryId) {
+      const existing = state.storySettings || {};
+      existing.loreOptConfirmedFields = report.writableFields;
+      await window.sceneVisualizer.storySettingsSet(state.currentStoryId, existing);
+      state.storySettings = existing;
+    }
+
+    if (report.unsupported && report.unsupported.length > 0) {
+      console.log('[LoreOpt] Unsupported fields:', report.unsupported.join(', '));
+    }
+
+    return report.writableFields;
+  }
+
   // Discover fields button
   if (loreDiscoverFieldsBtn) {
     loreDiscoverFieldsBtn.addEventListener('click', async () => {
@@ -2855,31 +2968,18 @@ export function init() {
       loreDiscoverFieldsBtn.disabled = true;
       loreDiscoverFieldsBtn.textContent = 'Discovering...';
       try {
-        // Run discovery via proxy
-        const inspectResult = await loreCall('inspectEntry');
-        const writeTestResult = await loreCall('testAdvancedWrite');
-        const report = await window.sceneVisualizer.loreParseDiscovery(inspectResult, writeTestResult);
+        const writableFields = await runDiscovery();
 
-        state.loreOptConfirmedFields = report.writableFields;
-
-        // Persist confirmed fields in story settings
-        if (state.currentStoryId) {
-          const existing = state.storySettings || {};
-          existing.loreOptConfirmedFields = report.writableFields;
-          await window.sceneVisualizer.storySettingsSet(state.currentStoryId, existing);
-          state.storySettings = existing;
-        }
-
-        // Show results
-        const msg = `Discovered ${report.readableFields.length} readable, ${report.writableFields.length} writable fields`;
+        // Show results with field names
+        const writableList = writableFields.length > 0
+          ? writableFields.join(', ')
+          : 'none';
+        const msg = `${writableFields.length} writable fields: ${writableList}`;
         if (loreOptStatus) {
           loreOptStatus.style.display = '';
           loreOptStatus.textContent = msg;
-          setTimeout(() => { loreOptStatus.style.display = 'none'; }, 5000);
         }
-        showToast(msg);
-
-        console.log('[LoreOpt] Discovery report:', report);
+        showToast(`Discovery complete — ${msg}`);
       } catch (e) {
         showToast('Discovery failed: ' + (e.message || 'Unknown error'));
       } finally {
@@ -2898,16 +2998,32 @@ export function init() {
         return;
       }
 
-      const confirmedFields = state.loreOptConfirmedFields
+      let confirmedFields = state.loreOptConfirmedFields
         || state.storySettings?.loreOptConfirmedFields
         || [];
+
+      // Auto-discover if no confirmed fields yet
       if (confirmedFields.length === 0) {
-        showToast('Run "Discover" first to find writable fields');
-        return;
+        loreScanStatus.style.display = '';
+        loreScanPhase.textContent = 'Discovering fields...';
+        loreScanProgressFill.style.width = '0%';
+        try {
+          confirmedFields = await runDiscovery();
+          if (confirmedFields.length === 0) {
+            showToast('Could not discover lorebook fields — ensure proxy is connected', null, 'error');
+            loreScanStatus.style.display = 'none';
+            return;
+          }
+        } catch (e) {
+          showToast('Discovery failed: ' + (e.message || 'Unknown error'), null, 'error');
+          loreScanStatus.style.display = 'none';
+          return;
+        }
       }
 
       state.loreIsScanning = true;
       loreOptimizeAllBtn.disabled = true;
+      loreOptimizeAllBtn.title = 'Optimization in progress';
       loreScanStatus.style.display = '';
       loreScanPhase.textContent = 'Optimizing lorebook...';
       loreScanProgressFill.style.width = '0%';
@@ -2953,9 +3069,9 @@ export function init() {
           if (loreOptStatus) {
             const details = result.details;
             const forceCount = details.filter(d => d.delta?.forceActivation).length;
-            const budgetCount = details.filter(d => d.delta?.budgetPriority !== undefined || d.delta?.contextSize !== undefined).length;
+            const budgetCount = details.filter(d => d.delta?.contextConfig?.budgetPriority !== undefined || d.delta?.contextSize !== undefined).length;
             const rangeCount = details.filter(d => d.delta?.searchRange !== undefined).length;
-            const prefixCount = details.filter(d => d.delta?.prefix).length;
+            const prefixCount = details.filter(d => d.delta?.contextConfig?.prefix).length;
             const parts = [];
             if (forceCount) parts.push(`${forceCount} force-activated`);
             if (budgetCount) parts.push(`${budgetCount} budget-adjusted`);
@@ -2976,6 +3092,7 @@ export function init() {
         loreScanPhase.textContent = 'Optimization complete';
         state.loreIsScanning = false;
         loreOptimizeAllBtn.disabled = false;
+        loreOptimizeAllBtn.title = '';
         setTimeout(() => {
           loreScanStatus.style.display = 'none';
           loreScanProgressFill.style.width = '0%';

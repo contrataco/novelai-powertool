@@ -4,14 +4,14 @@ id: f7c2a1d8-9e3b-4f5a-b6c1-d8e9f0a1b2c3
 name: Lore Creator Proxy
 createdAt: 1772092800000
 updatedAt: 1772092800000
-version: 3.9.0
+version: 3.9.1
 author: Contrataco
 description: Unified proxy for Scene Visualizer Electron (lore + memory)
 memoryLimit: 16
 ---*/
 
 // ============================================================================
-// UNIFIED PROXY v3.9.0
+// UNIFIED PROXY v3.9.1
 //
 // Combines Lore Creator + Memory Manager proxy into a single script so both
 // command channels share one sidebarPanel and are always in the DOM.
@@ -409,10 +409,14 @@ async function proxyBatchUpdateAdvanced(updates: Array<{ id: string; fields: Rec
   let failed = 0;
   const errors: string[] = [];
 
+  // Load entries once up front instead of per-update
+  const allEntries = await api.v1.lorebook.entries();
+  const entryMap = new Map<string, any>();
+  for (const e of allEntries) entryMap.set((e as any).id, e);
+
   for (const update of updates) {
     try {
-      const entries = await api.v1.lorebook.entries();
-      const rawEntry = entries.find((e: any) => e.id === update.id);
+      const rawEntry = entryMap.get(update.id);
       if (!rawEntry) {
         errors.push(`Entry not found: ${update.id}`);
         failed++;
@@ -505,10 +509,41 @@ function writeDomResponse(id: string, payload: string): void {
   } catch (_) {}
 }
 
-// DOM command polling removed — setInterval is undefined in the Script API sandbox.
-// Commands arrive via onChange callbacks on the textInput widgets (primary channel).
-// DOM response elements are written by writeDomResponse and read by the renderer's
-// executeJavaScript polling as a fallback when api.v1.ui.update() fails.
+// DOM-BASED COMMAND CHANNEL
+// The onChange callbacks on textInput widgets get invalidated when api.v1.ui.update()
+// is called (destroys entire UI tree). MutationObserver on hidden DOM elements provides
+// a reliable fallback — the sandbox's document IS the real page document.
+
+function setupDomCommandChannel(): void {
+  try {
+    const loreCmdEl = ensureDomElement(DOM_IDS.loreCmd);
+    const memoryCmdEl = ensureDomElement(DOM_IDS.memoryCmd);
+
+    if (loreCmdEl) {
+      new MutationObserver(() => {
+        const text = loreCmdEl.textContent || '';
+        if (text) {
+          loreCmdEl.textContent = '';
+          processLoreCommand(text);
+        }
+      }).observe(loreCmdEl, { childList: true, characterData: true, subtree: true });
+    }
+
+    if (memoryCmdEl) {
+      new MutationObserver(() => {
+        const text = memoryCmdEl.textContent || '';
+        if (text) {
+          memoryCmdEl.textContent = '';
+          processMemoryCommand(text);
+        }
+      }).observe(memoryCmdEl, { childList: true, characterData: true, subtree: true });
+    }
+
+    api.v1.log(`${LOG_PREFIX} DOM command channels active`);
+  } catch (e) {
+    api.v1.log(`${LOG_PREFIX} DOM command channel setup failed: ${e}`);
+  }
+}
 
 // ============================================================================
 // UI PANEL — single sidebarPanel with both command channels
@@ -562,7 +597,7 @@ async function buildPanel(): Promise<any> {
   return api.v1.ui.part.column({
     content: [
       api.v1.ui.part.text({
-        text: 'Unified Proxy v3.9.0 — Electron Bridge',
+        text: 'Unified Proxy v3.9.1 — Electron Bridge',
       }),
       // Lore command channel
       api.v1.ui.part.textInput({
@@ -591,7 +626,7 @@ async function buildPanel(): Promise<any> {
 // ============================================================================
 
 (async () => {
-  api.v1.log(`${LOG_PREFIX} v3.9.0 initializing...`);
+  api.v1.log(`${LOG_PREFIX} v3.9.1 initializing...`);
 
   let hasPermissions = false;
   try {
@@ -684,6 +719,9 @@ async function buildPanel(): Promise<any> {
   } catch (e) {
     api.v1.log(`${LOG_PREFIX} DOM elements unavailable: ${e}`);
   }
+
+  // Set up DOM-based command channel (MutationObserver — survives ui.update())
+  setupDomCommandChannel();
 
   api.v1.ui.toast('Unified Proxy loaded', { autoClose: 3000, type: 'success' });
   api.v1.log(`${LOG_PREFIX} Ready (lore + memory + DOM channels active)`);
