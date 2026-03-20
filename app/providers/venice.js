@@ -247,7 +247,7 @@ module.exports = {
 
     const model = opts.model || store.get('veniceVideoModel') || '';
     const duration = opts.duration || store.get('veniceVideoDuration') || '5s';
-    const resolution = opts.resolution || store.get('veniceVideoResolution') || '720p';
+    const resolution = opts.resolution || store.get('veniceVideoResolution') || '1080p';
 
     const body = { model, duration, resolution };
     if (opts.aspect_ratio) body.aspect_ratio = opts.aspect_ratio;
@@ -275,7 +275,7 @@ module.exports = {
 
     const model = opts.model || store.get('veniceVideoModel') || '';
     const duration = opts.duration || store.get('veniceVideoDuration') || '5s';
-    const resolution = opts.resolution || store.get('veniceVideoResolution') || '720p';
+    const resolution = opts.resolution || store.get('veniceVideoResolution') || '1080p';
 
     if (!model) throw new Error('No video model selected. Configure one in Settings.');
 

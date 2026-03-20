@@ -8,6 +8,13 @@
  * callback for testability and provider swapping.
  */
 
+const {
+  recoverJSON, FUZZY_MATCH_THRESHOLD, delay, generateId: _sharedGenerateId,
+  levenshteinDistance, fuzzyNameScore, fuzzyFindEntry, fuzzyMatchInSet,
+} = require('./shared-utils');
+
+const { parseMetadata, setMetadata, hasMetadata, getEntryType, classifyEntryType, METADATA_VERSION } = require('./metadata');
+
 const LOG_PREFIX = '[LoreCreator]';
 
 // ============================================================================
@@ -62,55 +69,10 @@ const DEFAULT_SETTINGS = {
   },
 };
 
-// ============================================================================
-// JSON RECOVERY
-// ============================================================================
-
-/**
- * Attempts to recover valid JSON from a potentially truncated LLM response.
- */
-function recoverJSON(raw) {
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
-
-  let jsonStr = jsonMatch[0];
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch (_) {
-    // Continue with recovery
-  }
-
-  const openBraces = (jsonStr.match(/\{/g) || []).length;
-  const closeBraces = (jsonStr.match(/\}/g) || []).length;
-  const openBrackets = (jsonStr.match(/\[/g) || []).length;
-  const closeBrackets = (jsonStr.match(/\]/g) || []).length;
-
-  const quoteCount = (jsonStr.match(/"/g) || []).length;
-  if (quoteCount % 2 !== 0) {
-    jsonStr += '"';
-  }
-
-  for (let i = 0; i < openBrackets - closeBrackets; i++) {
-    jsonStr += ']';
-  }
-  for (let i = 0; i < openBraces - closeBraces; i++) {
-    jsonStr += '}';
-  }
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch (_) {
-    return null;
-  }
-}
+// recoverJSON, delay, generateId, fuzzyNameScore, etc. imported from shared-utils.js
 
 function generateId() {
-  return `lore_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-}
-
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return _sharedGenerateId('lore');
 }
 
 // ============================================================================
@@ -147,8 +109,28 @@ async function identifyLoreElements(storyText, settings, existingEntries, genera
     existingLine = `\nEXISTING ENTRIES (${existingEntries.length} total):\n${allLines.join('\n')}\n`;
   }
 
+  const MIN_STORY_BUDGET = 2000;
   const contextOverhead = (comprehensionContext ? comprehensionContext.length : 0) + existingLine.length;
-  const textBudget = MAX_INPUT_TEXT - contextOverhead;
+  let textBudget = MAX_INPUT_TEXT - contextOverhead;
+
+  // If story text would be squeezed too much, trim context instead
+  if (textBudget < MIN_STORY_BUDGET && storyText.length > 0) {
+    textBudget = Math.min(storyText.length, MIN_STORY_BUDGET);
+    const maxContext = MAX_INPUT_TEXT - textBudget;
+    if (existingLine.length > maxContext) {
+      // Keep only compact names for all entries (no snippets)
+      const compactOnlyLines = existingEntries.slice(0, 50).map(e => {
+        const typeTag = getEntryType(e.text, e.displayName) || 'unknown';
+        return `- ${e.displayName} [${typeTag}]`;
+      });
+      existingLine = `\nEXISTING ENTRIES (${existingEntries.length} total):\n${compactOnlyLines.join('\n')}\n`;
+    }
+    if (comprehensionContext && existingLine.length + comprehensionContext.length > maxContext) {
+      comprehensionContext = comprehensionContext.slice(0, Math.max(0, maxContext - existingLine.length));
+    }
+    console.log(`${LOG_PREFIX} Context trimmed to guarantee ${textBudget} chars for story text`);
+  }
+
   let processText = storyText;
   if (storyText.length > textBudget) {
     processText = storyText.slice(-textBudget);
@@ -170,7 +152,7 @@ async function identifyLoreElements(storyText, settings, existingEntries, genera
   const messages = [
     {
       role: 'system',
-      content: 'You are an expert story analyst. Identify important lore-worthy elements from story text. IMPORTANT: Do not identify elements that are clearly the same entity as an existing entry, even under a different name or alias. Aim for diversity across categories — if the story has both characters and locations/items/factions, include a mix rather than only characters. Output ONLY valid JSON.',
+      content: 'You are an expert story analyst. Identify important lore-worthy elements from story text. If an element might be the same as an existing entry, still include it — use the mergesWith field to indicate potential matches. Err on the side of identifying more elements rather than fewer. Aim for diversity across categories — if the story has both characters and locations/items/factions, include a mix rather than only characters. Output ONLY valid JSON.',
     },
     {
       role: 'user',
@@ -181,7 +163,7 @@ ${existingLine}
 ${comprehensionBlock}RECENT STORY TEXT:
 ${processText}
 
-List up to ${MAX_ELEMENTS_PER_SCAN} elements. For each, provide the name and category.${mergeInstruction}
+List up to ${storyText.length < 1500 ? Math.min(MAX_ELEMENTS_PER_SCAN, 8) : MAX_ELEMENTS_PER_SCAN} elements. For each, provide the name and category.${mergeInstruction}
 Output ONLY this JSON format, no other text:
 {"elements":[{"name":"Element Name","category":"character"${mergeField}}]}`,
     },
@@ -189,7 +171,7 @@ Output ONLY this JSON format, no other text:
 
   try {
     const response = await generateTextFn(messages, {
-      max_tokens: 450,
+      max_tokens: 600,
       temperature: settings.temperature,
     });
 
@@ -296,7 +278,7 @@ Output ONLY this JSON format, no other text:
 
     if (parsed && typeof parsed.displayName === 'string') {
       const confidence = typeof parsed.confidence === 'number' ? Math.min(5, Math.max(1, parsed.confidence)) : 3;
-      if (confidence < 2) {
+      if (confidence < 1) {
         console.log(`${LOG_PREFIX} Rejecting low-confidence entry "${parsed.displayName}" (confidence=${confidence})`);
         return null;
       }
@@ -860,116 +842,6 @@ function extractField(text, fieldName) {
   return firstLine;
 }
 
-// ============================================================================
-// METADATA HEADER
-// ============================================================================
-
-const METADATA_VERSION = 2;
-
-/**
- * Parse @-prefixed metadata header from entry text.
- * Returns { type, version, updated, source, role, protagonist, rest, all }
- * where `all` is a Record<string, string> of every @key: value pair found,
- * and `rest` is the text without the header.
- */
-function parseMetadata(text) {
-  const empty = { type: null, version: null, updated: null, source: null, role: null, protagonist: false, rest: '', all: {} };
-  if (!text) return empty;
-  const lines = text.split('\n');
-  const meta = { type: null, version: null, updated: null, source: null, role: null, protagonist: false };
-  const all = {};
-  let headerEnd = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^@([\w-]+):\s*(.+)$/);
-    if (m) {
-      const key = m[1].toLowerCase();
-      const val = m[2].trim();
-      all[key] = val;
-      if (key === 'type') meta.type = val;
-      else if (key === 'v') meta.version = parseInt(val, 10) || null;
-      else if (key === 'updated') meta.updated = val;
-      else if (key === 'source') meta.source = val;
-      else if (key === 'role') meta.role = val;
-      else if (key === 'protagonist') meta.protagonist = val === 'true';
-      headerEnd = i + 1;
-    } else {
-      break;
-    }
-  }
-
-  // Skip one blank line after header
-  if (headerEnd > 0 && headerEnd < lines.length && lines[headerEnd].trim() === '') {
-    headerEnd++;
-  }
-
-  return { ...meta, rest: lines.slice(headerEnd).join('\n'), all };
-}
-
-/**
- * Set/replace metadata header on entry text.
- * opts: { type, version, updated, source, role, protagonist, extras }
- * Named fields are handled individually. `extras` is a Record<string, string|null>
- * for arbitrary keys — null removes a key. Unknown existing keys are preserved by default.
- */
-function setMetadata(text, opts) {
-  const existing = parseMetadata(text);
-  const type = opts.type || existing.type;
-  const version = opts.version || existing.version || METADATA_VERSION;
-  const updated = opts.updated || existing.updated;
-  const source = opts.source || existing.source;
-  // role: use explicit null to clear, undefined to preserve existing
-  const role = opts.role !== undefined ? opts.role : existing.role;
-  const protagonist = opts.protagonist !== undefined ? opts.protagonist : existing.protagonist;
-
-  // Build known keys first (in canonical order)
-  const headerLines = [];
-  if (type) headerLines.push(`@type: ${type}`);
-  if (version) headerLines.push(`@v: ${version}`);
-  if (updated) headerLines.push(`@updated: ${updated}`);
-  if (source) headerLines.push(`@source: ${source}`);
-  if (role) headerLines.push(`@role: ${role}`);
-  if (protagonist) headerLines.push(`@protagonist: true`);
-
-  // Preserve unknown existing keys and apply extras
-  const knownKeys = new Set(['type', 'v', 'updated', 'source', 'role', 'protagonist']);
-  const extras = opts.extras || {};
-  // Merge: existing unknowns + explicit extras (extras override existing)
-  const extraKeys = {};
-  for (const [k, v] of Object.entries(existing.all)) {
-    if (!knownKeys.has(k)) extraKeys[k] = v;
-  }
-  for (const [k, v] of Object.entries(extras)) {
-    if (knownKeys.has(k)) continue; // known keys handled above
-    if (v === null) { delete extraKeys[k]; continue; }
-    extraKeys[k] = v;
-  }
-  for (const [k, v] of Object.entries(extraKeys)) {
-    headerLines.push(`@${k}: ${v}`);
-  }
-
-  if (headerLines.length === 0) return existing.rest;
-  return headerLines.join('\n') + '\n\n' + existing.rest;
-}
-
-/**
- * Quick check: does text have a metadata header?
- */
-function hasMetadata(text) {
-  return !!text && /^@type:\s*\S/m.test(text);
-}
-
-/**
- * Get entry type from metadata header (authoritative), falling back to heuristic.
- */
-function getEntryType(text, displayName) {
-  const meta = parseMetadata(text);
-  if (meta.type && ['character', 'location', 'item', 'faction', 'concept'].includes(meta.type)) {
-    return meta.type;
-  }
-  return classifyEntryType(text, displayName);
-}
-
 /**
  * Pass 5: Propagate family names across related characters.
  * Takes all character entries, identifies missing last names, and proposes
@@ -1106,161 +978,9 @@ If none needed: {"proposals":[]}`,
 // ENTRY TYPE CLASSIFICATION
 // ============================================================================
 
-/**
- * Heuristic classifier: determines entry type based on text patterns.
- * Returns 'character'|'location'|'item'|'faction'|'concept'|'unknown'.
- */
-function classifyEntryType(text, displayName) {
-  if (!text || text.length < 10) return 'unknown';
+// classifyEntryType — imported from ./metadata.js
 
-  // Check metadata header first (authoritative)
-  const meta = parseMetadata(text);
-  if (meta.type && ['character', 'location', 'item', 'faction', 'concept'].includes(meta.type)) {
-    return meta.type;
-  }
-
-  const scores = { character: 0, location: 0, item: 0, faction: 0, concept: 0 };
-
-  // Character patterns — reuse existing heuristics
-  if (looksLikeCharacterEntry(text)) scores.character += 3;
-  if (isCharacterEntryFormatted(text)) scores.character += 3;
-  const charPatterns = [
-    /\b(he|she|they)\s+(is|are|was|were|has|have|had)\b/i,
-    /\b(personality|temperament|demeanor)\b/i,
-    /\b(wears|wearing|dressed|outfit|clothing)\b/i,
-    /\b(years? old|\d+\s*yo\b|age[ds]?\s*\d+)\b/i,
-    /^Name:/m, /^Age:/m, /^Gender:/m, /^Relationships:/m,
-  ];
-  for (const p of charPatterns) if (p.test(text)) scores.character++;
-
-  // Location patterns
-  const locationPatterns = [
-    /\b(city|town|village|hamlet|settlement|capital)\b/i,
-    /\b(forest|mountain|valley|river|lake|ocean|sea|desert|plains|swamp|cave)\b/i,
-    /\b(kingdom|realm|empire|province|region|territory|continent)\b/i,
-    /\b(located|situated|lies|found in|surrounded by)\b/i,
-    /\b(north|south|east|west|central) of\b/i,
-    /\b(building|castle|tower|temple|church|palace|fortress|inn|tavern)\b/i,
-    /\b(terrain|climate|landscape|geography)\b/i,
-  ];
-  for (const p of locationPatterns) if (p.test(text)) scores.location++;
-
-  // Item patterns
-  const itemPatterns = [
-    /\b(weapon|sword|blade|axe|bow|staff|wand|dagger|spear)\b/i,
-    /\b(armor|shield|helm|gauntlet|ring|amulet|pendant|necklace)\b/i,
-    /\b(artifact|relic|enchanted|magical|cursed|blessed|forged)\b/i,
-    /\b(potion|elixir|scroll|tome|book|map|key)\b/i,
-    /\b(crafted|forged|created|made|wielded|worn|carried)\b/i,
-  ];
-  for (const p of itemPatterns) if (p.test(text)) scores.item++;
-
-  // Faction patterns
-  const factionPatterns = [
-    /\b(guild|order|clan|tribe|brotherhood|sisterhood|alliance|coalition)\b/i,
-    /\b(members|leader|hierarchy|ranks|founded|established)\b/i,
-    /\b(organization|group|faction|sect|cult|society|council)\b/i,
-    /\b(joined|recruited|member of|belongs to)\b/i,
-  ];
-  for (const p of factionPatterns) if (p.test(text)) scores.faction++;
-
-  // Concept patterns
-  const conceptPatterns = [
-    /\b(magic|mana|power|energy|force|element)\b/i,
-    /\b(system|rule|law|principle|practice|tradition)\b/i,
-    /\b(ritual|ceremony|spell|incantation|enchantment)\b/i,
-    /\b(theory|concept|philosophy|belief|doctrine)\b/i,
-  ];
-  for (const p of conceptPatterns) if (p.test(text)) scores.concept++;
-
-  // Find winner
-  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  const [bestType, bestScore] = sorted[0];
-  const [, secondScore] = sorted[1];
-
-  if (bestScore < 2) return 'unknown';
-  if (secondScore > 0 && bestScore < secondScore * 1.5) return 'unknown';
-
-  return bestType;
-}
-
-/**
- * Levenshtein edit distance between two strings.
- */
-function levenshteinDistance(a, b) {
-  const m = a.length, n = b.length;
-  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n];
-}
-
-/**
- * Reusable similarity scorer for two names.
- * Returns 0–1: 1.0 exact, 0.8 substring, 0.7 close edit distance, 0 no match.
- */
-function fuzzyNameScore(a, b) {
-  const al = a.toLowerCase().trim();
-  const bl = b.toLowerCase().trim();
-  if (!al || !bl) return 0;
-  if (al === bl) return 1.0;
-  if (al.includes(bl) || bl.includes(al)) return 0.8;
-  // Word-overlap check (Jaccard similarity on word sets)
-  const wordsA = new Set(al.split(/\s+/).filter(w => w.length > 0));
-  const wordsB = new Set(bl.split(/\s+/).filter(w => w.length > 0));
-  if (wordsA.size > 0 && wordsB.size > 0) {
-    const intersection = [...wordsA].filter(w => wordsB.has(w));
-    const union = new Set([...wordsA, ...wordsB]);
-    const jaccard = intersection.length / union.size;
-    if (jaccard >= 0.5 && intersection.some(w => w.length >= 3)) return 0.75;
-  }
-  if (al.length <= 20 && bl.length <= 20) {
-    const dist = levenshteinDistance(al, bl);
-    if (dist <= 2) return 0.7;
-  }
-  return 0;
-}
-
-/**
- * Find the best matching entry for `name` among `existingEntries`.
- * Checks each entry's displayName and keys.
- * Returns { entry, score, matchedOn } or null if below threshold (default 0.7).
- */
-function fuzzyFindEntry(name, existingEntries, threshold = 0.7) {
-  let best = null;
-  for (const entry of existingEntries) {
-    const dn = entry.displayName || '';
-    const dnScore = fuzzyNameScore(name, dn);
-    if (dnScore >= threshold && (!best || dnScore > best.score)) {
-      best = { entry, score: dnScore, matchedOn: 'displayName' };
-    }
-    for (const key of (entry.keys || [])) {
-      const kScore = fuzzyNameScore(name, key);
-      if (kScore >= threshold && (!best || kScore > best.score)) {
-        best = { entry, score: kScore, matchedOn: 'key' };
-      }
-    }
-  }
-  return best;
-}
-
-/**
- * Check if `name` fuzzy-matches any string in a Set.
- * Returns true if score >= threshold (default 0.7).
- */
-function fuzzyMatchInSet(name, nameSet, threshold = 0.7) {
-  for (const existing of nameSet) {
-    if (fuzzyNameScore(name, existing) >= threshold) return true;
-  }
-  return false;
-}
+// levenshteinDistance, fuzzyNameScore, fuzzyFindEntry, fuzzyMatchInSet — imported from shared-utils.js
 
 /**
  * Find duplicate candidate pairs among lorebook entries using heuristics.
@@ -2032,6 +1752,521 @@ function createHybridProviders(primaryFn, secondaryFn) {
 }
 
 // ============================================================================
+// SCAN PASS FUNCTIONS (internal — not exported)
+// ============================================================================
+
+/**
+ * Pass 0: Proactive deduplication — find and group existing duplicates.
+ */
+async function pass0_deduplication(ctx) {
+  const { existingEntries, storyText, generateTextFn, comprehensionContext, onProgress, state } = ctx;
+
+  if (onProgress) onProgress({ phase: 'deduplicating' });
+  console.log(`${LOG_PREFIX} Pass 0: Checking ${existingEntries.length} entries for duplicates`);
+
+  const dupGroups = findDuplicateGroups(existingEntries);
+  const dismissedSet = new Set(state.dismissedCleanupIds || []);
+  const existingCleanupKeys = new Set(
+    (state.pendingCleanups || []).map(c => c.id)
+  );
+
+  if (dupGroups.length > 0) {
+    if (onProgress) onProgress({ phase: 'confirming-duplicates' });
+    console.log(`${LOG_PREFIX} Found ${dupGroups.length} duplicate groups, confirming via LLM...`);
+
+    for (const group of dupGroups.slice(0, 5)) {
+      const groupKey = `dupgrp_${group.entries.map(e => e.id || e.displayName).sort().join('_')}`;
+      if (dismissedSet.has(groupKey) || existingCleanupKeys.has(groupKey)) continue;
+
+      await delay(INTER_CALL_DELAY);
+      const result = await confirmAndMergeDuplicateGroup(group, storyText, generateTextFn, comprehensionContext);
+      if (result) {
+        if (!state.pendingCleanups) state.pendingCleanups = [];
+        state.pendingCleanups.push({
+          id: groupKey,
+          type: 'duplicate-group',
+          keepEntry: {
+            id: result.keepEntry.id,
+            displayName: result.keepEntry.displayName,
+            keys: result.keepEntry.keys,
+            text: result.keepEntry.text,
+          },
+          removeEntries: result.removeEntries.map(e => ({
+            id: e.id,
+            displayName: e.displayName,
+            keys: e.keys,
+            text: e.text,
+          })),
+          mergedText: result.mergedText,
+          mergedKeys: result.mergedKeys,
+          reason: result.reason,
+        });
+        console.log(`${LOG_PREFIX} Confirmed duplicate group: ${result.keepEntry.displayName} + ${result.removeEntries.length} others`);
+      }
+    }
+  }
+}
+
+/**
+ * Pass 1: Identify elements from story text and partition into new/existing/merge.
+ * Returns { elements, newElements, existingElements, mergeElements } or null if no results.
+ */
+async function pass1_identifyElements(ctx) {
+  const { storyText, settings, existingEntries, generateTextFn, onProgress, comprehensionContext, state, originalState } = ctx;
+
+  if (onProgress) onProgress({ phase: 'identifying' });
+  console.log(`${LOG_PREFIX} Scanning ${storyText.length} chars for lore elements...`);
+
+  const elements = await identifyLoreElements(storyText, settings, existingEntries, generateTextFn, comprehensionContext);
+
+  if (elements.length === 0) {
+    console.log(`${LOG_PREFIX} No elements identified`);
+    return { empty: true };
+  }
+
+  console.log(`${LOG_PREFIX} Identified ${elements.length} elements, partitioning...`);
+
+  const partitioned = partitionElements(elements, existingEntries, state);
+
+  if (partitioned.newElements.length === 0 && partitioned.existingElements.length === 0 && partitioned.mergeElements.length === 0) {
+    console.log(`${LOG_PREFIX} All elements already known or excluded`);
+    return { allKnown: true };
+  }
+
+  return partitioned;
+}
+
+/**
+ * Pass 2: Generate entries for new elements (hybrid parallel when secondary available).
+ * Also deduplicates newly generated entries against each other (post-pass-2).
+ * Returns count of generated entries.
+ */
+async function pass2_generateEntries(ctx, newElements, existingEntryNames) {
+  const { storyText, settings, onProgress, comprehensionContext, hybrid, state } = ctx;
+  let generated = 0;
+
+  if (newElements.length > 0) {
+    if (onProgress) onProgress({ phase: 'generating' });
+    console.log(`${LOG_PREFIX} Generating entries for ${newElements.length} new elements${hybrid.isHybrid() ? ' (hybrid parallel)' : ''}...`);
+
+    for (let i = 0; i < newElements.length;) {
+      if (i > 0) await delay(INTER_CALL_DELAY);
+      const activeProviders = hybrid.getProviders();
+
+      const batch = newElements.slice(i, i + activeProviders.length);
+      const promises = batch.map((elem, idx) =>
+        generateLoreEntryFromElement(
+          elem.name, elem.category, storyText, settings,
+          existingEntryNames, activeProviders[idx], comprehensionContext
+        ).catch(err => {
+          console.error(`${LOG_PREFIX} Provider ${idx} failed for ${elem.name}:`, err.message);
+          return null;
+        })
+      );
+      i += activeProviders.length;
+
+      const results = await Promise.all(promises);
+      for (const entry of results) {
+        if (entry && entry.text.length > 0) {
+          state.pendingEntries.push(entry);
+          generated++;
+          if (onProgress) onProgress({ phase: 'generating', pendingEntries: state.pendingEntries, currentElement: entry.displayName });
+        }
+      }
+    }
+  }
+
+  // Post-Pass-2: deduplicate newly generated entries against each other
+  if (state.pendingEntries.length > 1) {
+    const seen = new Map();
+    const toRemove = new Set();
+    for (let j = 0; j < state.pendingEntries.length; j++) {
+      const entry = state.pendingEntries[j];
+      const name = (entry.displayName || '').toLowerCase();
+      let isDup = false;
+      for (const [seenName, seenIdx] of seen) {
+        if (fuzzyNameScore(name, seenName) >= FUZZY_MATCH_THRESHOLD) {
+          const seenEntry = state.pendingEntries[seenIdx];
+          if ((entry.text || '').length > (seenEntry.text || '').length) {
+            toRemove.add(seenIdx);
+            seen.set(name, j);
+          } else {
+            toRemove.add(j);
+          }
+          isDup = true;
+          break;
+        }
+      }
+      if (!isDup) seen.set(name, j);
+    }
+    if (toRemove.size > 0) {
+      console.log(`${LOG_PREFIX} Post-Pass-2 dedup: removing ${toRemove.size} duplicate pending entries`);
+      state.pendingEntries = state.pendingEntries.filter((_, idx) => !toRemove.has(idx));
+      generated = state.pendingEntries.length;
+    }
+  }
+
+  return generated;
+}
+
+/**
+ * Merge phase: Process identity merges (hybrid parallel when secondary available).
+ * Returns count of merges found.
+ */
+async function pass2b_processMerges(ctx, mergeElements) {
+  const { storyText, settings, onProgress, comprehensionContext, hybrid, state } = ctx;
+  let mergesFound = 0;
+  const mergeCount = Math.min(mergeElements.length, MAX_UPDATES_PER_SCAN);
+
+  if (mergeCount > 0) {
+    if (onProgress) onProgress({ phase: 'processing-merges' });
+    console.log(`${LOG_PREFIX} Processing ${mergeCount} identity merges...`);
+
+    const toMerge = mergeElements.slice(0, mergeCount);
+    for (let i = 0; i < toMerge.length;) {
+      await delay(INTER_CALL_DELAY);
+      const mergeProviders = hybrid.getProviders();
+
+      const batch = toMerge.slice(i, i + mergeProviders.length);
+      const promises = batch.map((elem, idx) => {
+        const { name, category, mergeTarget, entry } = elem;
+        return detectEntryUpdate(
+          entry.displayName || mergeTarget, entry.text, storyText, settings,
+          mergeProviders[idx], comprehensionContext
+        ).then(updatedText => ({ name, category, mergeTarget, entry, updatedText }))
+         .catch(err => {
+           console.error(`${LOG_PREFIX} Merge provider ${idx} failed for ${name}:`, err.message);
+           return { name, category, mergeTarget, entry, updatedText: null };
+         });
+      });
+      i += mergeProviders.length;
+
+      const results = await Promise.all(promises);
+      for (const { name, category, mergeTarget, entry, updatedText } of results) {
+        const mergedKeysSet = new Set((entry.keys || []).map(k => k.toLowerCase()));
+        if (entry.displayName) mergedKeysSet.add(entry.displayName.toLowerCase());
+        mergedKeysSet.add(name.toLowerCase());
+        const mergedKeys = Array.from(mergedKeysSet).map(k => {
+          const original = (entry.keys || []).find(ek => ek.toLowerCase() === k);
+          if (k === name.toLowerCase()) return name;
+          return original || (k === (entry.displayName || '').toLowerCase() ? entry.displayName : k);
+        }).slice(0, 6);
+
+        state.pendingMerges.push({
+          id: generateId(),
+          newName: name,
+          newCategory: category,
+          existingDisplayName: entry.displayName || mergeTarget,
+          existingKeys: entry.keys || [],
+          existingText: entry.text || '',
+          proposedDisplayName: name,
+          proposedKeys: mergedKeys,
+          proposedText: updatedText || entry.text || '',
+          createdAt: Date.now(),
+        });
+        mergesFound++;
+        if (onProgress) onProgress({ phase: 'processing-merges', pendingMerges: state.pendingMerges });
+      }
+    }
+  }
+
+  return mergesFound;
+}
+
+/**
+ * Pass 3: Detect updates for existing entries (hybrid parallel when secondary available).
+ * Returns count of updates found.
+ */
+async function pass3_detectUpdates(ctx, existingElements, mergeCount) {
+  const { storyText, settings, onProgress, comprehensionContext, hybrid, state } = ctx;
+  let updatesFound = 0;
+  const updateBudget = Math.max(0, MAX_UPDATES_PER_SCAN - mergeCount);
+
+  if (existingElements.length > 0 && settings.autoDetectUpdates && updateBudget > 0) {
+    if (onProgress) onProgress({ phase: 'checking-updates' });
+    console.log(`${LOG_PREFIX} Checking ${Math.min(existingElements.length, updateBudget)} entries for updates...`);
+
+    const toCheck = existingElements.slice(0, updateBudget);
+    for (let i = 0; i < toCheck.length;) {
+      await delay(INTER_CALL_DELAY);
+      const updateProviders = hybrid.getProviders();
+
+      const batch = toCheck.slice(i, i + updateProviders.length);
+      const promises = batch.map((elem, idx) => {
+        const { name, category, entry } = elem;
+        return detectEntryUpdate(
+          entry.displayName || name, entry.text, storyText, settings,
+          updateProviders[idx], comprehensionContext
+        ).then(updatedText => ({ name, category, entry, updatedText }))
+         .catch(err => {
+           console.error(`${LOG_PREFIX} Update provider ${idx} failed for ${name}:`, err.message);
+           return { name, category, entry, updatedText: null };
+         });
+      });
+      i += updateProviders.length;
+
+      const results = await Promise.all(promises);
+      for (const { name, category, entry, updatedText } of results) {
+        if (updatedText) {
+          state.pendingUpdates.push({
+            id: generateId(),
+            displayName: entry.displayName || name,
+            keys: entry.keys || [],
+            category,
+            originalText: entry.text || '',
+            updatedText,
+            createdAt: Date.now(),
+          });
+          updatesFound++;
+          if (onProgress) onProgress({ phase: 'checking-updates', pendingUpdates: state.pendingUpdates, currentElement: entry.displayName || name });
+        }
+      }
+    }
+  }
+
+  return updatesFound;
+}
+
+/**
+ * Pass 3b: Update Family/Relationships in already-formatted character entries.
+ * Returns count of relationship updates found.
+ */
+async function pass3b_detectRelationships(ctx) {
+  const { existingEntries, storyText, settings, onProgress, comprehensionContext, hybrid, state } = ctx;
+  const MAX_RELATIONSHIP_UPDATES = 5;
+  let relationshipUpdatesFound = 0;
+
+  const pendingUpdateNames = new Set(
+    state.pendingUpdates.map(u => u.displayName.toLowerCase())
+  );
+  const formattedChars = existingEntries.filter(e =>
+    e.text && e.text.length > 30 &&
+    (getEntryType(e.text, e.displayName) === 'character' || looksLikeCharacterEntry(e.text)) &&
+    !pendingUpdateNames.has((e.displayName || '').toLowerCase())
+  );
+
+  if (formattedChars.length > 0 && settings.autoDetectUpdates) {
+    if (onProgress) onProgress({ phase: 'updating-relationships' });
+    console.log(`${LOG_PREFIX} Pass 3b: Checking ${formattedChars.length} formatted characters for relationship updates${hybrid.isHybrid() ? ' (hybrid parallel)' : ''}`);
+
+    const relBudget = Math.min(formattedChars.length, MAX_RELATIONSHIP_UPDATES);
+    for (let i = 0; i < relBudget;) {
+      await delay(INTER_CALL_DELAY);
+      const relProviders = hybrid.getProviders();
+
+      const batch = formattedChars.slice(i, Math.min(i + relProviders.length, relBudget));
+      const promises = batch.map((entry, idx) =>
+        updateRelationshipFields(
+          entry.displayName, entry.text, storyText, relProviders[idx], comprehensionContext
+        ).then(relUpdate => ({ entry, relUpdate }))
+         .catch(err => {
+           console.error(`${LOG_PREFIX} Relationship update failed for ${entry.displayName}:`, err.message);
+           return { entry, relUpdate: null };
+         })
+      );
+      i += relProviders.length;
+
+      const results = await Promise.all(promises);
+      for (const { entry, relUpdate } of results) {
+        if (relUpdate && !relUpdate.noUpdate) {
+          const updatedText = spliceRelationshipFields(entry.text, relUpdate);
+          if (updatedText !== entry.text) {
+            state.pendingUpdates.push({
+              id: generateId(),
+              displayName: entry.displayName,
+              keys: entry.keys || [],
+              category: 'character',
+              originalText: entry.text,
+              updatedText,
+              isRelationshipUpdate: true,
+              createdAt: Date.now(),
+            });
+            relationshipUpdatesFound++;
+            if (onProgress) onProgress({ phase: 'updating-relationships', pendingUpdates: state.pendingUpdates });
+          }
+        }
+      }
+    }
+
+    if (relationshipUpdatesFound > 0) {
+      console.log(`${LOG_PREFIX} Found ${relationshipUpdatesFound} relationship updates`);
+    }
+  }
+
+  return relationshipUpdatesFound;
+}
+
+/**
+ * Pass 4: Detect unformatted entries (all types with templates) and enrich/reformat them.
+ * Returns count of reformats found.
+ */
+async function pass4_enrichReformat(ctx) {
+  const { existingEntries, storyText, onProgress, comprehensionContext, hybrid, state } = ctx;
+  let reformatsFound = 0;
+
+  const alreadyPendingNames = new Set([
+    ...state.pendingUpdates.map(u => u.displayName.toLowerCase()),
+    ...state.pendingMerges.map(m => m.existingDisplayName.toLowerCase()),
+    ...(state.dismissedReformatNames || []).map(n => n.toLowerCase()),
+  ]);
+
+  // Find entries that have a template for their type but aren't formatted
+  const entriesToReformat = existingEntries.filter(e => {
+    if (!e.text || e.text.length < 30) return false;
+    if (alreadyPendingNames.has((e.displayName || '').toLowerCase())) return false;
+    const entryType = getEntryType(e.text, e.displayName);
+    if (entryType === 'unknown') {
+      // Fallback: character heuristic for entries without metadata
+      return looksLikeCharacterEntry(e.text) && !isCharacterEntryFormatted(e.text);
+    }
+    const tmpl = getTemplateForType(entryType);
+    return tmpl && !isEntryFormatted(e.text, entryType);
+  });
+
+  console.log(`${LOG_PREFIX} Pass 4: Found ${entriesToReformat.length} unformatted entries out of ${existingEntries.length}`);
+
+  if (entriesToReformat.length > 0) {
+    if (onProgress) onProgress({ phase: 'enriching' });
+
+    const formatBudget = Math.min(entriesToReformat.length, MAX_UPDATES_PER_SCAN);
+    for (let i = 0; i < formatBudget;) {
+      await delay(INTER_CALL_DELAY);
+      const formatProviders = hybrid.getProviders();
+
+      const batch = entriesToReformat.slice(i, Math.min(i + formatProviders.length, formatBudget));
+      const promises = batch.map((entry, idx) => {
+        const entryType = getEntryType(entry.text, entry.displayName);
+        const type = (entryType !== 'unknown') ? entryType : 'character';
+        return enrichAndReformatEntry(entry.displayName, entry.text, formatProviders[idx], comprehensionContext, storyText, type)
+          .then(reformatted => ({ entry, reformatted, type }))
+          .catch(err => {
+            console.error(`${LOG_PREFIX} Reformat failed for ${entry.displayName}:`, err.message);
+            return { entry, reformatted: null, type };
+          });
+      });
+      i += formatProviders.length;
+
+      const results = await Promise.all(promises);
+      for (const { entry, reformatted, type } of results) {
+        if (reformatted && reformatted !== entry.text) {
+          state.pendingUpdates.push({
+            id: generateId(),
+            displayName: entry.displayName,
+            keys: entry.keys || [],
+            category: type,
+            originalText: entry.text,
+            updatedText: reformatted,
+            isReformat: true,
+            createdAt: Date.now(),
+          });
+          reformatsFound++;
+          if (onProgress) onProgress({ phase: 'enriching', pendingUpdates: state.pendingUpdates, currentElement: entry.displayName });
+        }
+      }
+    }
+  }
+
+  return reformatsFound;
+}
+
+/**
+ * Pass 5: Propagate family names across characters.
+ * Returns count of name proposals.
+ */
+async function pass5_propagateNames(ctx) {
+  const { existingEntries, storyText, generateTextFn, onProgress, comprehensionContext, state } = ctx;
+  let nameProposals = 0;
+
+  const allCharEntries = [
+    ...existingEntries.filter(e => e.text && (e.category === 'character' || looksLikeCharacterEntry(e.text))),
+    ...(state.pendingEntries || []).filter(e => e.category === 'character'),
+  ];
+
+  // Early-exit: skip Pass 5 if all characters already have multi-word names
+  const charsNeedingLastName = allCharEntries.filter(e => {
+    const name = (extractField(e.text, 'Name') || e.displayName || '').trim();
+    return name.split(/\s+/).length < 2;
+  });
+
+  if (allCharEntries.length >= 2 && charsNeedingLastName.length > 0) {
+    if (onProgress) onProgress({ phase: 'propagating-names' });
+    console.log(`${LOG_PREFIX} Pass 5: Propagating family names across ${allCharEntries.length} characters (${charsNeedingLastName.length} need last names)`);
+
+    await delay(INTER_CALL_DELAY);
+    const proposals = await propagateFamilyNames(allCharEntries, generateTextFn, comprehensionContext);
+
+    for (const proposal of proposals) {
+      // Find matching entry
+      const matchEntry = allCharEntries.find(e => {
+        const entryName = extractField(e.text, 'Name') || e.displayName;
+        return entryName.toLowerCase() === proposal.currentName.toLowerCase()
+          || (e.displayName || '').toLowerCase() === proposal.currentName.toLowerCase();
+      });
+
+      if (matchEntry) {
+        // Create name update
+        const updatedText = matchEntry.text.replace(
+          /^Name:\s*.*/m,
+          `Name: ${proposal.proposedName}`
+        );
+
+        state.pendingUpdates.push({
+          id: generateId(),
+          displayName: matchEntry.displayName,
+          keys: matchEntry.keys || [],
+          category: 'character',
+          originalText: matchEntry.text,
+          updatedText,
+          isNameUpdate: true,
+          proposedDisplayName: proposal.proposedName,
+          nameReason: proposal.reason,
+          createdAt: Date.now(),
+        });
+        nameProposals++;
+        if (onProgress) onProgress({ phase: 'propagating-names', pendingUpdates: state.pendingUpdates });
+      }
+    }
+
+    if (nameProposals > 0) {
+      console.log(`${LOG_PREFIX} Proposed ${nameProposals} name updates`);
+    }
+  }
+
+  return nameProposals;
+}
+
+/**
+ * Pass 6: Lorebook optimization (if profile configured).
+ * Returns count of optimized entries.
+ */
+async function pass6_optimizeLorebook(ctx) {
+  const { existingEntries, settings, onProgress, hybrid, state } = ctx;
+  let optimized = 0;
+
+  if (onProgress) onProgress({ phase: 'optimizing' });
+  console.log(`${LOG_PREFIX} Pass 6: Optimizing lorebook entries with profile "${settings._lorebookProfile}"`);
+
+  try {
+    const lorebookOptimizer = require('./lorebook-optimizer');
+    const optResult = await lorebookOptimizer.optimizeLoreEntries(
+      existingEntries, settings._lorebookProfile, settings._entityProfiles || {},
+      hybrid.getProviders, settings.confirmedOptFields,
+      (p) => { if (onProgress) onProgress({ ...p, phase: 'optimizing' }); }
+    );
+    optimized = optResult.optimized;
+    state._pendingOptimizations = optResult.details;
+
+    if (optimized > 0) {
+      console.log(`${LOG_PREFIX} Optimization computed for ${optimized} entries`);
+    }
+  } catch (e) {
+    console.error(`${LOG_PREFIX} Pass 6 optimization failed: ${e.message}`);
+  }
+
+  return optimized;
+}
+
+// ============================================================================
 // SCAN ORCHESTRATOR
 // ============================================================================
 
@@ -2112,450 +2347,60 @@ async function scanForLore(storyText, settings, existingEntries, state, generate
   // Work on a copy of state (moved before Pass 0 so dedup cleanups can be added)
   const updatedState = JSON.parse(JSON.stringify(state));
 
-  // Pass 0: Proactive deduplication — find and group existing duplicates
-  if (existingEntries.length >= 4) {
-    if (onProgress) onProgress({ phase: 'deduplicating' });
-    console.log(`${LOG_PREFIX} Pass 0: Checking ${existingEntries.length} entries for duplicates`);
+  // Build shared context for pass functions
+  const ctx = {
+    storyText, settings, existingEntries, generateTextFn,
+    onProgress, comprehensionContext, secondaryGenerateTextFn,
+    state: updatedState, originalState: state,
+    hybrid: null, // set after Pass 1
+  };
 
-    const dupGroups = findDuplicateGroups(existingEntries);
-    const dismissedSet = new Set(updatedState.dismissedCleanupIds || []);
-    const existingCleanupKeys = new Set(
-      (updatedState.pendingCleanups || []).map(c => c.id)
-    );
-
-    if (dupGroups.length > 0) {
-      if (onProgress) onProgress({ phase: 'confirming-duplicates' });
-      console.log(`${LOG_PREFIX} Found ${dupGroups.length} duplicate groups, confirming via LLM...`);
-
-      for (const group of dupGroups.slice(0, 5)) {
-        const groupKey = `dupgrp_${group.entries.map(e => e.id || e.displayName).sort().join('_')}`;
-        if (dismissedSet.has(groupKey) || existingCleanupKeys.has(groupKey)) continue;
-
-        await delay(INTER_CALL_DELAY);
-        const result = await confirmAndMergeDuplicateGroup(group, storyText, generateTextFn, comprehensionContext);
-        if (result) {
-          if (!updatedState.pendingCleanups) updatedState.pendingCleanups = [];
-          updatedState.pendingCleanups.push({
-            id: groupKey,
-            type: 'duplicate-group',
-            keepEntry: {
-              id: result.keepEntry.id,
-              displayName: result.keepEntry.displayName,
-              keys: result.keepEntry.keys,
-              text: result.keepEntry.text,
-            },
-            removeEntries: result.removeEntries.map(e => ({
-              id: e.id,
-              displayName: e.displayName,
-              keys: e.keys,
-              text: e.text,
-            })),
-            mergedText: result.mergedText,
-            mergedKeys: result.mergedKeys,
-            reason: result.reason,
-          });
-          console.log(`${LOG_PREFIX} Confirmed duplicate group: ${result.keepEntry.displayName} + ${result.removeEntries.length} others`);
-        }
-      }
-    }
+  // Pass 0: Proactive deduplication (gated: >=6 entries AND >=2000 chars story text)
+  if (existingEntries.length >= 6 && storyText.length >= 2000) {
+    await pass0_deduplication(ctx);
   }
-
-  const existingEntryNames = existingEntries
-    .map(e => e.displayName)
-    .filter(n => n.length > 0);
 
   // Pass 1: Identify elements
-  if (onProgress) onProgress({ phase: 'identifying' });
-  console.log(`${LOG_PREFIX} Scanning ${storyText.length} chars for lore elements...`);
-
-  const elements = await identifyLoreElements(storyText, settings, existingEntries, generateTextFn, comprehensionContext);
-
-  if (elements.length === 0) {
-    console.log(`${LOG_PREFIX} No elements identified`);
+  const pass1Result = await pass1_identifyElements(ctx);
+  if (pass1Result.empty) {
+    // No elements identified at all — return original state (matches original behavior)
     return { state, noResults: true };
   }
-
-  console.log(`${LOG_PREFIX} Identified ${elements.length} elements, partitioning...`);
-
-  // Partition
-  const { newElements, existingElements, mergeElements } = partitionElements(elements, existingEntries, state);
-
-  if (newElements.length === 0 && existingElements.length === 0 && mergeElements.length === 0) {
-    console.log(`${LOG_PREFIX} All elements already known or excluded`);
-    // Return updatedState (not original) — Pass 0 may have added dedup cleanups
+  if (pass1Result.allKnown) {
+    // All elements already known — return updatedState if Pass 0 added dedup cleanups
     const hasDedup = (updatedState.pendingCleanups || []).length > (state.pendingCleanups || []).length;
     return { state: hasDedup ? updatedState : state, noResults: !hasDedup };
   }
 
+  const { newElements, existingElements, mergeElements } = pass1Result;
+  const existingEntryNames = existingEntries.map(e => e.displayName).filter(n => n.length > 0);
+
   // Set up hybrid providers with auto-fallback
-  const hybrid = createHybridProviders(generateTextFn, secondaryGenerateTextFn);
+  ctx.hybrid = createHybridProviders(generateTextFn, secondaryGenerateTextFn);
 
-  // Pass 2: Generate entries for new elements (hybrid parallel when secondary available)
-  let generated = 0;
-  if (newElements.length > 0) {
-    if (onProgress) onProgress({ phase: 'generating' });
-    console.log(`${LOG_PREFIX} Generating entries for ${newElements.length} new elements${hybrid.isHybrid() ? ' (hybrid parallel)' : ''}...`);
+  // Pass 2: Generate entries for new elements
+  const generated = await pass2_generateEntries(ctx, newElements, existingEntryNames);
 
-    for (let i = 0; i < newElements.length;) {
-      if (i > 0) await delay(INTER_CALL_DELAY);
-      const activeProviders = hybrid.getProviders();
+  // Merge phase
+  const mergesFound = await pass2b_processMerges(ctx, mergeElements);
 
-      const batch = newElements.slice(i, i + activeProviders.length);
-      const promises = batch.map((elem, idx) =>
-        generateLoreEntryFromElement(
-          elem.name, elem.category, storyText, settings,
-          existingEntryNames, activeProviders[idx], comprehensionContext
-        ).catch(err => {
-          console.error(`${LOG_PREFIX} Provider ${idx} failed for ${elem.name}:`, err.message);
-          return null;
-        })
-      );
-      i += activeProviders.length;
-
-      const results = await Promise.all(promises);
-      for (const entry of results) {
-        if (entry && entry.text.length > 0) {
-          updatedState.pendingEntries.push(entry);
-          generated++;
-          if (onProgress) onProgress({ phase: 'generating', pendingEntries: updatedState.pendingEntries });
-        }
-      }
-    }
-  }
-
-  // Post-Pass-2: deduplicate newly generated entries against each other
-  if (updatedState.pendingEntries.length > 1) {
-    const seen = new Map();
-    const toRemove = new Set();
-    for (let j = 0; j < updatedState.pendingEntries.length; j++) {
-      const entry = updatedState.pendingEntries[j];
-      const name = (entry.displayName || '').toLowerCase();
-      let isDup = false;
-      for (const [seenName, seenIdx] of seen) {
-        if (fuzzyNameScore(name, seenName) >= 0.7) {
-          const seenEntry = updatedState.pendingEntries[seenIdx];
-          if ((entry.text || '').length > (seenEntry.text || '').length) {
-            toRemove.add(seenIdx);
-            seen.set(name, j);
-          } else {
-            toRemove.add(j);
-          }
-          isDup = true;
-          break;
-        }
-      }
-      if (!isDup) seen.set(name, j);
-    }
-    if (toRemove.size > 0) {
-      console.log(`${LOG_PREFIX} Post-Pass-2 dedup: removing ${toRemove.size} duplicate pending entries`);
-      updatedState.pendingEntries = updatedState.pendingEntries.filter((_, idx) => !toRemove.has(idx));
-      generated = updatedState.pendingEntries.length;
-    }
-  }
-
-  // Merge phase (hybrid parallel when secondary available)
-  let mergesFound = 0;
+  // Pass 3: Detect updates for existing entries
   const mergeCount = Math.min(mergeElements.length, MAX_UPDATES_PER_SCAN);
-  if (mergeCount > 0) {
-    if (onProgress) onProgress({ phase: 'processing-merges' });
-    console.log(`${LOG_PREFIX} Processing ${mergeCount} identity merges...`);
+  const updatesFound = await pass3_detectUpdates(ctx, existingElements, mergeCount);
 
-    const toMerge = mergeElements.slice(0, mergeCount);
-    for (let i = 0; i < toMerge.length;) {
-      await delay(INTER_CALL_DELAY);
-      const mergeProviders = hybrid.getProviders();
+  // Pass 3b: Relationship updates
+  const relationshipUpdatesFound = await pass3b_detectRelationships(ctx);
 
-      const batch = toMerge.slice(i, i + mergeProviders.length);
-      const promises = batch.map((elem, idx) => {
-        const { name, category, mergeTarget, entry } = elem;
-        return detectEntryUpdate(
-          entry.displayName || mergeTarget, entry.text, storyText, settings,
-          mergeProviders[idx], comprehensionContext
-        ).then(updatedText => ({ name, category, mergeTarget, entry, updatedText }))
-         .catch(err => {
-           console.error(`${LOG_PREFIX} Merge provider ${idx} failed for ${name}:`, err.message);
-           return { name, category, mergeTarget, entry, updatedText: null };
-         });
-      });
-      i += mergeProviders.length;
+  // Pass 4: Enrich and reformat unformatted entries
+  const reformatsFound = await pass4_enrichReformat(ctx);
 
-      const results = await Promise.all(promises);
-      for (const { name, category, mergeTarget, entry, updatedText } of results) {
-        const mergedKeysSet = new Set((entry.keys || []).map(k => k.toLowerCase()));
-        if (entry.displayName) mergedKeysSet.add(entry.displayName.toLowerCase());
-        mergedKeysSet.add(name.toLowerCase());
-        const mergedKeys = Array.from(mergedKeysSet).map(k => {
-          const original = (entry.keys || []).find(ek => ek.toLowerCase() === k);
-          if (k === name.toLowerCase()) return name;
-          return original || (k === (entry.displayName || '').toLowerCase() ? entry.displayName : k);
-        }).slice(0, 6);
-
-        updatedState.pendingMerges.push({
-          id: generateId(),
-          newName: name,
-          newCategory: category,
-          existingDisplayName: entry.displayName || mergeTarget,
-          existingKeys: entry.keys || [],
-          existingText: entry.text || '',
-          proposedDisplayName: name,
-          proposedKeys: mergedKeys,
-          proposedText: updatedText || entry.text || '',
-          createdAt: Date.now(),
-        });
-        mergesFound++;
-        if (onProgress) onProgress({ phase: 'processing-merges', pendingMerges: updatedState.pendingMerges });
-      }
-    }
-  }
-
-  // Pass 3: Detect updates for existing entries (hybrid parallel when secondary available)
-  let updatesFound = 0;
-  const updateBudget = Math.max(0, MAX_UPDATES_PER_SCAN - mergeCount);
-  if (existingElements.length > 0 && settings.autoDetectUpdates && updateBudget > 0) {
-    if (onProgress) onProgress({ phase: 'checking-updates' });
-    console.log(`${LOG_PREFIX} Checking ${Math.min(existingElements.length, updateBudget)} entries for updates...`);
-
-    const toCheck = existingElements.slice(0, updateBudget);
-    for (let i = 0; i < toCheck.length;) {
-      await delay(INTER_CALL_DELAY);
-      const updateProviders = hybrid.getProviders();
-
-      const batch = toCheck.slice(i, i + updateProviders.length);
-      const promises = batch.map((elem, idx) => {
-        const { name, category, entry } = elem;
-        return detectEntryUpdate(
-          entry.displayName || name, entry.text, storyText, settings,
-          updateProviders[idx], comprehensionContext
-        ).then(updatedText => ({ name, category, entry, updatedText }))
-         .catch(err => {
-           console.error(`${LOG_PREFIX} Update provider ${idx} failed for ${name}:`, err.message);
-           return { name, category, entry, updatedText: null };
-         });
-      });
-      i += updateProviders.length;
-
-      const results = await Promise.all(promises);
-      for (const { name, category, entry, updatedText } of results) {
-        if (updatedText) {
-          updatedState.pendingUpdates.push({
-            id: generateId(),
-            displayName: entry.displayName || name,
-            keys: entry.keys || [],
-            category,
-            originalText: entry.text || '',
-            updatedText,
-            createdAt: Date.now(),
-          });
-          updatesFound++;
-          if (onProgress) onProgress({ phase: 'checking-updates', pendingUpdates: updatedState.pendingUpdates });
-        }
-      }
-    }
-  }
-
-  // Pass 3b: Update Family/Relationships in already-formatted character entries
-  const MAX_RELATIONSHIP_UPDATES = 5;
-  let relationshipUpdatesFound = 0;
-  const pendingUpdateNames = new Set(
-    updatedState.pendingUpdates.map(u => u.displayName.toLowerCase())
-  );
-  const formattedChars = existingEntries.filter(e =>
-    e.text && e.text.length > 30 &&
-    (getEntryType(e.text, e.displayName) === 'character' || looksLikeCharacterEntry(e.text)) &&
-    !pendingUpdateNames.has((e.displayName || '').toLowerCase())
-  );
-
-  if (formattedChars.length > 0 && settings.autoDetectUpdates) {
-    if (onProgress) onProgress({ phase: 'updating-relationships' });
-    console.log(`${LOG_PREFIX} Pass 3b: Checking ${formattedChars.length} formatted characters for relationship updates${hybrid.isHybrid() ? ' (hybrid parallel)' : ''}`);
-
-    const relBudget = Math.min(formattedChars.length, MAX_RELATIONSHIP_UPDATES);
-    for (let i = 0; i < relBudget;) {
-      await delay(INTER_CALL_DELAY);
-      const relProviders = hybrid.getProviders();
-
-      const batch = formattedChars.slice(i, Math.min(i + relProviders.length, relBudget));
-      const promises = batch.map((entry, idx) =>
-        updateRelationshipFields(
-          entry.displayName, entry.text, storyText, relProviders[idx], comprehensionContext
-        ).then(relUpdate => ({ entry, relUpdate }))
-         .catch(err => {
-           console.error(`${LOG_PREFIX} Relationship update failed for ${entry.displayName}:`, err.message);
-           return { entry, relUpdate: null };
-         })
-      );
-      i += relProviders.length;
-
-      const results = await Promise.all(promises);
-      for (const { entry, relUpdate } of results) {
-        if (relUpdate && !relUpdate.noUpdate) {
-          const updatedText = spliceRelationshipFields(entry.text, relUpdate);
-          if (updatedText !== entry.text) {
-            updatedState.pendingUpdates.push({
-              id: generateId(),
-              displayName: entry.displayName,
-              keys: entry.keys || [],
-              category: 'character',
-              originalText: entry.text,
-              updatedText,
-              isRelationshipUpdate: true,
-              createdAt: Date.now(),
-            });
-            relationshipUpdatesFound++;
-            if (onProgress) onProgress({ phase: 'updating-relationships', pendingUpdates: updatedState.pendingUpdates });
-          }
-        }
-      }
-    }
-
-    if (relationshipUpdatesFound > 0) {
-      console.log(`${LOG_PREFIX} Found ${relationshipUpdatesFound} relationship updates`);
-    }
-  }
-
-  // Pass 4: Detect unformatted entries (all types with templates)
-  let reformatsFound = 0;
-  const alreadyPendingNames = new Set([
-    ...updatedState.pendingUpdates.map(u => u.displayName.toLowerCase()),
-    ...updatedState.pendingMerges.map(m => m.existingDisplayName.toLowerCase()),
-    ...(updatedState.dismissedReformatNames || []).map(n => n.toLowerCase()),
-  ]);
-
-  // Find entries that have a template for their type but aren't formatted
-  const entriesToReformat = existingEntries.filter(e => {
-    if (!e.text || e.text.length < 30) return false;
-    if (alreadyPendingNames.has((e.displayName || '').toLowerCase())) return false;
-    const entryType = getEntryType(e.text, e.displayName);
-    if (entryType === 'unknown') {
-      // Fallback: character heuristic for entries without metadata
-      return looksLikeCharacterEntry(e.text) && !isCharacterEntryFormatted(e.text);
-    }
-    const tmpl = getTemplateForType(entryType);
-    return tmpl && !isEntryFormatted(e.text, entryType);
-  });
-
-  console.log(`${LOG_PREFIX} Pass 4: Found ${entriesToReformat.length} unformatted entries out of ${existingEntries.length}`);
-
-  if (entriesToReformat.length > 0) {
-    if (onProgress) onProgress({ phase: 'enriching' });
-
-    const formatBudget = Math.min(entriesToReformat.length, MAX_UPDATES_PER_SCAN);
-    for (let i = 0; i < formatBudget;) {
-      await delay(INTER_CALL_DELAY);
-      const formatProviders = hybrid.getProviders();
-
-      const batch = entriesToReformat.slice(i, Math.min(i + formatProviders.length, formatBudget));
-      const promises = batch.map((entry, idx) => {
-        const entryType = getEntryType(entry.text, entry.displayName);
-        const type = (entryType !== 'unknown') ? entryType : 'character';
-        return enrichAndReformatEntry(entry.displayName, entry.text, formatProviders[idx], comprehensionContext, storyText, type)
-          .then(reformatted => ({ entry, reformatted, type }))
-          .catch(err => {
-            console.error(`${LOG_PREFIX} Reformat failed for ${entry.displayName}:`, err.message);
-            return { entry, reformatted: null, type };
-          });
-      });
-      i += formatProviders.length;
-
-      const results = await Promise.all(promises);
-      for (const { entry, reformatted, type } of results) {
-        if (reformatted && reformatted !== entry.text) {
-          updatedState.pendingUpdates.push({
-            id: generateId(),
-            displayName: entry.displayName,
-            keys: entry.keys || [],
-            category: type,
-            originalText: entry.text,
-            updatedText: reformatted,
-            isReformat: true,
-            createdAt: Date.now(),
-          });
-          reformatsFound++;
-          if (onProgress) onProgress({ phase: 'enriching', pendingUpdates: updatedState.pendingUpdates });
-        }
-      }
-    }
-  }
-
-  // Pass 5: Propagate family names across characters
-  let nameProposals = 0;
-  const allCharEntries = [
-    ...existingEntries.filter(e => e.text && (e.category === 'character' || looksLikeCharacterEntry(e.text))),
-    ...(updatedState.pendingEntries || []).filter(e => e.category === 'character'),
-  ];
-
-  // Early-exit: skip Pass 5 if all characters already have multi-word names
-  const charsNeedingLastName = allCharEntries.filter(e => {
-    const name = (extractField(e.text, 'Name') || e.displayName || '').trim();
-    return name.split(/\s+/).length < 2;
-  });
-
-  if (allCharEntries.length >= 2 && charsNeedingLastName.length > 0) {
-    if (onProgress) onProgress({ phase: 'propagating-names' });
-    console.log(`${LOG_PREFIX} Pass 5: Propagating family names across ${allCharEntries.length} characters (${charsNeedingLastName.length} need last names)`);
-
-    await delay(INTER_CALL_DELAY);
-    const proposals = await propagateFamilyNames(allCharEntries, generateTextFn, comprehensionContext);
-
-    for (const proposal of proposals) {
-      // Find matching entry
-      const matchEntry = allCharEntries.find(e => {
-        const entryName = extractField(e.text, 'Name') || e.displayName;
-        return entryName.toLowerCase() === proposal.currentName.toLowerCase()
-          || (e.displayName || '').toLowerCase() === proposal.currentName.toLowerCase();
-      });
-
-      if (matchEntry) {
-        // Create name update
-        const updatedText = matchEntry.text.replace(
-          /^Name:\s*.*/m,
-          `Name: ${proposal.proposedName}`
-        );
-
-        updatedState.pendingUpdates.push({
-          id: generateId(),
-          displayName: matchEntry.displayName,
-          keys: matchEntry.keys || [],
-          category: 'character',
-          originalText: matchEntry.text,
-          updatedText,
-          isNameUpdate: true,
-          proposedDisplayName: proposal.proposedName,
-          nameReason: proposal.reason,
-          createdAt: Date.now(),
-        });
-        nameProposals++;
-        if (onProgress) onProgress({ phase: 'propagating-names', pendingUpdates: updatedState.pendingUpdates });
-      }
-    }
-
-    if (nameProposals > 0) {
-      console.log(`${LOG_PREFIX} Proposed ${nameProposals} name updates`);
-    }
-  }
+  // Pass 5: Propagate family names
+  const nameProposals = await pass5_propagateNames(ctx);
 
   // Pass 6: Lorebook optimization (if profile configured)
   let optimized = 0;
-  if (settings._lorebookProfile && settings._confirmedFields && settings._confirmedFields.length > 0) {
-    if (onProgress) onProgress({ phase: 'optimizing' });
-    console.log(`${LOG_PREFIX} Pass 6: Optimizing lorebook entries with profile "${settings._lorebookProfile}"`);
-
-    try {
-      const lorebookOptimizer = require('./lorebook-optimizer');
-      const optResult = await lorebookOptimizer.optimizeLoreEntries(
-        existingEntries, settings._lorebookProfile, settings._entityProfiles || {},
-        hybrid.getProviders, settings._confirmedFields,
-        (p) => { if (onProgress) onProgress({ ...p, phase: 'optimizing' }); }
-      );
-      optimized = optResult.optimized;
-      updatedState._pendingOptimizations = optResult.details;
-
-      if (optimized > 0) {
-        console.log(`${LOG_PREFIX} Optimization computed for ${optimized} entries`);
-      }
-    } catch (e) {
-      console.error(`${LOG_PREFIX} Pass 6 optimization failed: ${e.message}`);
-    }
+  if (settings._lorebookProfile && settings.confirmedOptFields && settings.confirmedOptFields.length > 0) {
+    optimized = await pass6_optimizeLorebook(ctx);
   }
 
   // Reset scan tracking

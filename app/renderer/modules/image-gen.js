@@ -7,7 +7,7 @@ import {
   commitBtn, novelaiArtStyleSelect,
   veniceBalance, veniceBalanceText,
 } from './dom-refs.js';
-import { showToast } from './utils.js';
+import { showToast, friendlyApiError } from './utils.js';
 import { loreCall } from './lore-creator.js';
 import { readStoryTextFromDOM } from './webview-polling.js';
 import { generateSuggestionsFromEditor } from './suggestions.js';
@@ -208,20 +208,30 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
   loadingIndicator.style.display = 'flex';
 
   const startTime = Date.now();
+  const startedForStory = state.currentStoryId;
   const timerInterval = setInterval(() => {
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     status.textContent = `Generating... (${elapsed}s)`;
   }, 1000);
 
+  let wasError = false;
   try {
     const result = await window.sceneVisualizer.generateImage(
       prompt, negativePrompt || state.currentNegativePrompt || '',
       {
         ...(opts.rawPrompt ? { rawPrompt: true } : {}),
         ...(opts.rawNegativePrompt ? { rawNegativePrompt: true } : {}),
+        ...(opts.baseCaption ? { baseCaption: opts.baseCaption } : {}),
+        ...(opts.charCaptions?.length ? { charCaptions: opts.charCaptions } : {}),
         storyId: state.currentStoryId,
       }
     );
+
+    // Discard result if story changed during generation
+    if (state.currentStoryId !== startedForStory) {
+      console.log('[ImageGen] Discarding result — story changed during generation');
+      return;
+    }
 
     if (result.success) {
       state.currentImageData = result.imageData;
@@ -243,19 +253,40 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
 
       bus.emit('image:generated', { imageData: result.imageData, meta: result.meta });
     } else {
+      wasError = true;
+      let errorMsg;
       if (result.blankDetected) {
-        status.textContent = 'Image appears blank — generation may have been filtered';
+        errorMsg = 'Image appears blank — generation may have been filtered';
       } else if (result.contentRestricted) {
-        status.textContent = 'Content restricted — try a different prompt';
+        errorMsg = 'Content restricted — try a different prompt';
       } else {
-        status.textContent = 'Generation failed: ' + result.error;
+        errorMsg = friendlyApiError(result.error, state.currentProvider || '');
       }
+      status.innerHTML = errorMsg + ' <a href="#" class="status-retry" style="color:var(--accent);text-decoration:underline;margin-left:6px;">Retry</a>';
       status.className = 'status error';
+      const retryLink = status.querySelector('.status-retry');
+      if (retryLink) {
+        retryLink.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          generateImage(prompt, negativePrompt, opts);
+        }, { once: true });
+      }
+      showToast(errorMsg, 5000, 'error');
       console.error('Generation failed:', result.error || 'blank image');
     }
   } catch (e) {
-    status.textContent = 'Error: ' + e.message;
+    wasError = true;
+    const errorMsg = friendlyApiError(e, state.currentProvider || '');
+    status.innerHTML = errorMsg + ' <a href="#" class="status-retry" style="color:var(--accent);text-decoration:underline;margin-left:6px;">Retry</a>';
     status.className = 'status error';
+    const retryLink = status.querySelector('.status-retry');
+    if (retryLink) {
+      retryLink.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        generateImage(prompt, negativePrompt, opts);
+      }, { once: true });
+    }
+    showToast(errorMsg, 5000, 'error');
     console.error('Error:', e);
   } finally {
     clearInterval(timerInterval);
@@ -263,12 +294,13 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
     generateBtn.disabled = false;
     loadingIndicator.style.display = 'none';
 
+    const clearDelay = wasError ? 15000 : 5000;
     setTimeout(() => {
-      if (status.textContent.startsWith('Image ready') || status.textContent.startsWith('Generation failed') || status.textContent.startsWith('Error')) {
+      if (status.className.includes('error') || status.textContent.startsWith('Image ready')) {
         status.textContent = 'Connected';
         status.className = 'status connected';
       }
-    }, 5000);
+    }, clearDelay);
   }
 }
 
@@ -280,6 +312,7 @@ export async function generateScenePromptFromEditor() {
   if (state.memoryIsProcessing) return;
   if (state.comprehensionScanning) return;
   state.isGeneratingPrompt = true;
+  const startedForStory = state.currentStoryId;
 
   try {
     const storyText = await readStoryTextFromDOM();
@@ -310,6 +343,12 @@ export async function generateScenePromptFromEditor() {
       storyId: state.currentStoryId,
     });
 
+    // Discard result if story changed during prompt generation
+    if (state.currentStoryId !== startedForStory) {
+      console.log('[ImageGen] Discarding prompt result — story changed during generation');
+      return;
+    }
+
     if (result.success) {
       const llmNegative = result.negativePrompt || '';
 
@@ -327,11 +366,16 @@ export async function generateScenePromptFromEditor() {
         console.log('[Renderer] Could not fetch prompt/negative suffixes:', e.message);
       }
 
+      state.currentRawPrompt = result.prompt;
       const fullPrompt = result.prompt + promptSuffix;
       state.currentPrompt = fullPrompt;
       promptDisplay.value = fullPrompt;
       promptWasEdited = false;
       if (promptEditedIndicator) promptEditedIndicator.classList.remove('visible');
+
+      // Store structured prompt data for V4 char_captions
+      state.currentBaseCaption = result.baseCaption || '';
+      state.currentCharCaptions = result.charCaptions || [];
 
       // Build full negative prompt: LLM negative + style/UC preset negative
       const fullNegative = [llmNegative, negSuffix].filter(Boolean).join(', ');
@@ -359,8 +403,13 @@ export async function generateScenePromptFromEditor() {
       bus.emit('prompt:updated', { prompt: state.currentPrompt, negativePrompt: state.currentNegativePrompt });
 
       // Auto-generate image if toggle is on — use raw flags since suffixes are already baked in
+      // Pass structured prompt data for V4 char_captions
       if (autoGenerateToggle.checked && !state.isGenerating) {
-        generateImage(state.currentPrompt, state.currentNegativePrompt, { rawPrompt: true, rawNegativePrompt: true });
+        generateImage(state.currentPrompt, state.currentNegativePrompt, {
+          rawPrompt: true, rawNegativePrompt: true,
+          baseCaption: state.currentBaseCaption,
+          charCaptions: state.currentCharCaptions,
+        });
       }
 
       // Generate suggestions in parallel
@@ -442,7 +491,11 @@ export function init() {
 
     // If we already have a prompt, use it directly (already includes suffix)
     if (state.currentPrompt) {
-      await generateImage(state.currentPrompt, negPrompt, { rawPrompt: true, rawNegativePrompt: true });
+      await generateImage(state.currentPrompt, negPrompt, {
+        rawPrompt: true, rawNegativePrompt: true,
+        baseCaption: state.currentBaseCaption,
+        charCaptions: state.currentCharCaptions,
+      });
       return;
     }
 
@@ -450,7 +503,11 @@ export function init() {
     try {
       await generateScenePromptFromEditor();
       if (state.currentPrompt) {
-        await generateImage(state.currentPrompt, getEffectiveNegativePrompt(), { rawPrompt: true, rawNegativePrompt: true });
+        await generateImage(state.currentPrompt, getEffectiveNegativePrompt(), {
+          rawPrompt: true, rawNegativePrompt: true,
+          baseCaption: state.currentBaseCaption,
+          charCaptions: state.currentCharCaptions,
+        });
       } else {
         status.textContent = 'No prompt generated — write more story content';
         status.className = 'status error';
@@ -473,10 +530,25 @@ export function init() {
     const editedPrompt = promptDisplay.value.trim();
     const prompt = editedPrompt || state.currentPrompt;
     if (state.isGenerating || !prompt) return;
+    const wasEdited = !!editedPrompt && editedPrompt !== state.currentPrompt;
     if (editedPrompt) state.currentPrompt = editedPrompt;
     const negPrompt = getEffectiveNegativePrompt();
-    generateImage(state.currentPrompt, negPrompt, { rawPrompt: true, rawNegativePrompt: true });
+    generateImage(state.currentPrompt, negPrompt, {
+      rawPrompt: true, rawNegativePrompt: true,
+      // Only pass structured data if prompt wasn't manually edited
+      ...(!wasEdited && state.currentCharCaptions?.length ? {
+        baseCaption: state.currentBaseCaption,
+        charCaptions: state.currentCharCaptions,
+      } : {}),
+    });
   });
+
+  // Portrait auto-save failure — show toast
+  if (window.sceneVisualizer.onPortraitAutoSaveFailed) {
+    window.sceneVisualizer.onPortraitAutoSaveFailed(({ error }) => {
+      showToast(`Portrait auto-save failed: ${error}`, null, 'warn');
+    });
+  }
 
   // Venice balance — listen for updates from main process
   window.sceneVisualizer.onVeniceBalanceUpdate((balance) => {
@@ -490,17 +562,24 @@ export function init() {
   refreshVeniceBalanceVisibility();
   bus.on('settings:saved', refreshVeniceBalanceVisibility);
 
-  // After settings change (art style, UC preset, etc.), refresh the neg prompt suffix
-  // only if the user hasn't manually edited the neg prompt
+  // After settings change (art style, UC preset, etc.), refresh prompt suffixes
   bus.on('settings:saved', async () => {
-    if (negPromptWasEdited || !negativePromptDisplay) return;
-    try {
-      const nData = await window.sceneVisualizer.getNegativePromptSuffix();
-      const negSuffix = nData.combined || '';
-      // Rebuild: preserve any LLM-generated prefix, replace the suffix portion
-      // Simplest approach: just set the full effective negative
-      state.currentNegativePrompt = negSuffix;
-      negativePromptDisplay.value = negSuffix;
-    } catch { /* ignore */ }
+    // Refresh positive prompt suffix
+    if (!promptWasEdited && state.currentRawPrompt) {
+      try {
+        const pData = await window.sceneVisualizer.getPromptSuffix();
+        const fullPrompt = state.currentRawPrompt + (pData.combined || '');
+        state.currentPrompt = fullPrompt;
+        promptDisplay.value = fullPrompt;
+      } catch { /* ignore */ }
+    }
+    // Refresh negative prompt suffix
+    if (!negPromptWasEdited && negativePromptDisplay) {
+      try {
+        const nData = await window.sceneVisualizer.getNegativePromptSuffix();
+        state.currentNegativePrompt = nData.combined || '';
+        negativePromptDisplay.value = state.currentNegativePrompt;
+      } catch { /* ignore */ }
+    }
   });
 }

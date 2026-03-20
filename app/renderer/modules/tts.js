@@ -7,7 +7,7 @@ import {
 } from './dom-refs.js';
 import { state, bus } from './state.js';
 import { readStoryTextFromDOM } from './webview-polling.js';
-import { showToast } from './utils.js';
+import { showToast, friendlyApiError } from './utils.js';
 import { loreCall } from './lore-creator.js';
 import { parseMetadataClient } from './metadata.js';
 
@@ -108,7 +108,7 @@ function renderVoiceRow(container, charName, voiceId, voices, onVoiceChange, onR
         await audioEl.play();
       }
     } catch (e) {
-      showToast('Preview failed: ' + e.message, 3000, 'error');
+      showToast('Preview failed: ' + friendlyApiError(e), 3000, 'error');
     } finally {
       previewBtn.disabled = false;
       previewBtn.textContent = '\u25B6';
@@ -159,7 +159,7 @@ export async function refreshVoiceMapUI() {
   if (entries.length === 0) {
     const empty = document.createElement('div');
     empty.style.cssText = 'font-size:11px;color:var(--text-muted);padding:4px 0;';
-    empty.textContent = 'No character voices assigned';
+    empty.innerHTML = 'No character voices assigned. Click <b>Auto-Assign</b> to match lorebook characters to voices, or add manually below.';
     ttsVoiceList.appendChild(empty);
     return;
   }
@@ -199,10 +199,10 @@ export async function refreshVoiceMapUI() {
 }
 
 // Gender classification for voices
-const NOVELAI_FEMALE_V1 = new Set(['Aini', 'Orea', 'Claea', 'Liedka', 'Naia', 'Aurae', 'Zaia', 'Zyre', 'Ligeia', 'Anthe']);
-const NOVELAI_MALE_V1 = new Set(['Aulon', 'Oyn']);
-const NOVELAI_FEMALE_V2 = new Set(['Cyllene', 'Leucosia', 'Crina', 'Hespe', 'Ida', 'Alseid', 'Echo']);
-const NOVELAI_MALE_V2 = new Set(['Daphnis', 'Thel', 'Nomios']);
+const NOVELAI_FEMALE_V1 = new Set(['Cyllene', 'Leucosia', 'Crina', 'Hespe', 'Ida']);
+const NOVELAI_MALE_V1 = new Set(['Alseid', 'Daphnis', 'Echo', 'Thel', 'Nomios']);
+const NOVELAI_FEMALE_V2 = new Set(['Aini', 'Orea', 'Claea', 'Lim', 'Aurae', 'Naia']);
+const NOVELAI_MALE_V2 = new Set(['Aulon', 'Elei', 'Ogma', 'Raid', 'Pega', 'Lam', 'Ligeia']);
 
 function classifyVoiceGender(voiceId) {
   if (!voiceId || typeof voiceId !== 'string') return 'unknown';
@@ -327,7 +327,7 @@ async function autoAssignFromLore() {
     showToast(`Assigned voices to ${assigned} character${assigned !== 1 ? 's' : ''}`, 3000);
   } catch (e) {
     console.error('[TTS] Auto-assign error:', e);
-    showToast('Auto-assign failed: ' + e.message, 4000, 'error');
+    showToast('Auto-assign failed: ' + friendlyApiError(e), 4000, 'error');
   }
 }
 
@@ -387,8 +387,9 @@ async function narrateScene() {
     ttsProgress.textContent = aborted ? 'Stopped' : 'Done';
   } catch (e) {
     console.error('[TTS] Error:', e);
-    ttsProgress.textContent = 'Error: ' + e.message;
-    showToast('TTS error: ' + e.message, 4000, 'error');
+    const ttsErrMsg = friendlyApiError(e);
+    ttsProgress.textContent = 'Error: ' + ttsErrMsg;
+    showToast('TTS error: ' + ttsErrMsg, 4000, 'error');
   } finally {
     isNarrating = false;
     ttsNarrateBtn.disabled = false;

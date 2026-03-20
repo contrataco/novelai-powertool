@@ -26,15 +26,33 @@ export class EventBus {
 export const bus = new EventBus();
 
 export const state = {
-  // Prompt state
-  currentPrompt: '',
-  currentNegativePrompt: '',
-  currentBaseCaption: '',
-  currentCharCaptions: [],
+  // Prompt state (consolidated)
+  prompt: {
+    display: '',          // what user sees in textarea (with art style suffix)
+    raw: '',              // original from pipeline (before suffix)
+    negative: '',         // negative prompt
+    baseCaption: '',      // V4 base caption for structured prompts
+    charCaptions: [],     // V4 per-character captions
+    edited: false,        // user modified display prompt
+    negativeEdited: false,// user modified negative prompt
+    source: 'pipeline',   // 'pipeline' | 'manual' | 'storyboard'
+  },
   currentStoryExcerpt: '',
   isGenerating: false,
   isGeneratingPrompt: false,
   lastKnownStoryLength: 0,
+
+  // Backward-compat accessors — use state.prompt.* directly in new code
+  get currentPrompt() { return this.prompt.display; },
+  set currentPrompt(v) { this.prompt.display = v; },
+  get currentRawPrompt() { return this.prompt.raw; },
+  set currentRawPrompt(v) { this.prompt.raw = v; },
+  get currentNegativePrompt() { return this.prompt.negative; },
+  set currentNegativePrompt(v) { this.prompt.negative = v; },
+  get currentBaseCaption() { return this.prompt.baseCaption; },
+  set currentBaseCaption(v) { this.prompt.baseCaption = v; },
+  get currentCharCaptions() { return this.prompt.charCaptions; },
+  set currentCharCaptions(v) { this.prompt.charCaptions = v; },
 
   // Story state
   currentStoryId: null,

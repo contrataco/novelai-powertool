@@ -247,7 +247,7 @@ contextBridge.exposeInMainWorld('sceneVisualizer', {
   ttsGetSettings: () => ipcRenderer.invoke('tts:get-settings'),
   ttsSetSettings: (settings) => ipcRenderer.invoke('tts:set-settings', settings),
   ttsGetVoices: () => ipcRenderer.invoke('tts:get-voices'),
-  ttsGenerateSpeech: (text, voice) => ipcRenderer.invoke('tts:generate-speech', { text, voice }),
+  ttsGenerateSpeech: (text, voice, storyId) => ipcRenderer.invoke('tts:generate-speech', { text, voice, storyId }),
   ttsNarrateScene: (text, storyId, protagonistName) => ipcRenderer.invoke('tts:narrate-scene', { text, storyId, protagonistName }),
   ttsGetState: (storyId) => ipcRenderer.invoke('tts:get-state', storyId),
   ttsSetState: (storyId, state) => ipcRenderer.invoke('tts:set-state', { storyId, state }),
@@ -303,4 +303,7 @@ contextBridge.exposeInMainWorld('sceneVisualizer', {
     ipcRenderer.invoke('portrait:album-delete', { storyId, characterId, imageId }),
   portraitAlbumSetActive: (storyId, characterId, imageId) =>
     ipcRenderer.invoke('portrait:album-set-active', { storyId, characterId, imageId }),
+  onPortraitAutoSaveFailed: (callback) => {
+    ipcRenderer.on('portrait:auto-save-failed', (_, data) => callback(data));
+  },
 });

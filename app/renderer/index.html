@@ -30,8 +30,8 @@
       --text-secondary: #ccc;
       --text-tertiary: #bbb;
       --text-muted: #aaa;
-      --text-dim: #888;
-      --text-faint: #777;
+      --text-dim: #999;
+      --text-faint: #8a8a8a;
       --text-disabled: #666;
       --text-ghost: #555;
 
@@ -68,6 +68,50 @@
       --transition-fast: 0.15s ease;
       --transition-default: 0.2s ease;
       --transition-slow: 0.3s ease;
+
+      /* Spacing */
+      --spacing-xs: 4px;
+      --spacing-sm: 8px;
+      --spacing-md: 12px;
+      --spacing-lg: 16px;
+      --spacing-xl: 24px;
+
+      /* Border radius */
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 10px;
+      --radius-round: 50%;
+    }
+
+    /* Focus-visible states */
+    input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: none;
+      border-color: var(--accent) !important;
+      box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.2);
+    }
+    button:focus-visible, .btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* Consistent button hover/active */
+    button:hover:not(:disabled), .btn:hover:not(:disabled) {
+      filter: brightness(1.15);
+    }
+    button:active:not(:disabled), .btn:active:not(:disabled) {
+      filter: brightness(0.9);
+    }
+
+    /* Modal/overlay entrance animations */
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .rpg-stat-overlay[style*="display: flex"] {
+      animation: fadeSlideIn 0.2s ease-out;
+    }
+    .media-lightbox.active {
+      animation: fadeSlideIn 0.2s ease-out;
     }
 
     body {
@@ -123,6 +167,12 @@
       opacity: 0.5;
       cursor: not-allowed;
       filter: grayscale(30%);
+    }
+
+    button:disabled, .btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      filter: grayscale(0.5);
     }
 
     .status {
@@ -220,8 +270,9 @@
       transition: color var(--transition-default), border-color var(--transition-default);
     }
 
-    .panel-tab:hover {
+    .panel-tab:not(.active):hover {
       color: var(--text-secondary);
+      border-bottom-color: var(--border-subtle, #444);
     }
 
     .panel-tab.active {
@@ -406,6 +457,22 @@
 
     .lore-card-text.expanded {
       max-height: none;
+    }
+
+    .lore-card-text .expand-hint {
+      float: right;
+      font-size: 10px;
+      color: var(--text-dim);
+      transition: transform 0.2s;
+    }
+    .lore-card-text.expanded .expand-hint {
+      transform: rotate(180deg);
+    }
+
+    .merge-direction {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-left: 4px;
     }
 
     .lore-card-keys {
@@ -2357,6 +2424,25 @@
       height: 100%;
       object-fit: cover;
     }
+    .rpg-portrait-initial {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      font-weight: 700;
+      color: #888;
+      background: rgba(255,255,255,0.05);
+      user-select: none;
+      font-size: 16px;
+    }
+    .rpg-portrait-initial-sm {
+      font-size: 13px;
+    }
+    .rpg-portrait-initial-lg {
+      font-size: 26px;
+      border-radius: 6px;
+    }
     .rpg-level-badge {
       position: absolute;
       bottom: -2px;
@@ -3738,6 +3824,7 @@
           <button id="loreOrganizeBtn">Organize</button>
           <button id="loreAcceptAllBtn">Accept All</button>
           <button id="loreClearBtn">Clear</button>
+          <span id="loreLastScan" style="font-size:10px;color:var(--text-dim);white-space:nowrap;margin-left:4px;"></span>
         </div>
 
         <!-- Optimizer Bar -->
@@ -4464,9 +4551,9 @@
           <div class="form-group">
             <label>Resolution</label>
             <select id="veniceVideoResolution">
-              <option value="720p">720p</option>
               <option value="1080p">1080p</option>
-              <option value="480p">480p</option>
+              <option value="1440p">1440p</option>
+              <option value="2160p">2160p</option>
             </select>
           </div>
         </div>
@@ -4557,41 +4644,25 @@
           <div class="form-group">
             <label>Sampler</label>
             <select id="sampler">
-              <option value="k_euler">Euler</option>
               <option value="k_euler_ancestral">Euler Ancestral</option>
-              <option value="k_dpmpp_2s_ancestral">DPM++ 2S Ancestral</option>
               <option value="k_dpmpp_2m_sde">DPM++ 2M SDE</option>
-              <option value="k_dpmpp_2m">DPM++ 2M</option>
-              <option value="k_dpmpp_sde">DPM++ SDE</option>
+              <option value="k_euler">Euler</option>
+              <option value="k_dpmpp_2s_ancestral">DPM++ 2S Ancestral</option>
             </select>
           </div>
-          <div class="form-group">
-            <label>Noise Schedule</label>
-            <select id="noiseSchedule">
-              <option value="karras">Karras</option>
-              <option value="native">Native</option>
-              <option value="exponential">Exponential</option>
-              <option value="polyexponential">Polyexponential</option>
-            </select>
-          </div>
+          <!-- Noise Schedule hardcoded to 'native' -->
         </div>
         <div class="form-row">
           <div class="form-group">
             <label>Steps</label>
-            <input type="number" id="steps" value="28" min="1" max="50">
+            <input type="number" id="steps" value="28" min="20" max="50">
           </div>
           <div class="form-group">
             <label>Guidance (CFG)</label>
-            <input type="number" id="scale" value="5" min="1" max="20" step="0.5">
+            <input type="number" id="scale" value="6" min="2" max="15" step="0.5">
           </div>
         </div>
-        <div class="form-group">
-          <label>CFG Rescale</label>
-          <div class="slider-group">
-            <input type="range" id="cfgRescale" min="0" max="1" step="0.05" value="0">
-            <span class="slider-value" id="cfgRescaleValue">0</span>
-          </div>
-        </div>
+        <!-- CFG Rescale hardcoded to 0 -->
       </div>
 
       <!-- V3-Only Options (NovelAI only) -->
@@ -4612,13 +4683,7 @@
       <!-- Quality Options (NovelAI only) -->
       <div class="settings-section" data-provider="novelai">
         <h3>Quality</h3>
-        <div class="form-group">
-          <label>UC Preset (Negative Prompt Base)</label>
-          <select id="ucPreset">
-            <option value="heavy">Heavy (More detailed exclusions)</option>
-            <option value="light">Light (Minimal exclusions)</option>
-          </select>
-        </div>
+        <!-- UC Preset hardcoded to 'heavy' (auto-upgrades to 'human' with characters) -->
         <div class="form-group checkbox">
           <input type="checkbox" id="qualityTags" checked>
           <label for="qualityTags">Add Quality Tags to Prompt</label>

@@ -7,6 +7,8 @@
  * `generateTextFn(messages, options)` callback (same pattern as lore-creator.js).
  */
 
+const { recoverJSON, delay, generateId: _sharedGenerateId } = require('./shared-utils');
+
 const LOG_PREFIX = '[MemoryManager]';
 
 // ============================================================================
@@ -30,15 +32,11 @@ const DEFAULT_SETTINGS = {
 // ============================================================================
 
 function generateId() {
-  return `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return _sharedGenerateId('evt');
 }
 
 function estimateTokens(text) {
   return Math.ceil(text.length / 4);
-}
-
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function createEmptyState() {
@@ -50,45 +48,7 @@ function createEmptyState() {
   };
 }
 
-// ============================================================================
-// JSON RECOVERY
-// ============================================================================
-
-function recoverJSON(raw) {
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
-
-  let jsonStr = jsonMatch[0];
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch (_) {
-    // Continue with recovery
-  }
-
-  const openBraces = (jsonStr.match(/\{/g) || []).length;
-  const closeBraces = (jsonStr.match(/\}/g) || []).length;
-  const openBrackets = (jsonStr.match(/\[/g) || []).length;
-  const closeBrackets = (jsonStr.match(/\]/g) || []).length;
-
-  const quoteCount = (jsonStr.match(/"/g) || []).length;
-  if (quoteCount % 2 !== 0) {
-    jsonStr += '"';
-  }
-
-  for (let i = 0; i < openBrackets - closeBrackets; i++) {
-    jsonStr += ']';
-  }
-  for (let i = 0; i < openBraces - closeBraces; i++) {
-    jsonStr += '}';
-  }
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch (_) {
-    return null;
-  }
-}
+// recoverJSON imported from shared-utils.js
 
 // ============================================================================
 // FORMATTING

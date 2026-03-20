@@ -11,6 +11,8 @@
  * category registry.
  */
 
+const { recoverJSON, delay } = require('./shared-utils');
+
 const LOG_PREFIX = '[LoreComprehension]';
 
 // ============================================================================
@@ -44,48 +46,7 @@ function hashString(str) {
   return hash.toString(36);
 }
 
-/**
- * Attempt to recover valid JSON from potentially truncated LLM output.
- */
-function recoverJSON(raw) {
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
-
-  let jsonStr = jsonMatch[0];
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch (_) {
-    // Continue with recovery
-  }
-
-  const openBraces = (jsonStr.match(/\{/g) || []).length;
-  const closeBraces = (jsonStr.match(/\}/g) || []).length;
-  const openBrackets = (jsonStr.match(/\[/g) || []).length;
-  const closeBrackets = (jsonStr.match(/\]/g) || []).length;
-
-  const quoteCount = (jsonStr.match(/"/g) || []).length;
-  if (quoteCount % 2 !== 0) {
-    jsonStr += '"';
-  }
-
-  for (let i = 0; i < openBrackets - closeBrackets; i++) {
-    jsonStr += ']';
-  }
-  for (let i = 0; i < openBraces - closeBraces; i++) {
-    jsonStr += '}';
-  }
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch (_) {
-    return null;
-  }
-}
-
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+// recoverJSON, delay imported from shared-utils.js
 
 // ============================================================================
 // CHUNKING
