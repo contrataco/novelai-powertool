@@ -897,13 +897,13 @@ function extractSpeaker(text, matchIndex, matchEnd, characterVoices) {
   // S5b: Pronoun-based attribution (checked before fallback heuristics)
   // "..." said she/he/they
   const afterVP = AFTER_VERB_PRONOUN.exec(afterText);
-  if (afterVP && afterVP[2]) return { pronoun: afterVP[2].toLowerCase() };
+  if (afterVP && afterVP[1]) return { pronoun: afterVP[1].toLowerCase() };
   // "..." she/he/they said
   const afterPV = AFTER_PRONOUN_VERB.exec(afterText);
   if (afterPV && afterPV[1]) return { pronoun: afterPV[1].toLowerCase() };
   // "..." — said she/he/they
   const afterDVP = AFTER_DASH_VERB_PRONOUN.exec(afterText);
-  if (afterDVP && afterDVP[2]) return { pronoun: afterDVP[2].toLowerCase() };
+  if (afterDVP && afterDVP[1]) return { pronoun: afterDVP[1].toLowerCase() };
   // "..." — she/he/they said
   const afterDPV = AFTER_DASH_PRONOUN_VERB.exec(afterText);
   if (afterDPV && afterDPV[1]) return { pronoun: afterDPV[1].toLowerCase() };

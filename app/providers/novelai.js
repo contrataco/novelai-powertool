@@ -478,12 +478,19 @@ module.exports = {
   /**
    * Normalize a voice config into URL params.
    * V1 voices use numeric speaker IDs (sid). V2 voices use string seed with voice=-1.
-   * @param {string} voice — preset name string
+   * @param {string|object} voice — preset name string or v2 object { v: 2, style, intonation, cadence }
    * @param {string} ttsVersion — 'v1', 'v2', or 'auto' (default 'auto')
    * @returns {object} key-value pairs for URLSearchParams
    */
   normalizeVoiceConfig(voice, ttsVersion = 'auto') {
-    const seed = (typeof voice === 'string' && voice) ? voice : 'Aini';
+    // Handle v2 object format: { v: 2, style, intonation, cadence }
+    let seed;
+    if (voice && typeof voice === 'object' && voice.v === 2) {
+      seed = voice.style || 'Aini';
+      ttsVersion = 'v2';
+    } else {
+      seed = (typeof voice === 'string' && voice) ? voice : 'Aini';
+    }
     const resolvedVersion = ttsVersion === 'auto' ? this.detectVoiceVersion(seed) : ttsVersion;
     if (resolvedVersion === 'v1') {
       // V1: numeric speaker ID + seed name
