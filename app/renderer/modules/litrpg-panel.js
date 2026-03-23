@@ -8,6 +8,10 @@ import {
   rpgSystemIndicator, rpgSystemType,
   rpgScanBtn, rpgSyncLorebookBtn, rpgReverseSyncBtn,
   rpgScanStatus, rpgScanPhase,
+  rpgCastView,
+  rpgPartySection, rpgQuestSection, rpgNpcSection,
+  rpgInventorySection, rpgCurrencySection, rpgStatusSection,
+  rpgFactionsSection, rpgClassesSection, rpgRacesSection,
   rpgPartyList, rpgPartyCount,
   rpgQuestListActive, rpgQuestListDone, rpgQuestCount,
   rpgNpcList, rpgNpcCount,
@@ -52,6 +56,25 @@ const ROLE_COLORS = {
   'mount': '#a1887f',
   'npc': '#90a4ae',
 };
+
+// =========================================================================
+// NARRATIVE ROLE CONSTANTS (persona cards for non-LitRPG stories)
+// =========================================================================
+
+const NARRATIVE_ROLE_COLORS = {
+  'protagonist': '#e94560',
+  'deuteragonist': '#e94560',
+  'antagonist': '#a855f7',
+  'mentor': '#f59e0b',
+  'love-interest': '#ec4899',
+  'ally': '#4ade80',
+  'rival': '#f97316',
+  'default': '#4a9eff',
+};
+
+function getNarrativeRoleColor(storyFunction) {
+  return NARRATIVE_ROLE_COLORS[storyFunction] || NARRATIVE_ROLE_COLORS.default;
+}
 
 // =========================================================================
 // REVERSE SYNC HELPERS
@@ -168,30 +191,155 @@ export function refreshRpgUI() {
   if (rpgAutoScan) rpgAutoScan.checked = rpg.autoScan !== false;
   if (rpgAutoSync) rpgAutoSync.checked = !!rpg.autoSync;
 
-  // Party view
-  renderParty(rpg);
+  const isLitRPG = rpg.enabled || rpg.detected;
 
-  // Quest log
-  renderQuests(rpg);
+  // Toggle between persona cast view and LitRPG sections
+  const rpgOnlySections = [
+    rpgPartySection, rpgQuestSection, rpgNpcSection,
+    rpgInventorySection, rpgCurrencySection, rpgStatusSection,
+    rpgFactionsSection, rpgClassesSection, rpgRacesSection,
+  ];
+  for (const el of rpgOnlySections) {
+    if (el) el.style.display = isLitRPG ? '' : 'none';
+  }
+  if (rpgCastView) rpgCastView.style.display = isLitRPG ? 'none' : '';
 
-  // NPC registry
-  renderNPCs(rpg);
+  if (isLitRPG) {
+    // Party view
+    renderParty(rpg);
 
-  // Pending updates
-  renderPendingUpdates(rpg);
+    // Quest log
+    renderQuests(rpg);
 
-  // New sections (Phase 5G)
-  renderInventory(rpg);
-  renderCurrency(rpg);
-  renderStatusEffects(rpg);
+    // NPC registry
+    renderNPCs(rpg);
 
-  // Entity collections
-  renderFactions(rpg);
-  renderClasses(rpg);
-  renderRaces(rpg);
+    // Pending updates
+    renderPendingUpdates(rpg);
 
-  // Scan history (Phase 6.5)
-  renderScanHistory(rpg);
+    // New sections (Phase 5G)
+    renderInventory(rpg);
+    renderCurrency(rpg);
+    renderStatusEffects(rpg);
+
+    // Entity collections
+    renderFactions(rpg);
+    renderClasses(rpg);
+    renderRaces(rpg);
+
+    // Scan history (Phase 6.5)
+    renderScanHistory(rpg);
+  } else {
+    // Persona-based cast view for non-LitRPG stories
+    renderPersonaCast(rpg);
+  }
+}
+
+// =========================================================================
+// PERSONA CAST RENDERING (non-LitRPG stories)
+// =========================================================================
+
+function buildPersonaCardHTML(char) {
+  const storyFunction = char.narrative?.storyFunction || '';
+  const importance = char.narrative?.importance || '';
+  const roleColor = getNarrativeRoleColor(storyFunction);
+  const traits = (char.persona?.personalityTraits || []).slice(0, 3).join(', ');
+  const roleLabel = storyFunction
+    ? storyFunction.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    : '';
+
+  return `
+    <div class="rpg-character-card-v2 persona-card" data-char-id="${escapeHtml(char.id)}" style="--role-color:${roleColor};">
+      <div class="rpg-card-bg-gradient"></div>
+      <div class="rpg-portrait-ring">
+        <div class="rpg-portrait-inner">
+          ${char._thumbnailData
+            ? `<img src="data:image/png;base64,${char._thumbnailData}" alt="${escapeHtml(char.name)}">`
+            : `<span class="rpg-portrait-initial">${escapeHtml((char.name || '?')[0].toUpperCase())}</span>`}
+        </div>
+      </div>
+      <div class="rpg-char-info" style="position:relative;z-index:1;">
+        <div class="rpg-char-name">${escapeHtml(char.name)}</div>
+        ${traits ? `<div class="persona-traits">${escapeHtml(traits)}</div>` : ''}
+        <div class="persona-badges">
+          ${roleLabel ? `<span class="persona-role-badge" style="background:${roleColor}22;color:${roleColor};border-color:${roleColor}55;">${escapeHtml(roleLabel)}</span>` : ''}
+          ${importance ? `<span class="persona-importance-badge">${escapeHtml(importance)}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+function buildCastSectionHTML(title, chars, open = false) {
+  if (chars.length === 0) return '';
+  const openAttr = open ? ' open' : '';
+  const cardsHTML = chars
+    .slice()
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .map(char => buildPersonaCardHTML(char))
+    .join('');
+  return `
+    <details class="cast-section lore-section"${openAttr}>
+      <summary>${escapeHtml(title)} <span class="count-badge count">(${chars.length})</span></summary>
+      <div class="rpg-party-grid cast-grid">${cardsHTML}</div>
+    </details>`;
+}
+
+function renderPersonaCast(rpg) {
+  if (!rpgCastView) return;
+  const allChars = Object.values(rpg.characters || {});
+
+  if (allChars.length === 0) {
+    rpgCastView.innerHTML = `<div class="rpg-party-empty">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <div>No characters yet. Run a <b>Lore Scan</b> to populate your cast from the story.</div>
+    </div>`;
+    return;
+  }
+
+  // Partition into sections
+  const protagonists = allChars.filter(c =>
+    c.narrative?.storyFunction === 'protagonist' ||
+    c.narrative?.storyFunction === 'deuteragonist'
+  );
+  const major = allChars.filter(c =>
+    !protagonists.includes(c) &&
+    c.narrative?.importance === 'major'
+  );
+  const supporting = allChars.filter(c =>
+    !protagonists.includes(c) &&
+    c.narrative?.importance === 'supporting'
+  );
+  const other = allChars.filter(c =>
+    !protagonists.includes(c) &&
+    c.narrative?.importance !== 'major' &&
+    c.narrative?.importance !== 'supporting'
+  );
+
+  let html = '';
+
+  // Protagonist section (always open, featured)
+  if (protagonists.length > 0) {
+    const cardsHTML = protagonists
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      .map(char => buildPersonaCardHTML(char))
+      .join('');
+    html += `
+      <div class="cast-section cast-protagonist-section">
+        <h4 class="cast-section-header">Protagonist</h4>
+        <div class="rpg-party-grid cast-grid">${cardsHTML}</div>
+      </div>`;
+  }
+
+  html += buildCastSectionHTML('Major Characters', major, /* open= */ true);
+  html += buildCastSectionHTML('Supporting Characters', supporting, /* open= */ false);
+  html += buildCastSectionHTML('Other Characters', other, /* open= */ false);
+
+  rpgCastView.innerHTML = html;
+
+  // Wire click handlers — open stat overlay for all persona cards
+  rpgCastView.querySelectorAll('.rpg-character-card-v2').forEach(card => {
+    card.addEventListener('click', () => openStatOverlay(card.dataset.charId, rpg));
+  });
 }
 
 // =========================================================================

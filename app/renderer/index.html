@@ -2603,6 +2603,56 @@
       margin-bottom: 8px;
     }
 
+    /* Persona cast view (non-LitRPG stories) */
+    .cast-protagonist-section {
+      margin-bottom: 4px;
+    }
+    .cast-section-header {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 0 0 6px 0;
+      font-weight: 600;
+    }
+    .cast-grid {
+      margin-bottom: 4px;
+    }
+    .cast-protagonist-section .rpg-character-card-v2 {
+      padding: 10px 12px;
+    }
+    .persona-traits {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin: 1px 0 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .persona-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+    }
+    .persona-role-badge {
+      font-size: 8px;
+      padding: 1px 6px;
+      border-radius: 8px;
+      border: 1px solid;
+      display: inline-block;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .persona-importance-badge {
+      font-size: 8px;
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.04);
+      color: var(--text-dim);
+      border: 1px solid rgba(255,255,255,0.1);
+      display: inline-block;
+    }
+
     /* Stat sheet portrait larger (Phase 2.2) */
     .rpg-stat-header .rpg-portrait-large-v2 {
       width: 96px;
@@ -4411,14 +4461,17 @@
           <div class="rpg-scan-elapsed" id="rpgScanElapsed"></div>
         </div>
 
+        <!-- Persona Cast View (non-LitRPG) -->
+        <div id="rpgCastView" style="display:none;"></div>
+
         <!-- Party View -->
-        <details class="lore-section" open>
+        <details class="lore-section" id="rpgPartySection" open>
           <summary>Party <span class="count" id="rpgPartyCount">(0)</span></summary>
           <div id="rpgPartyList" class="rpg-party-grid"></div>
         </details>
 
         <!-- Quest Log -->
-        <details class="lore-section" open>
+        <details class="lore-section" id="rpgQuestSection" open>
           <summary>Quest Log <span class="count" id="rpgQuestCount">(0)</span></summary>
           <div id="rpgQuestListActive" class="rpg-quest-list"></div>
           <details class="lore-section" style="margin-left:12px;">
@@ -4428,7 +4481,7 @@
         </details>
 
         <!-- NPC Registry -->
-        <details class="lore-section">
+        <details class="lore-section" id="rpgNpcSection">
           <summary>NPCs <span class="count" id="rpgNpcCount">(0)</span></summary>
           <div class="rpg-npc-search-wrap">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
@@ -4451,37 +4504,37 @@
         </details>
 
         <!-- Inventory -->
-        <details class="lore-section">
+        <details class="lore-section" id="rpgInventorySection">
           <summary>Inventory</summary>
           <div id="rpgInventoryList"></div>
         </details>
 
         <!-- Currency -->
-        <details class="lore-section">
+        <details class="lore-section" id="rpgCurrencySection">
           <summary>Currency</summary>
           <div id="rpgCurrencyList"></div>
         </details>
 
         <!-- Status Effects -->
-        <details class="lore-section">
+        <details class="lore-section" id="rpgStatusSection">
           <summary>Status Effects</summary>
           <div id="rpgStatusEffectsList"></div>
         </details>
 
         <!-- Factions -->
-        <details class="lore-section">
+        <details class="lore-section" id="rpgFactionsSection">
           <summary>Factions <span id="rpgFactionCount" style="color:#888;font-size:10px;"></span></summary>
           <div id="rpgFactionList"></div>
         </details>
 
         <!-- Classes -->
-        <details class="lore-section">
+        <details class="lore-section" id="rpgClassesSection">
           <summary>Classes <span id="rpgClassCount" style="color:#888;font-size:10px;"></span></summary>
           <div id="rpgClassList"></div>
         </details>
 
         <!-- Races -->
-        <details class="lore-section">
+        <details class="lore-section" id="rpgRacesSection">
           <summary>Races <span id="rpgRaceCount" style="color:#888;font-size:10px;"></span></summary>
           <div id="rpgRaceList"></div>
         </details>
