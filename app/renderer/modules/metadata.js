@@ -10,7 +10,7 @@
  * Keep both implementations in sync when modifying.
  */
 export function parseMetadataClient(text) {
-  const empty = { type: null, version: null, updated: null, source: null, role: null, protagonist: false, rest: '', all: {} };
+  const empty = { type: null, version: null, updated: null, source: null, role: null, protagonist: false, narrativeRole: null, arc: null, rest: '', all: {} };
   if (!text) return empty;
   const lines = text.split('\n');
   const meta = { type: null, version: null, updated: null, source: null, role: null, protagonist: false };
@@ -40,5 +40,5 @@ export function parseMetadataClient(text) {
     headerEnd++;
   }
 
-  return { ...meta, rest: lines.slice(headerEnd).join('\n'), all };
+  return { ...meta, narrativeRole: all['narrative-role'] || null, arc: all['arc'] || null, rest: lines.slice(headerEnd).join('\n'), all };
 }
