@@ -289,6 +289,298 @@ function resolveSceneCharacters(scenes, lorebookEntries) {
   return resolved;
 }
 
+async function groupIntoChapters(scenes, generateTextFn) {
+  if (scenes.length < 10) {
+    // Single chapter containing all scenes
+    const chapter = {
+      id: generateId('ch'),
+      order: 0,
+      title: 'Chapter 1',
+      titleSource: 'llm',
+      sceneIds: scenes.map(s => s.id),
+      summary: '',
+      thematicArc: null,
+      textStart: scenes.length > 0 ? scenes[0].textStart : 0,
+      textEnd: scenes.length > 0 ? scenes[scenes.length - 1].textEnd : 0,
+      detectedAt: Date.now(),
+    };
+    for (const scene of scenes) {
+      scene.chapterId = chapter.id;
+    }
+    return [chapter];
+  }
+
+  // Check for explicit chapter-break boundaries — split on those first
+  const chapterBreakIndices = scenes
+    .map((s, i) => ({ scene: s, i }))
+    .filter(({ scene }) => scene.boundaryType === 'chapter-break');
+
+  if (chapterBreakIndices.length > 0) {
+    // Build chapters from explicit markers
+    const breakPoints = [0, ...chapterBreakIndices.map(({ i }) => i)];
+    const chapters = breakPoints.map((startIdx, ci) => {
+      const endIdx = ci + 1 < breakPoints.length ? breakPoints[ci + 1] : scenes.length;
+      const chapterScenes = scenes.slice(startIdx, endIdx);
+      const firstScene = chapterScenes[0];
+      const lastScene = chapterScenes[chapterScenes.length - 1];
+      // Use the chapter-break boundary's chapterTitle if available
+      const explicitTitle = firstScene.boundaryType === 'chapter-break'
+        ? (firstScene.boundaryExcerpt || `Chapter ${ci + 1}`)
+        : `Chapter ${ci + 1}`;
+      const chapter = {
+        id: generateId('ch'),
+        order: ci,
+        title: explicitTitle,
+        titleSource: 'explicit',
+        sceneIds: chapterScenes.map(s => s.id),
+        summary: '',
+        thematicArc: null,
+        textStart: firstScene.textStart,
+        textEnd: lastScene.textEnd,
+        detectedAt: Date.now(),
+      };
+      for (const scene of chapterScenes) {
+        scene.chapterId = chapter.id;
+      }
+      return chapter;
+    });
+    return chapters;
+  }
+
+  // No explicit markers — use LLM to group ungrouped scenes
+  const sceneList = scenes
+    .map((s, i) => {
+      const desc = (s.description || s.excerpt || '').slice(0, 50);
+      const loc = s.location || 'unknown';
+      const mood = s.mood || '';
+      return `${i}: ${desc} [${loc}] (${mood})`;
+    })
+    .join('\n');
+
+  const messages = [
+    {
+      role: 'system',
+      content: 'Group these scenes into narrative chapters/arcs.',
+    },
+    {
+      role: 'user',
+      content: `Scenes:\n${sceneList}\n\nOutput JSON: {"chapters": [{"title": "...", "sceneIndices": [0,1,2], "thematicArc": "discovery|conflict|resolution|transition", "summary": "..."}]}`,
+    },
+  ];
+
+  let llmChapters = null;
+  try {
+    const result = await callLLM(generateTextFn, messages, { max_tokens: 800 });
+    const parsed = recoverJSON(result.output);
+    llmChapters = parsed?.chapters;
+  } catch (_) {
+    // Fall through to fallback
+  }
+
+  if (!Array.isArray(llmChapters) || llmChapters.length === 0) {
+    // Fallback: single chapter
+    const chapter = {
+      id: generateId('ch'),
+      order: 0,
+      title: 'Chapter 1',
+      titleSource: 'llm',
+      sceneIds: scenes.map(s => s.id),
+      summary: '',
+      thematicArc: null,
+      textStart: scenes[0].textStart,
+      textEnd: scenes[scenes.length - 1].textEnd,
+      detectedAt: Date.now(),
+    };
+    for (const scene of scenes) {
+      scene.chapterId = chapter.id;
+    }
+    return [chapter];
+  }
+
+  const chapters = llmChapters.map((llmCh, ci) => {
+    const indices = Array.isArray(llmCh.sceneIndices) ? llmCh.sceneIndices : [];
+    const chapterScenes = indices
+      .filter(i => i >= 0 && i < scenes.length)
+      .map(i => scenes[i]);
+    const firstScene = chapterScenes[0] || scenes[0];
+    const lastScene = chapterScenes[chapterScenes.length - 1] || scenes[scenes.length - 1];
+    const chapter = {
+      id: generateId('ch'),
+      order: ci,
+      title: llmCh.title || `Chapter ${ci + 1}`,
+      titleSource: 'llm',
+      sceneIds: chapterScenes.map(s => s.id),
+      summary: llmCh.summary || '',
+      thematicArc: llmCh.thematicArc || null,
+      textStart: firstScene.textStart,
+      textEnd: lastScene.textEnd,
+      detectedAt: Date.now(),
+    };
+    for (const scene of chapterScenes) {
+      scene.chapterId = chapter.id;
+    }
+    return chapter;
+  });
+
+  // Assign any scenes not covered by LLM output to the last chapter
+  const assignedIds = new Set(chapters.flatMap(ch => ch.sceneIds));
+  const unassigned = scenes.filter(s => !assignedIds.has(s.id));
+  if (unassigned.length > 0 && chapters.length > 0) {
+    const last = chapters[chapters.length - 1];
+    for (const scene of unassigned) {
+      scene.chapterId = last.id;
+      last.sceneIds.push(scene.id);
+      last.textEnd = scene.textEnd;
+    }
+  }
+
+  return chapters;
+}
+
+async function polishCurrentSceneDescription(scene, storyText, generateTextFn) {
+  const sceneText = storyText.slice(scene.textStart, scene.textEnd);
+
+  const messages = [
+    {
+      role: 'system',
+      content: 'Rewrite this scene description in present tense, as if it is happening right now. Keep it to 2-3 sentences.',
+    },
+    {
+      role: 'user',
+      content: sceneText.slice(0, 2000),
+    },
+  ];
+
+  try {
+    const result = await callLLM(generateTextFn, messages, { max_tokens: 200 });
+    const polished = result.output && result.output.trim();
+    if (polished) {
+      scene.description = polished;
+      scene.updatedAt = Date.now();
+    }
+  } catch (_) {
+    // Leave existing description unchanged on error
+  }
+
+  return scene;
+}
+
+async function scanForScenes(storyText, lorebookEntries, generateTextFn, existingState, onProgress) {
+  const startedAt = Date.now();
+  const state = { ...TIMELINE_STATE_DEFAULTS, ...(existingState || {}) };
+
+  // Preserve user-edited chapter titles
+  const userChapters = (state.chapters || []).filter(ch => ch.titleSource === 'user');
+
+  // S1: Heuristic boundary detection
+  onProgress?.({ phase: 'heuristic-detection', current: 0, total: 5 });
+  const boundaries = detectBoundariesHeuristic(storyText);
+  let scenes = segmentIntoScenes(storyText, boundaries);
+
+  // S2: LLM scene analysis
+  onProgress?.({ phase: 'scene-analysis', current: 1, total: 5 });
+  scenes = await analyzeScenesBatch(scenes, storyText, generateTextFn, onProgress);
+
+  // S3: Character resolution
+  onProgress?.({ phase: 'character-resolution', current: 2, total: 5 });
+  scenes = resolveSceneCharacters(scenes, lorebookEntries);
+
+  // S4: Chapter grouping
+  onProgress?.({ phase: 'chapter-grouping', current: 3, total: 5 });
+  const chapters = await groupIntoChapters(scenes, generateTextFn);
+
+  // Restore user-edited chapter titles
+  for (const uc of userChapters) {
+    const match = chapters.find(ch =>
+      ch.sceneIds.some(id => uc.sceneIds && uc.sceneIds.includes(id)) ||
+      (ch.textStart <= uc.textEnd && ch.textEnd >= uc.textStart)
+    );
+    if (match) {
+      match.title = uc.title;
+      match.titleSource = 'user';
+    }
+  }
+
+  // S5: Polish current scene description
+  onProgress?.({ phase: 'description-polish', current: 4, total: 5 });
+  if (scenes.length > 0) {
+    const lastScene = scenes[scenes.length - 1];
+    await polishCurrentSceneDescription(lastScene, storyText, generateTextFn);
+  }
+
+  // Update state
+  state.scenes = scenes;
+  state.chapters = chapters;
+  state.lastProcessedLength = storyText.length;
+  state.lastProcessedHash = simpleHash(storyText.slice(-200));
+
+  // Append to scan history (capped)
+  const completedAt = Date.now();
+  state.scanHistory = [
+    { startedAt, completedAt, sceneCount: scenes.length, chapterCount: chapters.length },
+    ...(state.scanHistory || []),
+  ].slice(0, MAX_SCAN_HISTORY);
+
+  return {
+    state,
+    report: {
+      startedAt,
+      completedAt,
+      duration: completedAt - startedAt,
+      sceneCount: scenes.length,
+      chapterCount: chapters.length,
+    },
+  };
+}
+
+async function detectNewScenes(storyText, existingState, generateTextFn) {
+  const delta = storyText.length - (existingState.lastProcessedLength || 0);
+  if (delta < 500) return null;
+
+  const overlapStart = Math.max(0, existingState.lastProcessedLength - 500);
+  const newRegion = storyText.slice(overlapStart);
+
+  const rawBoundaries = detectBoundariesHeuristic(newRegion);
+  // Adjust offsets to be relative to the full storyText
+  const boundaries = rawBoundaries.map(b => ({
+    ...b,
+    offset: b.offset + overlapStart,
+  }));
+
+  if (boundaries.length === 0) return null;
+
+  // Build new scenes only in the new region
+  const newRegionText = storyText;
+  let newScenes = segmentIntoScenes(newRegionText, boundaries).filter(
+    s => s.textStart >= overlapStart
+  );
+
+  if (newScenes.length === 0) return null;
+
+  const highConfidence = boundaries.every(b => b.confidence >= 0.8);
+
+  if (!highConfidence) {
+    // Low confidence: run LLM analysis on the new scenes
+    try {
+      newScenes = await analyzeScenesBatch(newScenes, storyText, generateTextFn, null);
+    } catch (_) {
+      // Leave as tentative
+    }
+  } else {
+    // High confidence: mark as tentative (no LLM needed)
+    newScenes = newScenes.map(s => ({ ...s, status: 'tentative' }));
+  }
+
+  const updatedState = {
+    ...existingState,
+    scenes: [...(existingState.scenes || []), ...newScenes],
+    lastProcessedLength: storyText.length,
+    lastProcessedHash: simpleHash(storyText.slice(-200)),
+  };
+
+  return { state: updatedState, newScenes };
+}
+
 module.exports = {
   TIMELINE_STATE_DEFAULTS,
   BOUNDARY_TYPES,
@@ -297,4 +589,8 @@ module.exports = {
   segmentIntoScenes,
   analyzeScenesBatch,
   resolveSceneCharacters,
+  groupIntoChapters,
+  polishCurrentSceneDescription,
+  scanForScenes,
+  detectNewScenes,
 };
