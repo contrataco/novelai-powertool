@@ -553,6 +553,71 @@ function buildStatSheetHTML(char) {
     </div>
   ` : '';
 
+  // ---- Persona section ----
+  const persona = char.persona || {};
+  const traits = persona.personalityTraits || [];
+  const motivations = persona.motivations || [];
+  const fears = persona.fears || [];
+  const flaws = persona.flaws || [];
+  const hasPersonaData = traits.length > 0 || motivations.length > 0 || fears.length > 0 ||
+    flaws.length > 0 || persona.speechStyle || persona.emotionalState;
+
+  const personaSectionHTML = hasPersonaData ? `
+    <div class="persona-section stat-section">
+      <h4>Personality</h4>
+      ${traits.length > 0 ? `<div class="persona-traits-list">${traits.map(t => `<span class="persona-chip">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+      ${motivations.length > 0 ? `<div class="persona-field" data-field="motivations"><label>Motivations</label><ul class="persona-list">${motivations.map(m => `<li>${escapeHtml(m)}</li>`).join('')}</ul></div>` : ''}
+      ${fears.length > 0 ? `<div class="persona-field" data-field="fears"><label>Fears</label><ul class="persona-list">${fears.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul></div>` : ''}
+      ${flaws.length > 0 ? `<div class="persona-field" data-field="flaws"><label>Flaws</label><ul class="persona-list">${flaws.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul></div>` : ''}
+      ${persona.speechStyle ? `<div class="persona-field" data-field="speechStyle"><label>Speech Style</label><span class="persona-badge">${escapeHtml(persona.speechStyle)}</span></div>` : ''}
+      ${persona.emotionalState ? `<div class="persona-field" data-field="emotionalState"><label>Current State</label><span class="persona-badge mood">${escapeHtml(persona.emotionalState)}</span></div>` : ''}
+    </div>
+  ` : '';
+
+  // ---- Narrative section ----
+  const narrative = char.narrative || {};
+  const narrativeStoryFunction = narrative.storyFunction || '';
+  const narrativeImportance = narrative.importance || '';
+  const goals = narrative.goals || [];
+  const conflicts = narrative.conflicts || [];
+  const allegiances = narrative.allegiances || [];
+  const hasNarrativeData = narrativeStoryFunction || narrativeImportance || goals.length > 0 ||
+    conflicts.length > 0 || allegiances.length > 0 || narrative.arcType;
+
+  const narrativeRoleColor = getNarrativeRoleColor(narrativeStoryFunction);
+  const narrativeRoleLabel = narrativeStoryFunction
+    ? narrativeStoryFunction.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    : '';
+
+  const arcPct = typeof narrative.arcProgression === 'number' ? Math.min(100, Math.max(0, narrative.arcProgression)) : null;
+
+  const narrativeSectionHTML = hasNarrativeData ? `
+    <div class="narrative-section stat-section">
+      <h4>Story Role</h4>
+      ${(narrativeRoleLabel || narrativeImportance) ? `
+        <div class="narrative-role-display">
+          ${narrativeRoleLabel ? `<span class="narrative-role-badge" style="background:${narrativeRoleColor}22;color:${narrativeRoleColor};border:1px solid ${narrativeRoleColor}55;">${escapeHtml(narrativeRoleLabel)}</span>` : ''}
+          ${narrativeImportance ? `<span class="persona-importance-badge">${escapeHtml(narrativeImportance)}</span>` : ''}
+        </div>
+      ` : ''}
+      ${goals.length > 0 ? `<div class="persona-field" data-field="goals"><label>Goals</label><ul class="persona-list">${goals.map(g => `<li>${escapeHtml(g)}</li>`).join('')}</ul></div>` : ''}
+      ${conflicts.length > 0 ? `<div class="persona-field" data-field="conflicts"><label>Conflicts</label><ul class="persona-list">${conflicts.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul></div>` : ''}
+      ${allegiances.length > 0 ? `<div class="persona-field" data-field="allegiances"><label>Allegiances</label><div class="persona-traits-list">${allegiances.map(a => `<span class="persona-chip allegiance">${escapeHtml(a)}</span>`).join('')}</div></div>` : ''}
+      ${narrative.arcType ? `
+        <div class="persona-field" data-field="arcType">
+          <label>Character Arc</label>
+          <span class="persona-badge">${escapeHtml(narrative.arcType)}</span>
+          ${arcPct !== null ? `
+            <div class="arc-progress-bar">
+              <div class="arc-progress-fill" style="width:${arcPct}%;"></div>
+              <span class="arc-progress-label">${arcPct}%</span>
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
+    </div>
+  ` : '';
+
   return `
     <div class="rpg-stat-header">
       <div class="rpg-portrait-large-v2" style="--role-color:${roleColor};border: 3px solid var(--role-color); border-radius: 8px;">
@@ -584,6 +649,8 @@ function buildStatSheetHTML(char) {
         <div class="empty-state-sm">Loading...</div>
       </div>
     </details>
+    ${personaSectionHTML}
+    ${narrativeSectionHTML}
     ${npcInfoHTML}
     ${currencyHTML}
     ${statusHTML}
@@ -607,9 +674,30 @@ const SLOT_OPTIONS = ['weapon','off-hand','shield','helmet','armor','legs','boot
 const RARITY_OPTIONS = ['common','uncommon','rare','epic','legendary','unknown'];
 const ABILITY_CATEGORY_OPTIONS = ['','combat','magic','crafting','social','utility','other'];
 const STATUS_TYPE_OPTIONS = ['buff','debuff','condition'];
+const NARRATIVE_ROLES_OPTIONS = ['','protagonist','deuteragonist','antagonist','rival','mentor','love-interest','ally','foil','comic-relief','herald','threshold-guardian','trickster','shapeshifter','shadow','catalyst','background'];
+const ARC_TYPES_OPTIONS = ['','growth','corruption','redemption','coming-of-age','disillusionment','education','revenge','sacrifice','transformation','static'];
+const IMPORTANCE_OPTIONS = ['','major','supporting','minor','background'];
 
 function buildSelectHTML(name, options, selected) {
   return `<select data-field="${name}" class="rpg-edit-input">${options.map(o => `<option value="${o}"${o === selected ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
+}
+
+// Build editable chip list HTML (for personality traits, allegiances)
+function buildEditChipListHTML(containerId, items) {
+  const chips = items.map((item, idx) =>
+    `<span class="persona-chip edit-chip" data-idx="${idx}">${escapeHtml(item)}<button class="edit-chip-remove" data-idx="${idx}" title="Remove">✕</button></span>`
+  ).join('');
+  return `
+    <div class="edit-chip-container" id="${containerId}">
+      ${chips}
+      <input type="text" class="rpg-edit-input edit-chip-input" placeholder="Add..." style="width:80px;margin:2px;">
+    </div>
+  `;
+}
+
+// Build editable list-as-textarea HTML (for motivations, fears, flaws, goals, conflicts)
+function buildEditListTextareaHTML(id, items) {
+  return `<textarea id="${id}" class="rpg-edit-input" rows="3" style="width:100%;resize:vertical;">${escapeHtml(items.join('\n'))}</textarea>`;
 }
 
 function enterEditMode(charId) {
@@ -729,6 +817,75 @@ function enterEditMode(charId) {
       </div>
     </details>
     ` : ''}
+
+    <details class="lore-section mt-sm">
+      <summary class="section-summary">Personality</summary>
+      <div style="padding:4px 0;">
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Traits</label>
+          ${buildEditChipListHTML('rpgEditTraitsChips', char.persona?.personalityTraits || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Motivations (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditMotivations', char.persona?.motivations || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Fears (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditFears', char.persona?.fears || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Flaws (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditFlaws', char.persona?.flaws || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Speech Style</label>
+          <input type="text" id="rpgEditSpeechStyle" value="${escapeHtml(char.persona?.speechStyle || '')}" class="rpg-edit-input" style="width:100%;" placeholder="e.g. formal and archaic">
+        </div>
+        <div>
+          <label class="rpg-edit-label">Current Emotional State</label>
+          <input type="text" id="rpgEditEmotionalState" value="${escapeHtml(char.persona?.emotionalState || '')}" class="rpg-edit-input" style="width:100%;" placeholder="e.g. tense, wary">
+        </div>
+      </div>
+    </details>
+
+    <details class="lore-section mt-xs">
+      <summary class="section-summary">Story Role</summary>
+      <div style="padding:4px 0;">
+        <div class="flex-row mb-xs">
+          <div style="flex:1;">
+            <label class="rpg-edit-label">Story Function</label>
+            ${buildSelectHTML('narrativeStoryFunction', NARRATIVE_ROLES_OPTIONS, char.narrative?.storyFunction || '')}
+          </div>
+          <div style="flex:1;">
+            <label class="rpg-edit-label">Importance</label>
+            ${buildSelectHTML('narrativeImportance', IMPORTANCE_OPTIONS, char.narrative?.importance || '')}
+          </div>
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Goals (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditGoals', char.narrative?.goals || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Conflicts (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditConflicts', char.narrative?.conflicts || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Allegiances</label>
+          ${buildEditChipListHTML('rpgEditAllegiancesChips', char.narrative?.allegiances || [])}
+        </div>
+        <div class="flex-row mb-xs">
+          <div style="flex:1;">
+            <label class="rpg-edit-label">Character Arc</label>
+            ${buildSelectHTML('narrativeArcType', ARC_TYPES_OPTIONS, char.narrative?.arcType || '')}
+          </div>
+        </div>
+        <div>
+          <label class="rpg-edit-label">Arc Progression: <span id="rpgEditArcLabel">${char.narrative?.arcProgression ?? 0}%</span></label>
+          <input type="range" id="rpgEditArcProgression" min="0" max="100" step="5" value="${char.narrative?.arcProgression ?? 0}" class="rpg-edit-input" style="width:100%;">
+        </div>
+      </div>
+    </details>
+
     ${statsInputs ? `<div class="rpg-stat-grid">${statsInputs}</div>` : '<div class="empty-state-sm">No stats to edit.</div>'}
 
     <details class="lore-section mt-sm" open>
@@ -798,6 +955,36 @@ function enterEditMode(charId) {
       markEditDirty();
     });
   });
+
+  // Wire chip list add (Enter or blur on chip input)
+  rpgStatOverlayContent.querySelectorAll('.edit-chip-container').forEach(container => {
+    const input = container.querySelector('.edit-chip-input');
+    if (!input) return;
+    function addChip() {
+      const val = input.value.trim();
+      if (!val) return;
+      const chip = document.createElement('span');
+      chip.className = 'persona-chip edit-chip';
+      chip.dataset.value = val;
+      chip.innerHTML = `${escapeHtml(val)}<button class="edit-chip-remove" title="Remove">✕</button>`;
+      chip.querySelector('.edit-chip-remove').addEventListener('click', () => { chip.remove(); markEditDirty(); });
+      container.insertBefore(chip, input);
+      input.value = '';
+      markEditDirty();
+    }
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addChip(); } });
+    // Wire existing chip remove buttons
+    container.querySelectorAll('.edit-chip-remove').forEach(btn => {
+      btn.addEventListener('click', () => { btn.closest('.edit-chip').remove(); markEditDirty(); });
+    });
+  });
+
+  // Wire arc progression label update
+  const arcRangeInput = rpgStatOverlayContent.querySelector('#rpgEditArcProgression');
+  const arcLabel = rpgStatOverlayContent.querySelector('#rpgEditArcLabel');
+  if (arcRangeInput && arcLabel) {
+    arcRangeInput.addEventListener('input', () => { arcLabel.textContent = `${arcRangeInput.value}%`; });
+  }
 
   const saveBtn = rpgStatOverlayContent.querySelector('.rpg-stat-save-btn');
   const cancelBtn = rpgStatOverlayContent.querySelector('.rpg-stat-cancel-btn');
@@ -924,6 +1111,52 @@ async function saveEdit(charId) {
     updates.statusEffects = statusData.map(s => ({
       name: s.name, type: s.type || 'buff', duration: s.duration || null,
     }));
+  }
+
+  // Persona fields
+  const traitsChipContainer = rpgStatOverlayContent.querySelector('#rpgEditTraitsChips');
+  const speechStyleInput = rpgStatOverlayContent.querySelector('#rpgEditSpeechStyle');
+  const emotionalStateInput = rpgStatOverlayContent.querySelector('#rpgEditEmotionalState');
+  const motivationsTA = rpgStatOverlayContent.querySelector('#rpgEditMotivations');
+  const fearsTA = rpgStatOverlayContent.querySelector('#rpgEditFears');
+  const flawsTA = rpgStatOverlayContent.querySelector('#rpgEditFlaws');
+  if (traitsChipContainer || speechStyleInput || motivationsTA) {
+    const existingPersona = getRpgState()?.characters?.[charId]?.persona || {};
+    updates.persona = {
+      ...existingPersona,
+      personalityTraits: traitsChipContainer
+        ? Array.from(traitsChipContainer.querySelectorAll('.edit-chip')).map(c => c.dataset.value || c.textContent.replace('✕', '').trim()).filter(Boolean)
+        : existingPersona.personalityTraits || [],
+      motivations: motivationsTA ? motivationsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingPersona.motivations || [],
+      fears: fearsTA ? fearsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingPersona.fears || [],
+      flaws: flawsTA ? flawsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingPersona.flaws || [],
+      speechStyle: speechStyleInput ? (speechStyleInput.value.trim() || null) : existingPersona.speechStyle,
+      emotionalState: emotionalStateInput ? (emotionalStateInput.value.trim() || null) : existingPersona.emotionalState,
+    };
+  }
+
+  // Narrative fields
+  const storyFunctionSelect = rpgStatOverlayContent.querySelector('[data-field="narrativeStoryFunction"]');
+  const importanceSelect = rpgStatOverlayContent.querySelector('[data-field="narrativeImportance"]');
+  const goalsTA = rpgStatOverlayContent.querySelector('#rpgEditGoals');
+  const conflictsTA = rpgStatOverlayContent.querySelector('#rpgEditConflicts');
+  const allegiancesChipContainer = rpgStatOverlayContent.querySelector('#rpgEditAllegiancesChips');
+  const arcTypeSelect = rpgStatOverlayContent.querySelector('[data-field="narrativeArcType"]');
+  const arcProgressionInput = rpgStatOverlayContent.querySelector('#rpgEditArcProgression');
+  if (storyFunctionSelect || goalsTA || arcTypeSelect) {
+    const existingNarrative = getRpgState()?.characters?.[charId]?.narrative || {};
+    updates.narrative = {
+      ...existingNarrative,
+      storyFunction: storyFunctionSelect ? (storyFunctionSelect.value || null) : existingNarrative.storyFunction,
+      importance: importanceSelect ? (importanceSelect.value || null) : existingNarrative.importance,
+      goals: goalsTA ? goalsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingNarrative.goals || [],
+      conflicts: conflictsTA ? conflictsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingNarrative.conflicts || [],
+      allegiances: allegiancesChipContainer
+        ? Array.from(allegiancesChipContainer.querySelectorAll('.edit-chip')).map(c => c.dataset.value || c.textContent.replace('✕', '').trim()).filter(Boolean)
+        : existingNarrative.allegiances || [],
+      arcType: arcTypeSelect ? (arcTypeSelect.value || null) : existingNarrative.arcType,
+      arcProgression: arcProgressionInput ? parseInt(arcProgressionInput.value, 10) : existingNarrative.arcProgression,
+    };
   }
 
   // NPC-specific fields

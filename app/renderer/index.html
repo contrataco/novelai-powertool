@@ -2653,6 +2653,60 @@
       display: inline-block;
     }
 
+    /* Persona / Narrative stat sheet sections */
+    .persona-section, .narrative-section { margin-bottom: 16px; }
+    .persona-section h4, .narrative-section h4 {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+      color: #888; margin: 0 0 8px;
+    }
+    .persona-chip {
+      display: inline-block; background: #2a2a4e; color: #e0e0e0;
+      font-size: 11px; padding: 2px 8px; border-radius: 12px; margin: 2px;
+    }
+    .persona-chip.allegiance { background: #1a3a5c; color: #4a9eff; }
+    .persona-badge {
+      display: inline-block; background: #22223a; color: #ccc;
+      font-size: 11px; padding: 2px 8px; border-radius: 4px;
+    }
+    .persona-badge.mood { color: #4ade80; }
+    .persona-list { margin: 4px 0; padding-left: 16px; }
+    .persona-list li { font-size: 12px; color: #ccc; margin: 2px 0; }
+    .persona-field { margin: 8px 0; }
+    .persona-field label {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: #666; display: block; margin-bottom: 2px;
+    }
+    .persona-traits-list { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 4px; }
+    .arc-progress-bar {
+      height: 6px; background: #2a2a4e; border-radius: 3px;
+      margin-top: 4px; position: relative; overflow: visible;
+    }
+    .arc-progress-fill {
+      height: 100%; background: #e94560; border-radius: 3px;
+      transition: width 0.3s;
+    }
+    .arc-progress-label {
+      position: absolute; right: 0; top: -14px;
+      font-size: 10px; color: #888;
+    }
+    .narrative-role-display {
+      display: flex; gap: 6px; align-items: center; margin-bottom: 8px;
+    }
+    .narrative-role-badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 8px;
+      display: inline-block; font-weight: 600;
+    }
+    /* Edit chip list */
+    .edit-chip-container { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
+    .edit-chip { position: relative; padding-right: 18px !important; }
+    .edit-chip-remove {
+      position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; color: #888; cursor: pointer;
+      font-size: 9px; padding: 0; line-height: 1;
+    }
+    .edit-chip-remove:hover { color: #e94560; }
+    .edit-chip-input { min-width: 60px !important; }
+
     /* Stat sheet portrait larger (Phase 2.2) */
     .rpg-stat-header .rpg-portrait-large-v2 {
       width: 96px;
