@@ -395,7 +395,7 @@ function renderParty(rpg) {
 // STAT SHEET OVERLAY (Phase 5H)
 // =========================================================================
 
-function openStatOverlay(charId, rpg) {
+export function openStatOverlay(charId, rpg) {
   const char = rpg?.characters?.[charId];
   if (!char || !rpgStatOverlay || !rpgStatOverlayContent) return;
 
@@ -1173,6 +1173,20 @@ async function saveEdit(charId) {
     const result = await window.powertool.litrpgUpdateCharacter(state.currentStoryId, charId, updates);
     if (result.success) {
       state.litrpgState = result.state;
+
+      // Sync @narrative-role and @arc to lorebook metadata when narrative fields change
+      if (updates.narrative?.storyFunction || updates.narrative?.arcType) {
+        const char = result.state?.characters?.[charId];
+        const charName = char?.name || charId;
+        const extras = {};
+        if (updates.narrative.storyFunction) extras['narrative-role'] = updates.narrative.storyFunction;
+        if (updates.narrative.arcType) extras['arc'] = updates.narrative.arcType;
+        console.log('[Cast] Narrative metadata to sync:', extras, 'for', charName);
+        // TODO: Full lorebook metadata sync via webview proxy (proxyCall pattern from lore-creator.js).
+        // The @narrative-role and @arc values will be written to the lorebook entry on the next lore scan
+        // (Pass 2/3 generate/update flow reads these fields from character state and stamps metadata).
+      }
+
       refreshRpgUI();
       openStatOverlay(charId, getRpgState());
       showToast('Character updated', 2000, 'success');
@@ -2569,4 +2583,9 @@ export function init() {
 
   // Listen for story switch events
   bus.on('story:changed', onStorySwitch);
+
+  // Refresh Cast tab when a timeline scan completes — new scene characters may have been detected
+  bus.on('timeline:scanned', () => {
+    refreshRpgUI();
+  });
 }

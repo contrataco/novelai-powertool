@@ -381,9 +381,24 @@ export function openSceneExplorer(sceneId) {
 
   for (const charCard of sceneExplorerBody.querySelectorAll('.scene-char-card')) {
     charCard.addEventListener('click', () => {
+      const charName = charCard.dataset.charName || '';
       closeSceneExplorer();
       switchPanelTab('rpg');
-      // Task 17 will implement stat sheet jump
+
+      // Find matching character in LitRPG state and open stat sheet
+      const chars = state.litrpgState?.characters || {};
+      const charNameLower = charName.toLowerCase();
+      const matchEntry = Object.entries(chars).find(([, c]) => {
+        if (!c.name) return false;
+        return c.name.toLowerCase() === charNameLower ||
+               (c.aliases || []).some(a => a.toLowerCase() === charNameLower);
+      });
+      if (matchEntry) {
+        const [charId] = matchEntry;
+        import('./litrpg-panel.js').then(mod => {
+          if (mod.openStatOverlay) mod.openStatOverlay(charId, state.litrpgState);
+        });
+      }
     });
   }
 
@@ -638,5 +653,10 @@ export function init() {
     } else {
       refreshTimelineUI();
     }
+  });
+
+  // Refresh timeline when settings are saved (provider or story settings may affect scan behavior)
+  bus.on('settings:saved', () => {
+    refreshTimelineUI();
   });
 }
