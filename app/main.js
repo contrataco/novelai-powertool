@@ -159,7 +159,7 @@ function createWindow() {
       contextIsolation: true,
       webviewTag: true
     },
-    title: 'NovelAI Scene Visualizer'
+    title: 'NovelAI PowerTool'
   });
 
   // Load the wrapper HTML that contains the webview
@@ -1917,6 +1917,38 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
 
     // Save updated state
     db.setLoreState(storyId, result.state);
+
+    // Persona extraction (all stories with character entries)
+    const characterEntries = existingEntries.filter(e => {
+      const type = loreCreator.getEntryType(e.text, e.displayName);
+      return type === 'character';
+    });
+    if (characterEntries.length > 0) {
+      try {
+        const personaExtractor = require('./persona-extractor');
+        const litrpgState = db.getOrCreateLitrpgState(storyId);
+        const compStateForPersona = db.getComprehension(storyId);
+        const comprehensionCtx = compStateForPersona
+          ? loreComprehension.formatComprehensionContext(compStateForPersona.masterSummary, compStateForPersona.entityProfiles)
+          : '';
+        const personaCtx = {
+          storyText, characterEntries, generateTextFn,
+          state: litrpgState, comprehensionCtx,
+          onProgress: (p) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('lore:scan-progress', p);
+            }
+          },
+        };
+        await personaExtractor.runPersonaExtraction(personaCtx);
+        db.setLitrpgState(storyId, personaCtx.state);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('litrpg:state-updated', { state: personaCtx.state });
+        }
+      } catch (err) {
+        console.error('[Persona] Extraction failed:', err);
+      }
+    }
 
     // Chain LitRPG scan asynchronously — don't block lore scan return
     const rpgState = db.getLitrpgState(storyId);
