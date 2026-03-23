@@ -8,6 +8,7 @@ import {
 } from './dom-refs.js';
 import { escapeHtml, showToast, friendlyApiError } from './utils.js';
 import { switchPanelTab } from './lore-creator.js';
+import { readStoryTextFromDOM } from './webview-polling.js';
 
 // =========================================================================
 // CONSTANTS
@@ -474,12 +475,11 @@ export function openSceneExplorer(sceneId) {
         return;
       }
       const textStart = scene.textStart ?? 0;
-      const storyLength = state.currentStoryText?.length || 0;
       webview.executeJavaScript(`
         try {
           const editor = document.querySelector('.ProseMirror');
           if (editor) {
-            const totalLength = ${storyLength} || editor.textContent?.length || 1;
+            const totalLength = editor.textContent?.length || 1;
             const ratio = ${textStart} / totalLength;
             editor.scrollTop = ratio * editor.scrollHeight;
           }
@@ -573,7 +573,7 @@ async function startTimelineScan() {
 
   state.llmBusy = true;
   try {
-    const storyText = state.currentStoryText || '';
+    const storyText = await readStoryTextFromDOM() || '';
     const entries = []; // Lorebook entries — stub until webview proxy integration
     const result = await window.powertool.timelineScan(storyId, storyText, entries);
 

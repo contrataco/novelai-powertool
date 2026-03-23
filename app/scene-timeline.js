@@ -189,8 +189,8 @@ async function analyzeScenesBatch(provisionalScenes, storyText, generateTextFn, 
     ];
 
     try {
-      const result = await callLLM(generateTextFn, messages, { max_tokens: 1000 });
-      const parsed = recoverJSON(result.output);
+      const result = await callLLM(generateTextFn, messages, { maxTokens: 1000 });
+      const parsed = recoverJSON(result.raw);
       const llmScenes = parsed?.scenes;
 
       if (Array.isArray(llmScenes)) {
@@ -370,8 +370,8 @@ async function groupIntoChapters(scenes, generateTextFn) {
 
   let llmChapters = null;
   try {
-    const result = await callLLM(generateTextFn, messages, { max_tokens: 800 });
-    const parsed = recoverJSON(result.output);
+    const result = await callLLM(generateTextFn, messages, { maxTokens: 800 });
+    const parsed = recoverJSON(result.raw);
     llmChapters = parsed?.chapters;
   } catch (_) {
     // Fall through to fallback
@@ -452,8 +452,8 @@ async function polishCurrentSceneDescription(scene, storyText, generateTextFn) {
   ];
 
   try {
-    const result = await callLLM(generateTextFn, messages, { max_tokens: 200 });
-    const polished = result.output && result.output.trim();
+    const result = await callLLM(generateTextFn, messages, { maxTokens: 200 });
+    const polished = result.raw && result.raw.trim();
     if (polished) {
       scene.description = polished;
       scene.updatedAt = Date.now();

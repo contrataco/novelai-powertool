@@ -1282,6 +1282,7 @@ async function runLoreScan(scanType = 'all') {
   if (state.loreIsScanning || !state.currentStoryId) return;
 
   state.loreIsScanning = true;
+  state.llmBusy = true;
   const scanStartedForStory = state.currentStoryId;
   let scanHadError = false;
   loreScanBtn.disabled = true;
@@ -1379,6 +1380,7 @@ async function runLoreScan(scanType = 'all') {
     loreScanProgressFill.style.width = '100%';
     loreScanPhase.textContent = 'Scan complete';
     state.loreIsScanning = false;
+    state.llmBusy = false;
     loreScanBtn.disabled = false;
     loreScanBtn.title = '';
     refreshLoreUI();

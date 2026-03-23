@@ -1953,30 +1953,34 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       return type === 'character';
     });
     if (characterEntries.length > 0) {
-      try {
-        const personaExtractor = require('./persona-extractor');
-        const litrpgState = db.getOrCreateLitrpgState(storyId);
-        const compStateForPersona = db.getComprehension(storyId);
-        const comprehensionCtx = compStateForPersona
-          ? loreComprehension.formatComprehensionContext(compStateForPersona.masterSummary, compStateForPersona.entityProfiles)
-          : '';
-        const personaCtx = {
-          storyText, characterEntries, generateTextFn,
-          state: litrpgState, comprehensionCtx,
-          onProgress: (p) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('lore:scan-progress', p);
-            }
-          },
-        };
-        await personaExtractor.runPersonaExtraction(personaCtx);
-        db.setLitrpgState(storyId, personaCtx.state);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('litrpg:state-updated', { state: personaCtx.state });
+      // Fire-and-forget — don't block lore scan return (matches chained LitRPG scan pattern)
+      (async () => {
+        try {
+          const personaExtractor = require('./persona-extractor');
+          const litrpgState = db.getOrCreateLitrpgState(storyId);
+          const compStateForPersona = db.getComprehension(storyId);
+          const comprehensionCtx = compStateForPersona
+            ? loreComprehension.formatComprehensionContext(compStateForPersona.masterSummary, compStateForPersona.entityProfiles)
+            : '';
+          const personaCtx = {
+            storyText, characterEntries, generateTextFn,
+            state: litrpgState, comprehensionCtx,
+            onProgress: (p) => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('lore:scan-progress', p);
+              }
+            },
+          };
+          await personaExtractor.runPersonaExtraction(personaCtx);
+          db.setLitrpgState(storyId, personaCtx.state);
+          hydratePortraits(personaCtx.state, storyId);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('litrpg:state-updated', { state: personaCtx.state });
+          }
+        } catch (err) {
+          console.error('[Persona] Extraction failed:', err);
         }
-      } catch (err) {
-        console.error('[Persona] Extraction failed:', err);
-      }
+      })();
     }
 
     // Chain LitRPG scan asynchronously — don't block lore scan return
@@ -2864,6 +2868,7 @@ ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntri
     };
     await personaExtractor.runPersonaExtraction(ctx);
     db.setLitrpgState(storyId, ctx.state);
+    hydratePortraits(ctx.state, storyId);
     return { success: true, state: ctx.state };
   } catch (err) {
     console.error('[Persona] Scan failed:', err);
@@ -3036,6 +3041,7 @@ ipcMain.handle('timeline:detect-new', async (event, { storyId, storyText }) => {
   try {
     const generateTextFn = makeLoreGenerateTextFn(store);
     const existingState = db.getTimelineState(storyId);
+    if (!existingState) return { success: true, noChange: true };
     const result = await sceneTimeline.detectNewScenes(storyText, existingState, generateTextFn);
     if (result) {
       db.setTimelineState(storyId, result.state);

@@ -1936,6 +1936,7 @@ let lastEtaText = '';
 async function runRpgScan() {
   if (!state.currentStoryId || state.litrpgScanning) return;
   state.litrpgScanning = true;
+  state.llmBusy = true;
   if (rpgScanStatus) rpgScanStatus.style.display = '';
   if (rpgScanPhase) rpgScanPhase.textContent = 'Starting RPG scan...';
   if (rpgScanBtn) { rpgScanBtn.disabled = true; rpgScanBtn.classList.add('scanning'); }
@@ -2039,6 +2040,7 @@ async function runRpgScan() {
     console.error('[LitRPG] Scan error:', err);
   } finally {
     state.litrpgScanning = false;
+    state.llmBusy = false;
     lastEtaText = '';
     if (scanElapsedTimer) { clearInterval(scanElapsedTimer); scanElapsedTimer = null; }
     if (rpgScanPhase) rpgScanPhase.textContent = 'Scan complete';
