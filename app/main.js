@@ -1411,15 +1411,26 @@ ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artS
 
       // Gather RPG data if available
       let rpgData = null;
+      let litrpgStateForVisuals = null;
       if (storyId) {
         const litrpgState = db.getLitrpgState(storyId);
         if (litrpgState?.enabled && litrpgState?.characters) {
           rpgData = litrpgState;
+          litrpgStateForVisuals = litrpgState;
         }
       }
 
-      // Get stored visual profiles
-      const visualProfiles = storyId ? db.getVisualProfiles(storyId) : {};
+      // Build visual profiles: prefer character.visual data, fall back to visual_profiles table
+      const storedTableProfiles = storyId ? db.getVisualProfiles(storyId) : {};
+      const visualProfiles = { ...storedTableProfiles };
+      if (litrpgStateForVisuals?.characters) {
+        for (const char of Object.values(litrpgStateForVisuals.characters)) {
+          if (char.name && char.visual) {
+            // character.visual takes precedence over the legacy table entry
+            visualProfiles[char.name] = { ...storedTableProfiles[char.name], ...char.visual };
+          }
+        }
+      }
 
       const result = await withTimeout(
         scenePromptPipeline.generateScenePromptV2({
@@ -1433,10 +1444,28 @@ ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artS
         'Scene prompt pipeline'
       );
 
-      // Persist updated visual profiles
+      // Persist updated visual profiles to both the legacy table and character objects
       if (result.success && result.updatedProfiles && storyId) {
         for (const [charName, profile] of Object.entries(result.updatedProfiles)) {
           db.setVisualProfile(storyId, charName, profile);
+        }
+        // Also write back to character.visual when litrpg is active
+        if (litrpgStateForVisuals?.characters) {
+          let litrpgDirty = false;
+          for (const [charName, profile] of Object.entries(result.updatedProfiles)) {
+            const chars = Object.values(litrpgStateForVisuals.characters);
+            const match = chars.find(c =>
+              loreCreator.fuzzyNameScore(c.name, charName) >= FUZZY_MATCH_THRESHOLD ||
+              (c.aliases || []).some(a => loreCreator.fuzzyNameScore(a, charName) >= FUZZY_MATCH_THRESHOLD)
+            );
+            if (match) {
+              match.visual = { ...(match.visual || {}), ...profile };
+              litrpgDirty = true;
+            }
+          }
+          if (litrpgDirty) {
+            db.setLitrpgState(storyId, litrpgStateForVisuals);
+          }
         }
       }
 
@@ -3088,6 +3117,42 @@ app.whenReady().then(() => {
       console.log('[Main] Migrated Venice video resolution to 1080p');
     }
     store.set('migratedVeniceVideoRes', true);
+  }
+
+  // One-time: migrate visual_profiles table data into character.visual objects
+  if (!store.get('migratedVisualProfiles')) {
+    try {
+      const stories = db.listStories();
+      const { CHARACTER_PERSONA_DEFAULTS } = require('./litrpg-tracker');
+      for (const story of stories) {
+        const storyId = story.id || story.story_id;
+        const profiles = db.getVisualProfiles(storyId);
+        if (!profiles || Object.keys(profiles).length === 0) continue;
+        const litrpgState = db.getOrCreateLitrpgState(storyId);
+        for (const [charName, profileData] of Object.entries(profiles)) {
+          const chars = Object.values(litrpgState.characters || {});
+          const match = chars.find(c =>
+            loreCreator.fuzzyNameScore(c.name, charName) >= 0.7 ||
+            (c.aliases || []).some(a => loreCreator.fuzzyNameScore(a, charName) >= 0.7)
+          );
+          if (match && profileData) {
+            const data = typeof profileData === 'string' ? JSON.parse(profileData) : profileData;
+            match.visual = { ...CHARACTER_PERSONA_DEFAULTS.visual, ...data };
+          }
+        }
+        // Also migrate @protagonist metadata → narrative.storyFunction
+        for (const char of Object.values(litrpgState.characters || {})) {
+          if (char.isProtagonist || char._protagonistTag) {
+            char.narrative = { ...(char.narrative || CHARACTER_PERSONA_DEFAULTS.narrative), storyFunction: 'protagonist' };
+          }
+        }
+        db.setLitrpgState(storyId, litrpgState);
+      }
+      store.set('migratedVisualProfiles', true);
+      console.log('[Main] Visual profiles migrated to character objects');
+    } catch (err) {
+      console.error('[Main] Visual profile migration failed:', err);
+    }
   }
 
   setupTokenInterception();
