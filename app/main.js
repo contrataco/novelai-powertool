@@ -2812,6 +2812,36 @@ ipcMain.handle('litrpg:reverse-sync-all', (event, { entries, storyId }) => {
   return { success: true, results, updatedCount, failedCount, state: rpgState };
 });
 
+// IPC Handlers — Character Persona
+
+ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntries }) => {
+  try {
+    const generateTextFn = makeLoreGenerateTextFn(store);
+    const litrpgState = db.getOrCreateLitrpgState(storyId);
+    const compState = db.getLoreComprehension(storyId);
+    const comprehensionCtx = compState
+      ? loreComprehension.formatComprehensionContext(compState.masterSummary, compState.entityProfiles)
+      : '';
+    const metadata = require('./metadata');
+    const characterEntries = existingEntries.filter(e => {
+      const type = metadata.getEntryType(e.text, e.displayName);
+      return type === 'character';
+    });
+    const personaExtractor = require('./persona-extractor');
+    const ctx = {
+      storyText, characterEntries, generateTextFn,
+      state: litrpgState, comprehensionCtx,
+      onProgress: (p) => event.sender.send('persona:scan-progress', p),
+    };
+    await personaExtractor.runPersonaExtraction(ctx);
+    db.setLitrpgState(storyId, ctx.state);
+    return { success: true, state: ctx.state };
+  } catch (err) {
+    console.error('[Persona] Scan failed:', err);
+    return { success: false, error: err.message };
+  }
+});
+
 // IPC Handlers — Portraits
 
 ipcMain.handle('portrait:generate', async (event, { storyId, characterId, characterEntry, rpgData }) => {

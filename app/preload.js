@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 // Expose secure API to renderer
-contextBridge.exposeInMainWorld('sceneVisualizer', {
+contextBridge.exposeInMainWorld('powertool', {
   // Image generation
   generateImage: (prompt, negativePrompt, opts = {}) =>
     ipcRenderer.invoke('generate-image', { prompt, negativePrompt, ...opts }),
@@ -255,6 +255,14 @@ contextBridge.exposeInMainWorld('sceneVisualizer', {
     ipcRenderer.invoke('tts:set-character-voice', { storyId, characterName, voiceId }),
   ttsRemoveCharacterVoice: (storyId, characterName) =>
     ipcRenderer.invoke('tts:remove-character-voice', { storyId, characterName }),
+
+  // Character Persona
+  personaScan: (storyId, storyText, existingEntries) =>
+    ipcRenderer.invoke('persona:scan', { storyId, storyText, existingEntries }),
+  onPersonaScanProgress: (callback) => {
+    ipcRenderer.removeAllListeners('persona:scan-progress');
+    ipcRenderer.on('persona:scan-progress', (event, data) => callback(data));
+  },
 
   // Media Gallery
   mediaSaveImage: (storyId, imageDataUrl, metadata) =>
