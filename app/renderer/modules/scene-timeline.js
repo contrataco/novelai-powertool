@@ -4,8 +4,9 @@ import { state, bus } from './state.js';
 import {
   timelineScanBtn, timelineScanStatus, timelineList,
   sceneExplorerOverlay, sceneExplorerHeader, sceneExplorerBody,
+  promptDisplay,
 } from './dom-refs.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, showToast, friendlyApiError } from './utils.js';
 import { switchPanelTab } from './lore-creator.js';
 
 // =========================================================================
@@ -386,36 +387,148 @@ export function openSceneExplorer(sceneId) {
     });
   }
 
-  // Action button stubs (Task 17 implements)
-  const narrateBtn = sceneExplorerBody.querySelector('.scene-narrate-btn');
-  if (narrateBtn) {
-    narrateBtn.addEventListener('click', () => {
-      // TODO (Task 17): narrate scene via TTS
-      console.log('[Timeline] Narrate scene stub:', sceneId);
-    });
-  }
-
-  const jumpBtn = sceneExplorerBody.querySelector('.scene-jump-btn');
-  if (jumpBtn) {
-    jumpBtn.addEventListener('click', () => {
-      // TODO (Task 17): jump to scene text in NovelAI editor
-      console.log('[Timeline] Jump to text stub:', sceneId);
-    });
-  }
-
-  const noteBtn = sceneExplorerBody.querySelector('.scene-note-btn');
-  if (noteBtn) {
-    noteBtn.addEventListener('click', () => {
-      // TODO (Task 17): add note to scene
-      console.log('[Timeline] Add note stub:', sceneId);
-    });
-  }
-
+  // Action: Generate Scene Image
   const genImageBtn = sceneExplorerBody.querySelector('.scene-gen-image-btn');
   if (genImageBtn) {
     genImageBtn.addEventListener('click', () => {
-      // TODO (Task 17): generate image for this scene
-      console.log('[Timeline] Generate scene image stub:', sceneId);
+      const sceneText = scene.description || scene.excerpt || '';
+      if (!sceneText) {
+        showToast('No scene description to use as prompt', 3000, 'warn');
+        return;
+      }
+      state.prompt.display = sceneText;
+      state.prompt.raw = sceneText;
+      state.prompt.edited = false;
+      state.prompt.source = 'timeline';
+      if (promptDisplay) promptDisplay.value = sceneText;
+      closeSceneExplorer();
+      switchPanelTab('scene');
+      showToast('Scene set as prompt — click Generate to create image', 3000);
+    });
+  }
+
+  // Action: Narrate Scene
+  const narrateBtn = sceneExplorerBody.querySelector('.scene-narrate-btn');
+  if (narrateBtn) {
+    narrateBtn.addEventListener('click', async () => {
+      const sceneText = scene.excerpt || scene.description || '';
+      if (!sceneText || sceneText.length < 20) {
+        showToast('Not enough scene text to narrate', 3000, 'warn');
+        return;
+      }
+      narrateBtn.disabled = true;
+      narrateBtn.textContent = 'Generating…';
+      try {
+        const segments = await window.powertool.ttsNarrateScene(
+          sceneText,
+          state.currentStoryId,
+          null
+        );
+        if (!segments || segments.length === 0) {
+          showToast('No audio generated for this scene', 3000, 'warn');
+          return;
+        }
+        // Play segments sequentially
+        const audioEl = document.createElement('audio');
+        for (const seg of segments) {
+          audioEl.src = seg.audioData;
+          await new Promise((resolve, reject) => {
+            audioEl.onended = resolve;
+            audioEl.onerror = reject;
+            audioEl.play();
+          });
+        }
+        showToast('Narration complete', 2000);
+      } catch (e) {
+        console.error('[Timeline] Narrate error:', e);
+        showToast('TTS error: ' + friendlyApiError(e), 4000, 'error');
+      } finally {
+        narrateBtn.disabled = false;
+        narrateBtn.textContent = 'Narrate Scene';
+      }
+    });
+  }
+
+  // Action: Jump to Text
+  const jumpBtn = sceneExplorerBody.querySelector('.scene-jump-btn');
+  if (jumpBtn) {
+    jumpBtn.addEventListener('click', () => {
+      const webview = document.querySelector('webview');
+      if (!webview) {
+        showToast('NovelAI editor not available', 3000, 'warn');
+        return;
+      }
+      const textStart = scene.textStart ?? 0;
+      const storyLength = state.currentStoryText?.length || 0;
+      webview.executeJavaScript(`
+        try {
+          const editor = document.querySelector('.ProseMirror');
+          if (editor) {
+            const totalLength = ${storyLength} || editor.textContent?.length || 1;
+            const ratio = ${textStart} / totalLength;
+            editor.scrollTop = ratio * editor.scrollHeight;
+          }
+        } catch(e) {}
+      `);
+      closeSceneExplorer();
+      showToast('Jumped to scene in editor', 2000);
+    });
+  }
+
+  // Action: Add Note (stub — keeps button visible for future)
+  const noteBtn = sceneExplorerBody.querySelector('.scene-note-btn');
+  if (noteBtn) {
+    noteBtn.addEventListener('click', () => {
+      showToast('Notes coming soon', 2000, 'warn');
+    });
+  }
+
+  // Action: Edit Description
+  const editDescBtn = sceneExplorerBody.querySelector('.scene-edit-desc-btn');
+  if (editDescBtn) {
+    editDescBtn.addEventListener('click', () => {
+      const descPara = editDescBtn.closest('div').nextElementSibling;
+      if (!descPara) return;
+      const currentText = scene.description || '';
+      const textarea = document.createElement('textarea');
+      textarea.value = currentText;
+      textarea.style.cssText = 'width:100%;min-height:80px;background:#1a1a2e;color:#e0e0e0;border:1px solid #4a9eff;border-radius:4px;padding:6px;font-size:13px;line-height:1.5;resize:vertical;box-sizing:border-box;';
+      descPara.replaceWith(textarea);
+      editDescBtn.textContent = 'Save';
+      textarea.focus();
+
+      const saveDesc = async () => {
+        const newText = textarea.value.trim();
+        editDescBtn.textContent = 'Saving…';
+        editDescBtn.disabled = true;
+        try {
+          if (window.powertool.timelineUpdateScene && state.currentStoryId) {
+            await window.powertool.timelineUpdateScene(state.currentStoryId, sceneId, { description: newText });
+          }
+          // Update in-memory state
+          scene.description = newText;
+          if (state.timelineState?.scenes) {
+            const idx = state.timelineState.scenes.findIndex(s => s.id === sceneId);
+            if (idx !== -1) state.timelineState.scenes[idx].description = newText;
+          }
+          renderTimeline(state.timelineState);
+          openSceneExplorer(sceneId);
+          showToast('Description saved', 2000);
+        } catch (e) {
+          console.error('[Timeline] Save description error:', e);
+          showToast('Failed to save description', 3000, 'error');
+          editDescBtn.disabled = false;
+          editDescBtn.textContent = 'Save';
+        }
+      };
+
+      editDescBtn.addEventListener('click', saveDesc, { once: true });
+      textarea.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          saveDesc();
+        }
+      });
     });
   }
 
