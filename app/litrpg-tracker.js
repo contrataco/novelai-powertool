@@ -63,6 +63,23 @@ const LITRPG_STATE_DEFAULTS = {
   races: {},      // { id, name, description, traits, knownMembers:[], lastUpdated }
 };
 
+const CHARACTER_PERSONA_DEFAULTS = {
+  persona: {
+    age: null, gender: null, personalityTraits: [], motivations: [],
+    fears: [], flaws: [], secrets: [], backstory: null,
+    speechStyle: null, values: [], emotionalState: null,
+  },
+  narrative: {
+    storyFunction: null, goals: [], conflicts: [], allegiances: [],
+    arcType: null, arcProgression: null, importance: null,
+    firstAppearance: null, lastMentioned: null,
+  },
+  visual: {
+    hair: null, eyes: null, build: null, race: null,
+    distinguishingFeatures: null, clothing: null, height: null, skinTone: null,
+  },
+};
+
 // --- Tracked Fields Registry (Phase 7.3) ---
 
 const TRACKED_FIELDS = [
@@ -80,6 +97,16 @@ const TRACKED_FIELDS = [
   { key: 'currency', label: 'Currency', compare: 'keyValueMap' },
   { key: 'statusEffects', label: 'Status Effects', compare: 'namedArray' },
   { key: 'inventory', label: 'Inventory', compare: 'namedArray' },
+  { key: 'persona.personalityTraits', label: 'Personality', compare: 'stringArray' },
+  { key: 'persona.motivations', label: 'Motivations', compare: 'stringArray' },
+  { key: 'persona.fears', label: 'Fears', compare: 'stringArray' },
+  { key: 'persona.flaws', label: 'Flaws', compare: 'stringArray' },
+  { key: 'persona.emotionalState', label: 'Emotional State', compare: 'scalar' },
+  { key: 'persona.speechStyle', label: 'Speech Style', compare: 'scalar' },
+  { key: 'narrative.storyFunction', label: 'Story Role', compare: 'scalar' },
+  { key: 'narrative.arcType', label: 'Arc Type', compare: 'scalar' },
+  { key: 'narrative.arcProgression', label: 'Arc Progress', compare: 'scalar' },
+  { key: 'narrative.importance', label: 'Importance', compare: 'scalar' },
 ];
 
 // --- System-Type Prompt Config (Phase 3A) ---
@@ -1037,14 +1064,24 @@ function mergeCurrency(existing, incoming) {
 // CHANGE DETECTION (Phase 4E)
 // ============================================================================
 
+function getNestedField(obj, path) {
+  return path.split('.').reduce((o, k) => o?.[k], obj);
+}
+
 function hasCharacterChanged(before, after) {
   for (const field of TRACKED_FIELDS) {
-    const bv = before[field.key];
-    const av = after[field.key];
+    const bv = getNestedField(before, field.key);
+    const av = getNestedField(after, field.key);
     switch (field.compare) {
       case 'scalar':
         if (bv !== av) return true;
         break;
+      case 'stringArray': {
+        const a = (bv || []).slice().sort().join(',');
+        const b = (av || []).slice().sort().join(',');
+        if (a !== b) return true;
+        break;
+      }
       case 'statMap': {
         const bs = bv || {};
         const as = av || {};
@@ -1087,14 +1124,22 @@ function hasCharacterChanged(before, after) {
 function describeChanges(before, after) {
   const changes = [];
   for (const field of TRACKED_FIELDS) {
-    const bv = before[field.key];
-    const av = after[field.key];
+    const bv = getNestedField(before, field.key);
+    const av = getNestedField(after, field.key);
     switch (field.compare) {
       case 'scalar':
         if (bv !== av) {
           changes.push({ field: field.label, before: bv || 'none', after: av || 'none' });
         }
         break;
+      case 'stringArray': {
+        const a = (bv || []).slice().sort().join(',');
+        const b = (av || []).slice().sort().join(',');
+        if (a !== b) {
+          changes.push({ field: field.label, before: (bv || []).join(', ') || 'none', after: (av || []).join(', ') || 'none' });
+        }
+        break;
+      }
       case 'statMap': {
         const bs = bv || {};
         const as = av || {};
@@ -3024,6 +3069,7 @@ module.exports = {
   // Constants
   TRACKED_FIELDS,
   LITRPG_STATE_DEFAULTS,
+  CHARACTER_PERSONA_DEFAULTS,
   LITRPG_CHARACTER_TEMPLATE,
   DETECTION_THRESHOLD,
   VALID_EQUIPMENT_SLOTS,

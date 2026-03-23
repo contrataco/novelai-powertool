@@ -202,6 +202,11 @@ function setLitrpgState(storyId, data) {
   setData('litrpg_state', storyId, data);
 }
 
+function getOrCreateLitrpgState(storyId) {
+  const data = getData('litrpg_state', storyId);
+  return { ...LITRPG_STATE_DEFAULTS, ...(data || {}) };
+}
+
 const TTS_STATE_DEFAULTS = { characterVoices: {} };
 
 function getTtsState(storyId) {
@@ -318,7 +323,7 @@ module.exports = {
   getLoreState, setLoreState,
   getComprehension, setComprehension,
   getMemoryState, setMemoryState,
-  getLitrpgState, setLitrpgState, LITRPG_STATE_DEFAULTS,
+  getLitrpgState, setLitrpgState, getOrCreateLitrpgState, LITRPG_STATE_DEFAULTS,
   getTtsState, setTtsState, TTS_STATE_DEFAULTS,
   getStorySettings, setStorySettings,
   getVisualProfiles, setVisualProfile, resetVisualProfiles,
