@@ -314,4 +314,18 @@ contextBridge.exposeInMainWorld('powertool', {
   onPortraitAutoSaveFailed: (callback) => {
     ipcRenderer.on('portrait:auto-save-failed', (_, data) => callback(data));
   },
+
+  // Scene Timeline
+  timelineGetState: (storyId) => ipcRenderer.invoke('timeline:get-state', storyId),
+  timelineSetState: (storyId, state) => ipcRenderer.invoke('timeline:set-state', { storyId, state }),
+  timelineScan: (storyId, storyText, lorebookEntries) =>
+    ipcRenderer.invoke('timeline:scan', { storyId, storyText, lorebookEntries }),
+  timelineUpdateScene: (storyId, sceneId, updates) =>
+    ipcRenderer.invoke('timeline:update-scene', { storyId, sceneId, updates }),
+  timelineDetectNew: (storyId, storyText) =>
+    ipcRenderer.invoke('timeline:detect-new', { storyId, storyText }),
+  onTimelineScanProgress: (callback) => {
+    ipcRenderer.removeAllListeners('timeline:scan-progress');
+    ipcRenderer.on('timeline:scan-progress', (event, data) => callback(data));
+  },
 });

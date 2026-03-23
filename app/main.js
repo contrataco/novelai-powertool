@@ -2965,6 +2965,60 @@ ipcMain.handle('story:load-all', (event, { storyId, storyTitle }) => {
   return allData;
 });
 
+// IPC Handlers — Scene Timeline
+const sceneTimeline = require('./scene-timeline');
+
+ipcMain.handle('timeline:get-state', (event, storyId) => {
+  return db.getTimelineState(storyId);
+});
+
+ipcMain.handle('timeline:set-state', (event, { storyId, state }) => {
+  db.setTimelineState(storyId, state);
+  return { success: true };
+});
+
+ipcMain.handle('timeline:scan', async (event, { storyId, storyText, lorebookEntries }) => {
+  try {
+    const generateTextFn = makeLoreGenerateTextFn(store);
+    const existingState = db.getTimelineState(storyId);
+    const result = await sceneTimeline.scanForScenes(
+      storyText, lorebookEntries, generateTextFn, existingState,
+      (progress) => event.sender.send('timeline:scan-progress', progress)
+    );
+    db.setTimelineState(storyId, result.state);
+    return { success: true, state: result.state, report: result.report };
+  } catch (err) {
+    console.error('[Timeline] Scan failed:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('timeline:update-scene', (event, { storyId, sceneId, updates }) => {
+  const state = db.getTimelineState(storyId);
+  if (!state) return { success: false, error: 'No timeline state' };
+  const scene = state.scenes.find(s => s.id === sceneId);
+  if (!scene) return { success: false, error: 'Scene not found' };
+  Object.assign(scene, updates, { updatedAt: Date.now() });
+  db.setTimelineState(storyId, state);
+  return { success: true, scene };
+});
+
+ipcMain.handle('timeline:detect-new', async (event, { storyId, storyText }) => {
+  try {
+    const generateTextFn = makeLoreGenerateTextFn(store);
+    const existingState = db.getTimelineState(storyId);
+    const result = await sceneTimeline.detectNewScenes(storyText, existingState, generateTextFn);
+    if (result) {
+      db.setTimelineState(storyId, result.state);
+      return { success: true, state: result.state, newScenes: result.newScenes };
+    }
+    return { success: true, noChange: true };
+  } catch (err) {
+    console.error('[Timeline] Incremental detection failed:', err);
+    return { success: false, error: err.message };
+  }
+});
+
 // IPC Handlers — Storyboard
 ipcMain.handle('storyboard:list', () => storyboard.list());
 ipcMain.handle('storyboard:create', (event, name) => storyboard.create(name));
