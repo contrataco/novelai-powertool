@@ -8,6 +8,10 @@ import {
   rpgSystemIndicator, rpgSystemType,
   rpgScanBtn, rpgSyncLorebookBtn, rpgReverseSyncBtn,
   rpgScanStatus, rpgScanPhase,
+  rpgCastView,
+  rpgPartySection, rpgQuestSection, rpgNpcSection,
+  rpgInventorySection, rpgCurrencySection, rpgStatusSection,
+  rpgFactionsSection, rpgClassesSection, rpgRacesSection,
   rpgPartyList, rpgPartyCount,
   rpgQuestListActive, rpgQuestListDone, rpgQuestCount,
   rpgNpcList, rpgNpcCount,
@@ -52,6 +56,25 @@ const ROLE_COLORS = {
   'mount': '#a1887f',
   'npc': '#90a4ae',
 };
+
+// =========================================================================
+// NARRATIVE ROLE CONSTANTS (persona cards for non-LitRPG stories)
+// =========================================================================
+
+const NARRATIVE_ROLE_COLORS = {
+  'protagonist': '#e94560',
+  'deuteragonist': '#e94560',
+  'antagonist': '#a855f7',
+  'mentor': '#f59e0b',
+  'love-interest': '#ec4899',
+  'ally': '#4ade80',
+  'rival': '#f97316',
+  'default': '#4a9eff',
+};
+
+function getNarrativeRoleColor(storyFunction) {
+  return NARRATIVE_ROLE_COLORS[storyFunction] || NARRATIVE_ROLE_COLORS.default;
+}
 
 // =========================================================================
 // REVERSE SYNC HELPERS
@@ -118,7 +141,7 @@ function getRpgState() {
 
 function saveLitrpgState() {
   if (!state.currentStoryId || !state.litrpgState) return;
-  window.sceneVisualizer.litrpgSetState(state.currentStoryId, state.litrpgState);
+  window.powertool.litrpgSetState(state.currentStoryId, state.litrpgState);
 }
 
 // =========================================================================
@@ -128,9 +151,16 @@ function saveLitrpgState() {
 export function refreshRpgUI() {
   const rpg = getRpgState();
 
-  // Tab visibility
+  // Tab visibility — show whenever characters exist OR LitRPG is active
   if (rpgTab) {
-    rpgTab.style.display = (rpg.enabled || rpg.detected) ? '' : 'none';
+    const litrpgState = state.litrpgState;
+    const hasCharacters = litrpgState && Object.keys(litrpgState.characters || {}).length > 0;
+    if (hasCharacters || rpg.enabled || rpg.detected) {
+      rpgTab.style.display = '';
+      rpgTab.textContent = (rpg.enabled || rpg.detected) ? 'Cast / RPG' : 'Cast';
+    } else {
+      rpgTab.style.display = 'none';
+    }
   }
 
   // Detection banner
@@ -161,30 +191,155 @@ export function refreshRpgUI() {
   if (rpgAutoScan) rpgAutoScan.checked = rpg.autoScan !== false;
   if (rpgAutoSync) rpgAutoSync.checked = !!rpg.autoSync;
 
-  // Party view
-  renderParty(rpg);
+  const isLitRPG = rpg.enabled || rpg.detected;
 
-  // Quest log
-  renderQuests(rpg);
+  // Toggle between persona cast view and LitRPG sections
+  const rpgOnlySections = [
+    rpgPartySection, rpgQuestSection, rpgNpcSection,
+    rpgInventorySection, rpgCurrencySection, rpgStatusSection,
+    rpgFactionsSection, rpgClassesSection, rpgRacesSection,
+  ];
+  for (const el of rpgOnlySections) {
+    if (el) el.style.display = isLitRPG ? '' : 'none';
+  }
+  if (rpgCastView) rpgCastView.style.display = isLitRPG ? 'none' : '';
 
-  // NPC registry
-  renderNPCs(rpg);
+  if (isLitRPG) {
+    // Party view
+    renderParty(rpg);
 
-  // Pending updates
-  renderPendingUpdates(rpg);
+    // Quest log
+    renderQuests(rpg);
 
-  // New sections (Phase 5G)
-  renderInventory(rpg);
-  renderCurrency(rpg);
-  renderStatusEffects(rpg);
+    // NPC registry
+    renderNPCs(rpg);
 
-  // Entity collections
-  renderFactions(rpg);
-  renderClasses(rpg);
-  renderRaces(rpg);
+    // Pending updates
+    renderPendingUpdates(rpg);
 
-  // Scan history (Phase 6.5)
-  renderScanHistory(rpg);
+    // New sections (Phase 5G)
+    renderInventory(rpg);
+    renderCurrency(rpg);
+    renderStatusEffects(rpg);
+
+    // Entity collections
+    renderFactions(rpg);
+    renderClasses(rpg);
+    renderRaces(rpg);
+
+    // Scan history (Phase 6.5)
+    renderScanHistory(rpg);
+  } else {
+    // Persona-based cast view for non-LitRPG stories
+    renderPersonaCast(rpg);
+  }
+}
+
+// =========================================================================
+// PERSONA CAST RENDERING (non-LitRPG stories)
+// =========================================================================
+
+function buildPersonaCardHTML(char) {
+  const storyFunction = char.narrative?.storyFunction || '';
+  const importance = char.narrative?.importance || '';
+  const roleColor = getNarrativeRoleColor(storyFunction);
+  const traits = (char.persona?.personalityTraits || []).slice(0, 3).join(', ');
+  const roleLabel = storyFunction
+    ? storyFunction.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    : '';
+
+  return `
+    <div class="rpg-character-card-v2 persona-card" data-char-id="${escapeHtml(char.id)}" style="--role-color:${roleColor};">
+      <div class="rpg-card-bg-gradient"></div>
+      <div class="rpg-portrait-ring">
+        <div class="rpg-portrait-inner">
+          ${char._thumbnailData
+            ? `<img src="data:image/png;base64,${char._thumbnailData}" alt="${escapeHtml(char.name)}">`
+            : `<span class="rpg-portrait-initial">${escapeHtml((char.name || '?')[0].toUpperCase())}</span>`}
+        </div>
+      </div>
+      <div class="rpg-char-info" style="position:relative;z-index:1;">
+        <div class="rpg-char-name">${escapeHtml(char.name)}</div>
+        ${traits ? `<div class="persona-traits">${escapeHtml(traits)}</div>` : ''}
+        <div class="persona-badges">
+          ${roleLabel ? `<span class="persona-role-badge" style="background:${roleColor}22;color:${roleColor};border-color:${roleColor}55;">${escapeHtml(roleLabel)}</span>` : ''}
+          ${importance ? `<span class="persona-importance-badge">${escapeHtml(importance)}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+function buildCastSectionHTML(title, chars, open = false) {
+  if (chars.length === 0) return '';
+  const openAttr = open ? ' open' : '';
+  const cardsHTML = chars
+    .slice()
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .map(char => buildPersonaCardHTML(char))
+    .join('');
+  return `
+    <details class="cast-section lore-section"${openAttr}>
+      <summary>${escapeHtml(title)} <span class="count-badge count">(${chars.length})</span></summary>
+      <div class="rpg-party-grid cast-grid">${cardsHTML}</div>
+    </details>`;
+}
+
+function renderPersonaCast(rpg) {
+  if (!rpgCastView) return;
+  const allChars = Object.values(rpg.characters || {});
+
+  if (allChars.length === 0) {
+    rpgCastView.innerHTML = `<div class="rpg-party-empty">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <div>No characters yet. Run a <b>Lore Scan</b> to populate your cast from the story.</div>
+    </div>`;
+    return;
+  }
+
+  // Partition into sections
+  const protagonists = allChars.filter(c =>
+    c.narrative?.storyFunction === 'protagonist' ||
+    c.narrative?.storyFunction === 'deuteragonist'
+  );
+  const major = allChars.filter(c =>
+    !protagonists.includes(c) &&
+    c.narrative?.importance === 'major'
+  );
+  const supporting = allChars.filter(c =>
+    !protagonists.includes(c) &&
+    c.narrative?.importance === 'supporting'
+  );
+  const other = allChars.filter(c =>
+    !protagonists.includes(c) &&
+    c.narrative?.importance !== 'major' &&
+    c.narrative?.importance !== 'supporting'
+  );
+
+  let html = '';
+
+  // Protagonist section (always open, featured)
+  if (protagonists.length > 0) {
+    const cardsHTML = protagonists
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      .map(char => buildPersonaCardHTML(char))
+      .join('');
+    html += `
+      <div class="cast-section cast-protagonist-section">
+        <h4 class="cast-section-header">Protagonist</h4>
+        <div class="rpg-party-grid cast-grid">${cardsHTML}</div>
+      </div>`;
+  }
+
+  html += buildCastSectionHTML('Major Characters', major, /* open= */ true);
+  html += buildCastSectionHTML('Supporting Characters', supporting, /* open= */ false);
+  html += buildCastSectionHTML('Other Characters', other, /* open= */ false);
+
+  rpgCastView.innerHTML = html;
+
+  // Wire click handlers — open stat overlay for all persona cards
+  rpgCastView.querySelectorAll('.rpg-character-card-v2').forEach(card => {
+    card.addEventListener('click', () => openStatOverlay(card.dataset.charId, rpg));
+  });
 }
 
 // =========================================================================
@@ -202,7 +357,7 @@ function renderParty(rpg) {
   if (partyMembers.length === 0) {
     rpgPartyList.innerHTML = `<div class="rpg-party-empty">
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L4 7v6c0 5.5 3.4 10.7 8 12 4.6-1.3 8-6.5 8-12V7l-8-5z"/></svg>
-      <div style="font-size:11px;">No party members detected. Run a <b>Lore Scan</b> — party members are identified automatically from your story.</div>
+      <div>No party members detected. Run a <b>Lore Scan</b> — party members are identified automatically from your story.</div>
     </div>`;
     return;
   }
@@ -212,9 +367,9 @@ function renderParty(rpg) {
     const roleLabel = ROLE_LABELS[char.partyRole || 'party-member'] || 'Party Member';
     const xpPct = (char.xp?.current != null && char.xp?.needed) ? Math.min(100, (char.xp.current / char.xp.needed) * 100) : 0;
     return `
-    <div class="rpg-character-card-v2" data-char-id="${escapeHtml(char.id)}">
-      <div class="rpg-card-bg-gradient" style="background:linear-gradient(90deg, ${roleColor}14 0%, transparent 100%);"></div>
-      <div class="rpg-portrait-ring" style="border: 2px solid ${roleColor};">
+    <div class="rpg-character-card-v2" data-char-id="${escapeHtml(char.id)}" style="--role-color:${roleColor};">
+      <div class="rpg-card-bg-gradient"></div>
+      <div class="rpg-portrait-ring">
         <div class="rpg-portrait-inner">
           ${char._thumbnailData
             ? `<img src="data:image/png;base64,${char._thumbnailData}" alt="${escapeHtml(char.name)}">`
@@ -225,7 +380,7 @@ function renderParty(rpg) {
       <div class="rpg-char-info" style="position:relative;z-index:1;">
         <div class="rpg-char-name">${escapeHtml(char.name)}</div>
         <div class="rpg-char-class">${escapeHtml(char.class || 'Unknown Class')}${char.role ? ` (${escapeHtml(char.role)})` : ''}</div>
-        <span class="rpg-card-role-dot" style="color:${roleColor};">${escapeHtml(roleLabel)}</span>
+        <span class="rpg-card-role-dot">${escapeHtml(roleLabel)}</span>
       </div>
       ${xpPct > 0 ? `<div class="rpg-card-xp-bar"><div class="rpg-card-xp-fill" style="width:${xpPct}%;"></div></div>` : ''}
     </div>`;
@@ -240,7 +395,7 @@ function renderParty(rpg) {
 // STAT SHEET OVERLAY (Phase 5H)
 // =========================================================================
 
-function openStatOverlay(charId, rpg) {
+export function openStatOverlay(charId, rpg) {
   const char = rpg?.characters?.[charId];
   if (!char || !rpgStatOverlay || !rpgStatOverlayContent) return;
 
@@ -279,8 +434,8 @@ function closeStatOverlay() {
     const bar = document.createElement('div');
     bar.className = 'rpg-confirm-bar';
     bar.innerHTML = `<span>Unsaved changes.</span>
-      <button class="btn-reject" style="font-size:10px;padding:2px 8px;">Discard</button>
-      <button class="btn-accept" style="font-size:10px;padding:2px 8px;">Keep Editing</button>`;
+      <button class="btn-reject btn-xs">Discard</button>
+      <button class="btn-accept btn-xs">Keep Editing</button>`;
     bar.querySelector('.btn-reject').addEventListener('click', () => {
       editDirty = false;
       if (rpgStatOverlay) rpgStatOverlay.style.display = 'none';
@@ -354,11 +509,11 @@ function buildStatSheetHTML(char) {
   }).join('');
 
   const inventoryHTML = (char.inventory || []).map(i =>
-    `<div class="rpg-inv-item">${escapeHtml(i.name)} x${i.quantity || 1} <span style="color:#888;">(${i.type || 'other'})</span>${i.rarity ? ` <span class="rpg-rarity rpg-rarity-${i.rarity}">${i.rarity}</span>` : ''}</div>`
+    `<div class="rpg-inv-item">${escapeHtml(i.name)} x${i.quantity || 1} <span class="detail-muted">(${i.type || 'other'})</span>${i.rarity ? ` <span class="rpg-rarity rpg-rarity-${i.rarity}">${i.rarity}</span>` : ''}</div>`
   ).join('');
 
   const currencyHTML = Object.entries(char.currency || {}).length > 0
-    ? `<div class="rpg-section-card rpg-currency-section"><h4>Currency</h4><div style="display:flex;flex-wrap:wrap;gap:6px;">${Object.entries(char.currency).map(([unit, amount]) =>
+    ? `<div class="rpg-section-card rpg-currency-section"><h4>Currency</h4><div class="flex-row-wrap">${Object.entries(char.currency).map(([unit, amount]) =>
         `<div class="rpg-currency-card"><span class="rpg-currency-amount">${amount}</span><span class="rpg-currency-unit">${escapeHtml(unit)}</span></div>`
       ).join('')}</div></div>`
     : '';
@@ -375,32 +530,97 @@ function buildStatSheetHTML(char) {
     : '';
 
   const cultivationHTML = char.cultivationRealm
-    ? `<div style="font-size:11px;color:#d4a574;margin-top:4px;">Cultivation: ${escapeHtml(char.cultivationRealm)}${char.cultivationStage ? ` (${escapeHtml(char.cultivationStage)})` : ''}</div>`
+    ? `<div class="cultivation-tag">Cultivation: ${escapeHtml(char.cultivationRealm)}${char.cultivationStage ? ` (${escapeHtml(char.cultivationStage)})` : ''}</div>`
     : '';
 
   // Role chip
   const currentRole = char.partyRole || (char.isPartyMember ? 'party-member' : (char.isNPC ? 'npc' : null));
   const roleLabel = currentRole ? (ROLE_LABELS[currentRole] || currentRole) : 'Unclassified';
   const roleColor = currentRole ? (ROLE_COLORS[currentRole] || '#666') : '#666';
-  const roleChipHTML = `<button class="rpg-role-chip-styled" data-role="${escapeHtml(currentRole || '')}" title="Click to cycle role" style="color:${roleColor};border-color:${roleColor};background:${roleColor}26;">${escapeHtml(roleLabel)}</button>`;
+  const roleChipHTML = `<button class="rpg-role-chip-styled" data-role="${escapeHtml(currentRole || '')}" title="Click to cycle role" style="--role-color:${roleColor};">${escapeHtml(roleLabel)}</button>`;
 
   // NPC info section
   const DISPOSITION_COLORS = { friendly: '#81c784', neutral: '#ffd54f', hostile: '#ff6b6b', unknown: '#90a4ae' };
   const npcInfoHTML = char.isNPC ? `
     <div class="rpg-section-card rpg-npc-info-box">
       <div class="rpg-npc-info-label">NPC Info</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
-        ${char.disposition ? `<span style="font-size:10px;padding:1px 8px;border-radius:10px;border:1px solid ${DISPOSITION_COLORS[char.disposition] || DISPOSITION_COLORS.unknown};color:${DISPOSITION_COLORS[char.disposition] || DISPOSITION_COLORS.unknown};">${escapeHtml(char.disposition)}</span>` : ''}
-        ${char.npcRole ? `<span style="font-size:10px;color:#a0a0ff;">${escapeHtml(char.npcRole)}</span>` : ''}
+      <div class="flex-row-wrap">
+        ${char.disposition ? `<span class="rpg-disposition-pill" style="--disp-color:${DISPOSITION_COLORS[char.disposition] || DISPOSITION_COLORS.unknown};">${escapeHtml(char.disposition)}</span>` : ''}
+        ${char.npcRole ? `<span class="detail-muted" style="color:#a0a0ff;">${escapeHtml(char.npcRole)}</span>` : ''}
       </div>
-      ${char.faction ? `<div style="font-size:11px;color:var(--cat-faction);margin-top:3px;">Faction: ${escapeHtml(char.faction)}</div>` : ''}
-      ${char.npcRelationship ? `<div style="font-size:11px;color:#aaa;margin-top:3px;">Relationship: ${escapeHtml(char.npcRelationship)}</div>` : ''}
+      ${char.faction ? `<div class="info-line" style="color:var(--cat-faction);">Faction: ${escapeHtml(char.faction)}</div>` : ''}
+      ${char.npcRelationship ? `<div class="info-line">Relationship: ${escapeHtml(char.npcRelationship)}</div>` : ''}
+    </div>
+  ` : '';
+
+  // ---- Persona section ----
+  const persona = char.persona || {};
+  const traits = persona.personalityTraits || [];
+  const motivations = persona.motivations || [];
+  const fears = persona.fears || [];
+  const flaws = persona.flaws || [];
+  const hasPersonaData = traits.length > 0 || motivations.length > 0 || fears.length > 0 ||
+    flaws.length > 0 || persona.speechStyle || persona.emotionalState;
+
+  const personaSectionHTML = hasPersonaData ? `
+    <div class="persona-section stat-section">
+      <h4>Personality</h4>
+      ${traits.length > 0 ? `<div class="persona-traits-list">${traits.map(t => `<span class="persona-chip">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+      ${motivations.length > 0 ? `<div class="persona-field" data-field="motivations"><label>Motivations</label><ul class="persona-list">${motivations.map(m => `<li>${escapeHtml(m)}</li>`).join('')}</ul></div>` : ''}
+      ${fears.length > 0 ? `<div class="persona-field" data-field="fears"><label>Fears</label><ul class="persona-list">${fears.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul></div>` : ''}
+      ${flaws.length > 0 ? `<div class="persona-field" data-field="flaws"><label>Flaws</label><ul class="persona-list">${flaws.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul></div>` : ''}
+      ${persona.speechStyle ? `<div class="persona-field" data-field="speechStyle"><label>Speech Style</label><span class="persona-badge">${escapeHtml(persona.speechStyle)}</span></div>` : ''}
+      ${persona.emotionalState ? `<div class="persona-field" data-field="emotionalState"><label>Current State</label><span class="persona-badge mood">${escapeHtml(persona.emotionalState)}</span></div>` : ''}
+    </div>
+  ` : '';
+
+  // ---- Narrative section ----
+  const narrative = char.narrative || {};
+  const narrativeStoryFunction = narrative.storyFunction || '';
+  const narrativeImportance = narrative.importance || '';
+  const goals = narrative.goals || [];
+  const conflicts = narrative.conflicts || [];
+  const allegiances = narrative.allegiances || [];
+  const hasNarrativeData = narrativeStoryFunction || narrativeImportance || goals.length > 0 ||
+    conflicts.length > 0 || allegiances.length > 0 || narrative.arcType;
+
+  const narrativeRoleColor = getNarrativeRoleColor(narrativeStoryFunction);
+  const narrativeRoleLabel = narrativeStoryFunction
+    ? narrativeStoryFunction.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    : '';
+
+  const arcPct = typeof narrative.arcProgression === 'number' ? Math.min(100, Math.max(0, narrative.arcProgression)) : null;
+
+  const narrativeSectionHTML = hasNarrativeData ? `
+    <div class="narrative-section stat-section">
+      <h4>Story Role</h4>
+      ${(narrativeRoleLabel || narrativeImportance) ? `
+        <div class="narrative-role-display">
+          ${narrativeRoleLabel ? `<span class="narrative-role-badge" style="background:${narrativeRoleColor}22;color:${narrativeRoleColor};border:1px solid ${narrativeRoleColor}55;">${escapeHtml(narrativeRoleLabel)}</span>` : ''}
+          ${narrativeImportance ? `<span class="persona-importance-badge">${escapeHtml(narrativeImportance)}</span>` : ''}
+        </div>
+      ` : ''}
+      ${goals.length > 0 ? `<div class="persona-field" data-field="goals"><label>Goals</label><ul class="persona-list">${goals.map(g => `<li>${escapeHtml(g)}</li>`).join('')}</ul></div>` : ''}
+      ${conflicts.length > 0 ? `<div class="persona-field" data-field="conflicts"><label>Conflicts</label><ul class="persona-list">${conflicts.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul></div>` : ''}
+      ${allegiances.length > 0 ? `<div class="persona-field" data-field="allegiances"><label>Allegiances</label><div class="persona-traits-list">${allegiances.map(a => `<span class="persona-chip allegiance">${escapeHtml(a)}</span>`).join('')}</div></div>` : ''}
+      ${narrative.arcType ? `
+        <div class="persona-field" data-field="arcType">
+          <label>Character Arc</label>
+          <span class="persona-badge">${escapeHtml(narrative.arcType)}</span>
+          ${arcPct !== null ? `
+            <div class="arc-progress-bar">
+              <div class="arc-progress-fill" style="width:${arcPct}%;"></div>
+              <span class="arc-progress-label">${arcPct}%</span>
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
     </div>
   ` : '';
 
   return `
     <div class="rpg-stat-header">
-      <div class="rpg-portrait-large-v2" style="border: 3px solid ${roleColor}; border-radius: 8px;">
+      <div class="rpg-portrait-large-v2" style="--role-color:${roleColor};border: 3px solid var(--role-color); border-radius: 8px;">
         ${char._portraitData
           ? `<img src="data:image/png;base64,${char._portraitData}" alt="${escapeHtml(char.name)}">`
           : char._thumbnailData
@@ -424,11 +644,13 @@ function buildStatSheetHTML(char) {
       </div>
     </div>
     <details class="rpg-album-section" style="margin:8px 0;">
-      <summary style="cursor:pointer;font-size:11px;color:var(--text-dim);user-select:none;">Image Album <span class="rpg-album-count"></span></summary>
-      <div class="rpg-album-strip" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 0;min-height:40px;">
-        <div style="font-size:10px;color:#555;">Loading...</div>
+      <summary class="section-summary" style="user-select:none;">Image Album <span class="rpg-album-count"></span></summary>
+      <div class="rpg-album-strip flex-row-wrap" style="padding:6px 0;min-height:40px;">
+        <div class="empty-state-sm">Loading...</div>
       </div>
     </details>
+    ${personaSectionHTML}
+    ${narrativeSectionHTML}
     ${npcInfoHTML}
     ${currencyHTML}
     ${statusHTML}
@@ -447,15 +669,35 @@ let editDirty = false;
 
 function markEditDirty() { editDirty = true; }
 
-// Legacy INPUT_STYLE kept for buildSelectHTML compatibility; new code uses .rpg-edit-input class
-const INPUT_STYLE = 'background:var(--bg-input);color:#fff;border:1px solid #555;border-radius:3px;padding:2px 6px;font-size:11px;';
+// INPUT_STYLE removed — all inputs/selects now use .rpg-edit-input CSS class
 const SLOT_OPTIONS = ['weapon','off-hand','shield','helmet','armor','legs','boots','gloves','ring','amulet','cloak','belt','bracers','earring','trinket','accessory','other'];
 const RARITY_OPTIONS = ['common','uncommon','rare','epic','legendary','unknown'];
 const ABILITY_CATEGORY_OPTIONS = ['','combat','magic','crafting','social','utility','other'];
 const STATUS_TYPE_OPTIONS = ['buff','debuff','condition'];
+const NARRATIVE_ROLES_OPTIONS = ['','protagonist','deuteragonist','antagonist','rival','mentor','love-interest','ally','foil','comic-relief','herald','threshold-guardian','trickster','shapeshifter','shadow','catalyst','background'];
+const ARC_TYPES_OPTIONS = ['','growth','corruption','redemption','coming-of-age','disillusionment','education','revenge','sacrifice','transformation','static'];
+const IMPORTANCE_OPTIONS = ['','major','supporting','minor','background'];
 
 function buildSelectHTML(name, options, selected) {
-  return `<select data-field="${name}" style="${INPUT_STYLE}">${options.map(o => `<option value="${o}"${o === selected ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
+  return `<select data-field="${name}" class="rpg-edit-input">${options.map(o => `<option value="${o}"${o === selected ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
+}
+
+// Build editable chip list HTML (for personality traits, allegiances)
+function buildEditChipListHTML(containerId, items) {
+  const chips = items.map((item, idx) =>
+    `<span class="persona-chip edit-chip" data-idx="${idx}">${escapeHtml(item)}<button class="edit-chip-remove" data-idx="${idx}" title="Remove">✕</button></span>`
+  ).join('');
+  return `
+    <div class="edit-chip-container" id="${containerId}">
+      ${chips}
+      <input type="text" class="rpg-edit-input edit-chip-input" placeholder="Add..." style="width:80px;margin:2px;">
+    </div>
+  `;
+}
+
+// Build editable list-as-textarea HTML (for motivations, fears, flaws, goals, conflicts)
+function buildEditListTextareaHTML(id, items) {
+  return `<textarea id="${id}" class="rpg-edit-input" rows="3" style="width:100%;resize:vertical;">${escapeHtml(items.join('\n'))}</textarea>`;
 }
 
 function enterEditMode(charId) {
@@ -464,152 +706,221 @@ function enterEditMode(charId) {
   if (!char || !rpgStatOverlayContent) return;
 
   const statsInputs = Object.entries(char.stats || {}).map(([name, s]) =>
-    `<div class="rpg-stat"><span class="stat-name">${escapeHtml(name)}</span><input type="number" class="rpg-edit-stat" data-stat="${escapeHtml(name)}" value="${s.value}" style="width:50px;${INPUT_STYLE}"></div>`
+    `<div class="rpg-stat"><span class="stat-name">${escapeHtml(name)}</span><input type="number" class="rpg-edit-stat rpg-edit-input" data-stat="${escapeHtml(name)}" value="${s.value}" style="width:50px;"></div>`
   ).join('');
 
   // Abilities section (with category, cooldown, proficiency)
   const abilitiesRows = (char.abilities || []).map((a, idx) =>
-    `<div class="rpg-edit-row" data-section="abilities" data-idx="${idx}" style="display:flex;gap:4px;align-items:center;margin-bottom:3px;flex-wrap:wrap;">
-      <input type="text" data-field="name" value="${escapeHtml(a.name)}" placeholder="Name" style="flex:2;${INPUT_STYLE}">
-      <input type="number" data-field="level" value="${a.level || ''}" placeholder="Lv" style="width:40px;${INPUT_STYLE}">
+    `<div class="rpg-edit-row" data-section="abilities" data-idx="${idx}">
+      <input type="text" data-field="name" value="${escapeHtml(a.name)}" placeholder="Name" class="rpg-edit-input" style="flex:2;">
+      <input type="number" data-field="level" value="${a.level || ''}" placeholder="Lv" class="rpg-edit-input" style="width:40px;">
       ${buildSelectHTML('category', ABILITY_CATEGORY_OPTIONS, a.category || '')}
-      <input type="text" data-field="description" value="${escapeHtml(a.description || '')}" placeholder="Description" style="flex:3;${INPUT_STYLE}">
-      <input type="text" data-field="cooldown" value="${escapeHtml(a.cooldown || '')}" placeholder="Cooldown" style="width:70px;${INPUT_STYLE}">
-      <input type="text" data-field="proficiency" value="${escapeHtml(a.proficiency || '')}" placeholder="Proficiency" style="width:80px;${INPUT_STYLE}">
-      <button class="rpg-edit-remove" style="font-size:10px;color:#ff6b6b;background:none;border:none;cursor:pointer;" title="Remove">✕</button>
+      <input type="text" data-field="description" value="${escapeHtml(a.description || '')}" placeholder="Description" class="rpg-edit-input" style="flex:3;">
+      <input type="text" data-field="cooldown" value="${escapeHtml(a.cooldown || '')}" placeholder="Cooldown" class="rpg-edit-input" style="width:70px;">
+      <input type="text" data-field="proficiency" value="${escapeHtml(a.proficiency || '')}" placeholder="Proficiency" class="rpg-edit-input" style="width:80px;">
+      <button class="rpg-edit-remove-btn" title="Remove">✕</button>
     </div>`
   ).join('');
 
   // Equipment section (with bonuses, setName)
   const equipmentRows = (char.equipment || []).map((e, idx) =>
-    `<div class="rpg-edit-row" data-section="equipment" data-idx="${idx}" style="display:flex;gap:4px;align-items:center;margin-bottom:3px;flex-wrap:wrap;">
-      <input type="text" data-field="name" value="${escapeHtml(e.name)}" placeholder="Name" style="flex:2;${INPUT_STYLE}">
+    `<div class="rpg-edit-row" data-section="equipment" data-idx="${idx}">
+      <input type="text" data-field="name" value="${escapeHtml(e.name)}" placeholder="Name" class="rpg-edit-input" style="flex:2;">
       ${buildSelectHTML('slot', SLOT_OPTIONS, e.slot || 'other')}
       ${buildSelectHTML('rarity', RARITY_OPTIONS, e.rarity || 'unknown')}
-      <input type="text" data-field="bonuses" value="${escapeHtml(e.bonuses || '')}" placeholder="Bonuses" style="width:80px;${INPUT_STYLE}">
-      <input type="text" data-field="setName" value="${escapeHtml(e.setName || '')}" placeholder="Set Name" style="width:80px;${INPUT_STYLE}">
-      <input type="text" data-field="description" value="${escapeHtml(e.description || '')}" placeholder="Description" style="flex:2;${INPUT_STYLE}">
-      <button class="rpg-edit-remove" style="font-size:10px;color:#ff6b6b;background:none;border:none;cursor:pointer;" title="Remove">✕</button>
+      <input type="text" data-field="bonuses" value="${escapeHtml(e.bonuses || '')}" placeholder="Bonuses" class="rpg-edit-input" style="width:80px;">
+      <input type="text" data-field="setName" value="${escapeHtml(e.setName || '')}" placeholder="Set Name" class="rpg-edit-input" style="width:80px;">
+      <input type="text" data-field="description" value="${escapeHtml(e.description || '')}" placeholder="Description" class="rpg-edit-input" style="flex:2;">
+      <button class="rpg-edit-remove-btn" title="Remove">✕</button>
     </div>`
   ).join('');
 
   // Inventory section (with rarity)
   const inventoryRows = (char.inventory || []).map((i, idx) =>
-    `<div class="rpg-edit-row" data-section="inventory" data-idx="${idx}" style="display:flex;gap:4px;align-items:center;margin-bottom:3px;">
-      <input type="text" data-field="name" value="${escapeHtml(i.name)}" placeholder="Name" style="flex:2;${INPUT_STYLE}">
-      <input type="number" data-field="quantity" value="${i.quantity || 1}" placeholder="Qty" style="width:45px;${INPUT_STYLE}">
+    `<div class="rpg-edit-row" data-section="inventory" data-idx="${idx}">
+      <input type="text" data-field="name" value="${escapeHtml(i.name)}" placeholder="Name" class="rpg-edit-input" style="flex:2;">
+      <input type="number" data-field="quantity" value="${i.quantity || 1}" placeholder="Qty" class="rpg-edit-input" style="width:45px;">
       ${buildSelectHTML('type', ['consumable','material','quest_item','other'], i.type || 'other')}
       ${buildSelectHTML('rarity', ['','common','uncommon','rare','epic','legendary'], i.rarity || '')}
-      <button class="rpg-edit-remove" style="font-size:10px;color:#ff6b6b;background:none;border:none;cursor:pointer;" title="Remove">✕</button>
+      <button class="rpg-edit-remove-btn" title="Remove">✕</button>
     </div>`
   ).join('');
 
   // Currency section
   const currencyRows = Object.entries(char.currency || {}).map(([unit, amount], idx) =>
-    `<div class="rpg-edit-row" data-section="currency" data-idx="${idx}" style="display:flex;gap:4px;align-items:center;margin-bottom:3px;">
-      <input type="text" data-field="unit" value="${escapeHtml(unit)}" placeholder="Currency" style="flex:1;${INPUT_STYLE}">
-      <input type="number" data-field="amount" value="${amount}" placeholder="Amount" style="width:80px;${INPUT_STYLE}">
-      <button class="rpg-edit-remove" style="font-size:10px;color:#ff6b6b;background:none;border:none;cursor:pointer;" title="Remove">✕</button>
+    `<div class="rpg-edit-row" data-section="currency" data-idx="${idx}">
+      <input type="text" data-field="unit" value="${escapeHtml(unit)}" placeholder="Currency" class="rpg-edit-input" style="flex:1;">
+      <input type="number" data-field="amount" value="${amount}" placeholder="Amount" class="rpg-edit-input" style="width:80px;">
+      <button class="rpg-edit-remove-btn" title="Remove">✕</button>
     </div>`
   ).join('');
 
   // Status effects section
   const statusRows = (char.statusEffects || []).map((s, idx) =>
-    `<div class="rpg-edit-row" data-section="statusEffects" data-idx="${idx}" style="display:flex;gap:4px;align-items:center;margin-bottom:3px;">
-      <input type="text" data-field="name" value="${escapeHtml(s.name)}" placeholder="Name" style="flex:2;${INPUT_STYLE}">
+    `<div class="rpg-edit-row" data-section="statusEffects" data-idx="${idx}">
+      <input type="text" data-field="name" value="${escapeHtml(s.name)}" placeholder="Name" class="rpg-edit-input" style="flex:2;">
       ${buildSelectHTML('type', STATUS_TYPE_OPTIONS, s.type || 'buff')}
-      <input type="text" data-field="duration" value="${escapeHtml(s.duration || '')}" placeholder="Duration" style="flex:1;${INPUT_STYLE}">
-      <button class="rpg-edit-remove" style="font-size:10px;color:#ff6b6b;background:none;border:none;cursor:pointer;" title="Remove">✕</button>
+      <input type="text" data-field="duration" value="${escapeHtml(s.duration || '')}" placeholder="Duration" class="rpg-edit-input" style="flex:1;">
+      <button class="rpg-edit-remove-btn" title="Remove">✕</button>
     </div>`
   ).join('');
 
   rpgStatOverlayContent.innerHTML = `
     <div class="rpg-stat-header">
       <div style="flex:1;">
-        <div style="margin-bottom:6px;">
-          <label style="font-size:10px;color:#888;">Name</label>
-          <input type="text" id="rpgEditName" value="${escapeHtml(char.name)}" style="width:100%;${INPUT_STYLE}font-size:12px;">
+        <div class="mb-sm">
+          <label class="rpg-edit-label">Name</label>
+          <input type="text" id="rpgEditName" value="${escapeHtml(char.name)}" class="rpg-edit-input" style="width:100%;font-size:12px;">
         </div>
-        <div style="display:flex;gap:6px;margin-bottom:6px;">
+        <div class="flex-row mb-sm">
           <div style="flex:1;">
-            <label style="font-size:10px;color:#888;">Class</label>
-            <input type="text" id="rpgEditClass" value="${escapeHtml(char.class || '')}" style="width:100%;${INPUT_STYLE}">
+            <label class="rpg-edit-label">Class</label>
+            <input type="text" id="rpgEditClass" value="${escapeHtml(char.class || '')}" class="rpg-edit-input" style="width:100%;">
           </div>
           <div style="flex:1;">
-            <label style="font-size:10px;color:#888;">Subclass</label>
-            <input type="text" id="rpgEditSubclass" value="${escapeHtml(char.subclass || '')}" style="width:100%;${INPUT_STYLE}">
+            <label class="rpg-edit-label">Subclass</label>
+            <input type="text" id="rpgEditSubclass" value="${escapeHtml(char.subclass || '')}" class="rpg-edit-input" style="width:100%;">
           </div>
         </div>
-        <div style="display:flex;gap:6px;margin-bottom:6px;">
+        <div class="flex-row mb-sm">
           <div style="flex:1;">
-            <label style="font-size:10px;color:#888;">Level</label>
-            <input type="number" id="rpgEditLevel" value="${char.level || ''}" style="width:100%;${INPUT_STYLE}">
+            <label class="rpg-edit-label">Level</label>
+            <input type="number" id="rpgEditLevel" value="${char.level || ''}" class="rpg-edit-input" style="width:100%;">
           </div>
           <div style="flex:1;">
-            <label style="font-size:10px;color:#888;">Race</label>
-            <input type="text" id="rpgEditRace" value="${escapeHtml(char.race || '')}" style="width:100%;${INPUT_STYLE}">
+            <label class="rpg-edit-label">Race</label>
+            <input type="text" id="rpgEditRace" value="${escapeHtml(char.race || '')}" class="rpg-edit-input" style="width:100%;">
           </div>
         </div>
       </div>
     </div>
     ${char.isNPC ? `
-    <details class="lore-section" style="margin-top:8px;" open>
-      <summary style="font-size:11px;color:#aaa;cursor:pointer;">NPC Info</summary>
-      <div style="display:flex;gap:6px;margin-top:4px;margin-bottom:4px;">
+    <details class="lore-section mt-sm" open>
+      <summary class="section-summary">NPC Info</summary>
+      <div class="flex-row" style="margin-top:4px;margin-bottom:4px;">
         <div style="flex:1;">
-          <label style="font-size:10px;color:#888;">Disposition</label>
+          <label class="rpg-edit-label">Disposition</label>
           ${buildSelectHTML('npcDisposition', ['friendly','neutral','hostile','unknown'], char.disposition || 'unknown')}
         </div>
         <div style="flex:1;">
-          <label style="font-size:10px;color:#888;">NPC Role</label>
+          <label class="rpg-edit-label">NPC Role</label>
           ${buildSelectHTML('npcRoleField', ['mentor','rival','shopkeeper','quest_giver','boss','ally','other'], char.npcRole || 'other')}
         </div>
       </div>
-      <div style="margin-bottom:4px;">
-        <label style="font-size:10px;color:#888;">Faction</label>
-        <input type="text" id="rpgEditFaction" value="${escapeHtml(char.faction || '')}" style="width:100%;${INPUT_STYLE}">
+      <div class="mb-xs">
+        <label class="rpg-edit-label">Faction</label>
+        <input type="text" id="rpgEditFaction" value="${escapeHtml(char.faction || '')}" class="rpg-edit-input" style="width:100%;">
       </div>
       <div>
-        <label style="font-size:10px;color:#888;">Relationship to Party</label>
-        <input type="text" id="rpgEditNpcRelationship" value="${escapeHtml(char.npcRelationship || '')}" style="width:100%;${INPUT_STYLE}">
+        <label class="rpg-edit-label">Relationship to Party</label>
+        <input type="text" id="rpgEditNpcRelationship" value="${escapeHtml(char.npcRelationship || '')}" class="rpg-edit-input" style="width:100%;">
       </div>
     </details>
     ` : ''}
-    ${statsInputs ? `<div class="rpg-stat-grid">${statsInputs}</div>` : '<div style="font-size:10px;color:#666;">No stats to edit.</div>'}
 
-    <details class="lore-section" style="margin-top:8px;" open>
-      <summary style="font-size:11px;color:#aaa;cursor:pointer;">Abilities (${(char.abilities || []).length})</summary>
-      <div id="rpgEditAbilities">${abilitiesRows || '<div style="font-size:10px;color:#666;">None</div>'}</div>
-      <button class="rpg-edit-add" data-section="abilities" style="font-size:10px;margin-top:3px;padding:2px 8px;${INPUT_STYLE}cursor:pointer;">+ Add Ability</button>
+    <details class="lore-section mt-sm">
+      <summary class="section-summary">Personality</summary>
+      <div style="padding:4px 0;">
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Traits</label>
+          ${buildEditChipListHTML('rpgEditTraitsChips', char.persona?.personalityTraits || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Motivations (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditMotivations', char.persona?.motivations || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Fears (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditFears', char.persona?.fears || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Flaws (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditFlaws', char.persona?.flaws || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Speech Style</label>
+          <input type="text" id="rpgEditSpeechStyle" value="${escapeHtml(char.persona?.speechStyle || '')}" class="rpg-edit-input" style="width:100%;" placeholder="e.g. formal and archaic">
+        </div>
+        <div>
+          <label class="rpg-edit-label">Current Emotional State</label>
+          <input type="text" id="rpgEditEmotionalState" value="${escapeHtml(char.persona?.emotionalState || '')}" class="rpg-edit-input" style="width:100%;" placeholder="e.g. tense, wary">
+        </div>
+      </div>
     </details>
 
-    <details class="lore-section" style="margin-top:6px;">
-      <summary style="font-size:11px;color:#aaa;cursor:pointer;">Equipment (${(char.equipment || []).length})</summary>
-      <div id="rpgEditEquipment">${equipmentRows || '<div style="font-size:10px;color:#666;">None</div>'}</div>
-      <button class="rpg-edit-add" data-section="equipment" style="font-size:10px;margin-top:3px;padding:2px 8px;${INPUT_STYLE}cursor:pointer;">+ Add Equipment</button>
+    <details class="lore-section mt-xs">
+      <summary class="section-summary">Story Role</summary>
+      <div style="padding:4px 0;">
+        <div class="flex-row mb-xs">
+          <div style="flex:1;">
+            <label class="rpg-edit-label">Story Function</label>
+            ${buildSelectHTML('narrativeStoryFunction', NARRATIVE_ROLES_OPTIONS, char.narrative?.storyFunction || '')}
+          </div>
+          <div style="flex:1;">
+            <label class="rpg-edit-label">Importance</label>
+            ${buildSelectHTML('narrativeImportance', IMPORTANCE_OPTIONS, char.narrative?.importance || '')}
+          </div>
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Goals (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditGoals', char.narrative?.goals || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Conflicts (one per line)</label>
+          ${buildEditListTextareaHTML('rpgEditConflicts', char.narrative?.conflicts || [])}
+        </div>
+        <div class="mb-xs">
+          <label class="rpg-edit-label">Allegiances</label>
+          ${buildEditChipListHTML('rpgEditAllegiancesChips', char.narrative?.allegiances || [])}
+        </div>
+        <div class="flex-row mb-xs">
+          <div style="flex:1;">
+            <label class="rpg-edit-label">Character Arc</label>
+            ${buildSelectHTML('narrativeArcType', ARC_TYPES_OPTIONS, char.narrative?.arcType || '')}
+          </div>
+        </div>
+        <div>
+          <label class="rpg-edit-label">Arc Progression: <span id="rpgEditArcLabel">${char.narrative?.arcProgression ?? 0}%</span></label>
+          <input type="range" id="rpgEditArcProgression" min="0" max="100" step="5" value="${char.narrative?.arcProgression ?? 0}" class="rpg-edit-input" style="width:100%;">
+        </div>
+      </div>
     </details>
 
-    <details class="lore-section" style="margin-top:6px;">
-      <summary style="font-size:11px;color:#aaa;cursor:pointer;">Inventory (${(char.inventory || []).length})</summary>
-      <div id="rpgEditInventory">${inventoryRows || '<div style="font-size:10px;color:#666;">None</div>'}</div>
-      <button class="rpg-edit-add" data-section="inventory" style="font-size:10px;margin-top:3px;padding:2px 8px;${INPUT_STYLE}cursor:pointer;">+ Add Item</button>
+    ${statsInputs ? `<div class="rpg-stat-grid">${statsInputs}</div>` : '<div class="empty-state-sm">No stats to edit.</div>'}
+
+    <details class="lore-section mt-sm" open>
+      <summary class="section-summary">Abilities (${(char.abilities || []).length})</summary>
+      <div id="rpgEditAbilities">${abilitiesRows || '<div class="empty-state-sm">None</div>'}</div>
+      <button class="rpg-edit-add rpg-edit-add-btn" data-section="abilities">+ Add Ability</button>
     </details>
 
-    <details class="lore-section" style="margin-top:6px;">
-      <summary style="font-size:11px;color:#aaa;cursor:pointer;">Currency (${Object.keys(char.currency || {}).length})</summary>
-      <div id="rpgEditCurrency">${currencyRows || '<div style="font-size:10px;color:#666;">None</div>'}</div>
-      <button class="rpg-edit-add" data-section="currency" style="font-size:10px;margin-top:3px;padding:2px 8px;${INPUT_STYLE}cursor:pointer;">+ Add Currency</button>
+    <details class="lore-section mt-xs">
+      <summary class="section-summary">Equipment (${(char.equipment || []).length})</summary>
+      <div id="rpgEditEquipment">${equipmentRows || '<div class="empty-state-sm">None</div>'}</div>
+      <button class="rpg-edit-add rpg-edit-add-btn" data-section="equipment">+ Add Equipment</button>
     </details>
 
-    <details class="lore-section" style="margin-top:6px;">
-      <summary style="font-size:11px;color:#aaa;cursor:pointer;">Status Effects (${(char.statusEffects || []).length})</summary>
-      <div id="rpgEditStatus">${statusRows || '<div style="font-size:10px;color:#666;">None</div>'}</div>
-      <button class="rpg-edit-add" data-section="statusEffects" style="font-size:10px;margin-top:3px;padding:2px 8px;${INPUT_STYLE}cursor:pointer;">+ Add Effect</button>
+    <details class="lore-section mt-xs">
+      <summary class="section-summary">Inventory (${(char.inventory || []).length})</summary>
+      <div id="rpgEditInventory">${inventoryRows || '<div class="empty-state-sm">None</div>'}</div>
+      <button class="rpg-edit-add rpg-edit-add-btn" data-section="inventory">+ Add Item</button>
     </details>
 
-    <div style="display:flex;gap:6px;margin-top:8px;">
-      <button class="rpg-stat-save-btn btn-accept" style="font-size:11px;padding:4px 12px;">Save</button>
-      <button class="rpg-stat-cancel-btn btn-reject" style="font-size:11px;padding:4px 12px;">Cancel</button>
+    <details class="lore-section mt-xs">
+      <summary class="section-summary">Currency (${Object.keys(char.currency || {}).length})</summary>
+      <div id="rpgEditCurrency">${currencyRows || '<div class="empty-state-sm">None</div>'}</div>
+      <button class="rpg-edit-add rpg-edit-add-btn" data-section="currency">+ Add Currency</button>
+    </details>
+
+    <details class="lore-section mt-xs">
+      <summary class="section-summary">Status Effects (${(char.statusEffects || []).length})</summary>
+      <div id="rpgEditStatus">${statusRows || '<div class="empty-state-sm">None</div>'}</div>
+      <button class="rpg-edit-add rpg-edit-add-btn" data-section="statusEffects">+ Add Effect</button>
+    </details>
+
+    <div class="flex-row mt-sm">
+      <button class="rpg-stat-save-btn btn-accept btn-sm">Save</button>
+      <button class="rpg-stat-cancel-btn btn-reject btn-sm">Cancel</button>
     </div>
   `;
 
@@ -620,7 +931,7 @@ function enterEditMode(charId) {
   });
 
   // Wire remove buttons
-  rpgStatOverlayContent.querySelectorAll('.rpg-edit-remove').forEach(btn => {
+  rpgStatOverlayContent.querySelectorAll('.rpg-edit-remove-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       btn.closest('.rpg-edit-row').remove();
       markEditDirty();
@@ -633,18 +944,47 @@ function enterEditMode(charId) {
       const section = btn.dataset.section;
       const container = btn.previousElementSibling;
       // Clear "None" placeholder
-      if (container.querySelector('div[style*="color:#666"]')) container.innerHTML = '';
+      if (container.querySelector('.empty-state-sm')) container.innerHTML = '';
       const newRow = document.createElement('div');
       newRow.className = 'rpg-edit-row';
       newRow.dataset.section = section;
-      newRow.style.cssText = 'display:flex;gap:4px;align-items:center;margin-bottom:3px;';
       newRow.innerHTML = getEmptyRowHTML(section);
       container.appendChild(newRow);
-      newRow.querySelector('.rpg-edit-remove')?.addEventListener('click', () => { newRow.remove(); markEditDirty(); });
+      newRow.querySelector('.rpg-edit-remove-btn')?.addEventListener('click', () => { newRow.remove(); markEditDirty(); });
       newRow.querySelectorAll('input, select').forEach(el => el.addEventListener('input', markEditDirty));
       markEditDirty();
     });
   });
+
+  // Wire chip list add (Enter or blur on chip input)
+  rpgStatOverlayContent.querySelectorAll('.edit-chip-container').forEach(container => {
+    const input = container.querySelector('.edit-chip-input');
+    if (!input) return;
+    function addChip() {
+      const val = input.value.trim();
+      if (!val) return;
+      const chip = document.createElement('span');
+      chip.className = 'persona-chip edit-chip';
+      chip.dataset.value = val;
+      chip.innerHTML = `${escapeHtml(val)}<button class="edit-chip-remove" title="Remove">✕</button>`;
+      chip.querySelector('.edit-chip-remove').addEventListener('click', () => { chip.remove(); markEditDirty(); });
+      container.insertBefore(chip, input);
+      input.value = '';
+      markEditDirty();
+    }
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addChip(); } });
+    // Wire existing chip remove buttons
+    container.querySelectorAll('.edit-chip-remove').forEach(btn => {
+      btn.addEventListener('click', () => { btn.closest('.edit-chip').remove(); markEditDirty(); });
+    });
+  });
+
+  // Wire arc progression label update
+  const arcRangeInput = rpgStatOverlayContent.querySelector('#rpgEditArcProgression');
+  const arcLabel = rpgStatOverlayContent.querySelector('#rpgEditArcLabel');
+  if (arcRangeInput && arcLabel) {
+    arcRangeInput.addEventListener('input', () => { arcLabel.textContent = `${arcRangeInput.value}%`; });
+  }
 
   const saveBtn = rpgStatOverlayContent.querySelector('.rpg-stat-save-btn');
   const cancelBtn = rpgStatOverlayContent.querySelector('.rpg-stat-cancel-btn');
@@ -656,8 +996,8 @@ function enterEditMode(charId) {
       const bar = document.createElement('div');
       bar.className = 'rpg-confirm-bar';
       bar.innerHTML = `<span>Unsaved changes.</span>
-        <button class="btn-reject" style="font-size:10px;padding:2px 8px;">Discard</button>
-        <button class="btn-accept" style="font-size:10px;padding:2px 8px;">Keep Editing</button>`;
+        <button class="btn-reject btn-xs">Discard</button>
+        <button class="btn-accept btn-xs">Keep Editing</button>`;
       bar.querySelector('.btn-reject').addEventListener('click', () => { editDirty = false; openStatOverlay(charId, getRpgState()); });
       bar.querySelector('.btn-accept').addEventListener('click', () => bar.remove());
       rpgStatOverlayContent?.prepend(bar);
@@ -668,18 +1008,18 @@ function enterEditMode(charId) {
 }
 
 function getEmptyRowHTML(section) {
-  const rm = `<button class="rpg-edit-remove" style="font-size:10px;color:#ff6b6b;background:none;border:none;cursor:pointer;" title="Remove">✕</button>`;
+  const rm = `<button class="rpg-edit-remove-btn" title="Remove">✕</button>`;
   switch (section) {
     case 'abilities':
-      return `<input type="text" data-field="name" placeholder="Name" style="flex:2;${INPUT_STYLE}"><input type="number" data-field="level" placeholder="Lv" style="width:40px;${INPUT_STYLE}">${buildSelectHTML('category', ABILITY_CATEGORY_OPTIONS, '')}<input type="text" data-field="description" placeholder="Description" style="flex:3;${INPUT_STYLE}"><input type="text" data-field="cooldown" placeholder="Cooldown" style="width:70px;${INPUT_STYLE}"><input type="text" data-field="proficiency" placeholder="Proficiency" style="width:80px;${INPUT_STYLE}">${rm}`;
+      return `<input type="text" data-field="name" placeholder="Name" class="rpg-edit-input" style="flex:2;"><input type="number" data-field="level" placeholder="Lv" class="rpg-edit-input" style="width:40px;">${buildSelectHTML('category', ABILITY_CATEGORY_OPTIONS, '')}<input type="text" data-field="description" placeholder="Description" class="rpg-edit-input" style="flex:3;"><input type="text" data-field="cooldown" placeholder="Cooldown" class="rpg-edit-input" style="width:70px;"><input type="text" data-field="proficiency" placeholder="Proficiency" class="rpg-edit-input" style="width:80px;">${rm}`;
     case 'equipment':
-      return `<input type="text" data-field="name" placeholder="Name" style="flex:2;${INPUT_STYLE}">${buildSelectHTML('slot', SLOT_OPTIONS, 'other')}${buildSelectHTML('rarity', RARITY_OPTIONS, 'unknown')}<input type="text" data-field="bonuses" placeholder="Bonuses" style="width:80px;${INPUT_STYLE}"><input type="text" data-field="setName" placeholder="Set Name" style="width:80px;${INPUT_STYLE}"><input type="text" data-field="description" placeholder="Description" style="flex:2;${INPUT_STYLE}">${rm}`;
+      return `<input type="text" data-field="name" placeholder="Name" class="rpg-edit-input" style="flex:2;">${buildSelectHTML('slot', SLOT_OPTIONS, 'other')}${buildSelectHTML('rarity', RARITY_OPTIONS, 'unknown')}<input type="text" data-field="bonuses" placeholder="Bonuses" class="rpg-edit-input" style="width:80px;"><input type="text" data-field="setName" placeholder="Set Name" class="rpg-edit-input" style="width:80px;"><input type="text" data-field="description" placeholder="Description" class="rpg-edit-input" style="flex:2;">${rm}`;
     case 'inventory':
-      return `<input type="text" data-field="name" placeholder="Name" style="flex:2;${INPUT_STYLE}"><input type="number" data-field="quantity" value="1" placeholder="Qty" style="width:45px;${INPUT_STYLE}">${buildSelectHTML('type', ['consumable','material','quest_item','other'], 'other')}${buildSelectHTML('rarity', ['','common','uncommon','rare','epic','legendary'], '')}${rm}`;
+      return `<input type="text" data-field="name" placeholder="Name" class="rpg-edit-input" style="flex:2;"><input type="number" data-field="quantity" value="1" placeholder="Qty" class="rpg-edit-input" style="width:45px;">${buildSelectHTML('type', ['consumable','material','quest_item','other'], 'other')}${buildSelectHTML('rarity', ['','common','uncommon','rare','epic','legendary'], '')}${rm}`;
     case 'currency':
-      return `<input type="text" data-field="unit" placeholder="Currency" style="flex:1;${INPUT_STYLE}"><input type="number" data-field="amount" placeholder="Amount" style="width:80px;${INPUT_STYLE}">${rm}`;
+      return `<input type="text" data-field="unit" placeholder="Currency" class="rpg-edit-input" style="flex:1;"><input type="number" data-field="amount" placeholder="Amount" class="rpg-edit-input" style="width:80px;">${rm}`;
     case 'statusEffects':
-      return `<input type="text" data-field="name" placeholder="Name" style="flex:2;${INPUT_STYLE}">${buildSelectHTML('type', STATUS_TYPE_OPTIONS, 'buff')}<input type="text" data-field="duration" placeholder="Duration" style="flex:1;${INPUT_STYLE}">${rm}`;
+      return `<input type="text" data-field="name" placeholder="Name" class="rpg-edit-input" style="flex:2;">${buildSelectHTML('type', STATUS_TYPE_OPTIONS, 'buff')}<input type="text" data-field="duration" placeholder="Duration" class="rpg-edit-input" style="flex:1;">${rm}`;
     default: return '';
   }
 }
@@ -773,6 +1113,52 @@ async function saveEdit(charId) {
     }));
   }
 
+  // Persona fields
+  const traitsChipContainer = rpgStatOverlayContent.querySelector('#rpgEditTraitsChips');
+  const speechStyleInput = rpgStatOverlayContent.querySelector('#rpgEditSpeechStyle');
+  const emotionalStateInput = rpgStatOverlayContent.querySelector('#rpgEditEmotionalState');
+  const motivationsTA = rpgStatOverlayContent.querySelector('#rpgEditMotivations');
+  const fearsTA = rpgStatOverlayContent.querySelector('#rpgEditFears');
+  const flawsTA = rpgStatOverlayContent.querySelector('#rpgEditFlaws');
+  if (traitsChipContainer || speechStyleInput || motivationsTA) {
+    const existingPersona = getRpgState()?.characters?.[charId]?.persona || {};
+    updates.persona = {
+      ...existingPersona,
+      personalityTraits: traitsChipContainer
+        ? Array.from(traitsChipContainer.querySelectorAll('.edit-chip')).map(c => c.dataset.value || c.textContent.replace('✕', '').trim()).filter(Boolean)
+        : existingPersona.personalityTraits || [],
+      motivations: motivationsTA ? motivationsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingPersona.motivations || [],
+      fears: fearsTA ? fearsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingPersona.fears || [],
+      flaws: flawsTA ? flawsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingPersona.flaws || [],
+      speechStyle: speechStyleInput ? (speechStyleInput.value.trim() || null) : existingPersona.speechStyle,
+      emotionalState: emotionalStateInput ? (emotionalStateInput.value.trim() || null) : existingPersona.emotionalState,
+    };
+  }
+
+  // Narrative fields
+  const storyFunctionSelect = rpgStatOverlayContent.querySelector('[data-field="narrativeStoryFunction"]');
+  const importanceSelect = rpgStatOverlayContent.querySelector('[data-field="narrativeImportance"]');
+  const goalsTA = rpgStatOverlayContent.querySelector('#rpgEditGoals');
+  const conflictsTA = rpgStatOverlayContent.querySelector('#rpgEditConflicts');
+  const allegiancesChipContainer = rpgStatOverlayContent.querySelector('#rpgEditAllegiancesChips');
+  const arcTypeSelect = rpgStatOverlayContent.querySelector('[data-field="narrativeArcType"]');
+  const arcProgressionInput = rpgStatOverlayContent.querySelector('#rpgEditArcProgression');
+  if (storyFunctionSelect || goalsTA || arcTypeSelect) {
+    const existingNarrative = getRpgState()?.characters?.[charId]?.narrative || {};
+    updates.narrative = {
+      ...existingNarrative,
+      storyFunction: storyFunctionSelect ? (storyFunctionSelect.value || null) : existingNarrative.storyFunction,
+      importance: importanceSelect ? (importanceSelect.value || null) : existingNarrative.importance,
+      goals: goalsTA ? goalsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingNarrative.goals || [],
+      conflicts: conflictsTA ? conflictsTA.value.split('\n').map(s => s.trim()).filter(Boolean) : existingNarrative.conflicts || [],
+      allegiances: allegiancesChipContainer
+        ? Array.from(allegiancesChipContainer.querySelectorAll('.edit-chip')).map(c => c.dataset.value || c.textContent.replace('✕', '').trim()).filter(Boolean)
+        : existingNarrative.allegiances || [],
+      arcType: arcTypeSelect ? (arcTypeSelect.value || null) : existingNarrative.arcType,
+      arcProgression: arcProgressionInput ? parseInt(arcProgressionInput.value, 10) : existingNarrative.arcProgression,
+    };
+  }
+
   // NPC-specific fields
   const dispositionSelect = rpgStatOverlayContent.querySelector('[data-field="npcDisposition"]');
   const npcRoleSelect = rpgStatOverlayContent.querySelector('[data-field="npcRoleField"]');
@@ -784,9 +1170,23 @@ async function saveEdit(charId) {
   if (npcRelInput) updates.npcRelationship = npcRelInput.value.trim() || null;
 
   try {
-    const result = await window.sceneVisualizer.litrpgUpdateCharacter(state.currentStoryId, charId, updates);
+    const result = await window.powertool.litrpgUpdateCharacter(state.currentStoryId, charId, updates);
     if (result.success) {
       state.litrpgState = result.state;
+
+      // Sync @narrative-role and @arc to lorebook metadata when narrative fields change
+      if (updates.narrative?.storyFunction || updates.narrative?.arcType) {
+        const char = result.state?.characters?.[charId];
+        const charName = char?.name || charId;
+        const extras = {};
+        if (updates.narrative.storyFunction) extras['narrative-role'] = updates.narrative.storyFunction;
+        if (updates.narrative.arcType) extras['arc'] = updates.narrative.arcType;
+        console.log('[Cast] Narrative metadata to sync:', extras, 'for', charName);
+        // TODO: Full lorebook metadata sync via webview proxy (proxyCall pattern from lore-creator.js).
+        // The @narrative-role and @arc values will be written to the lorebook entry on the next lore scan
+        // (Pass 2/3 generate/update flow reads these fields from character state and stamps metadata).
+      }
+
       refreshRpgUI();
       openStatOverlay(charId, getRpgState());
       showToast('Character updated', 2000, 'success');
@@ -806,10 +1206,10 @@ async function deleteCharacter(charId) {
   const bar = document.createElement('div');
   bar.className = 'rpg-confirm-bar';
   bar.innerHTML = `<span>Delete this character permanently?</span>
-    <button class="btn-reject" style="font-size:10px;padding:2px 8px;">Delete</button>
-    <button style="font-size:10px;padding:2px 8px;background:var(--bg-input);color:#aaa;border:1px solid #444;border-radius:4px;cursor:pointer;">Cancel</button>`;
+    <button class="btn-reject btn-xs">Delete</button>
+    <button class="btn-xs" style="background:var(--bg-input);color:var(--text-muted);border:1px solid #444;border-radius:var(--radius-sm);cursor:pointer;">Cancel</button>`;
   bar.querySelector('.btn-reject').addEventListener('click', async () => {
-    const result = await window.sceneVisualizer.litrpgDeleteCharacter(state.currentStoryId, charId);
+    const result = await window.powertool.litrpgDeleteCharacter(state.currentStoryId, charId);
     if (result.success) {
       state.litrpgState = result.state;
       editDirty = false;
@@ -837,13 +1237,13 @@ function renderQuests(rpg) {
   rpgQuestCount.textContent = `(${active.length} active)`;
 
   if (active.length === 0) {
-    rpgQuestListActive.innerHTML = '<div style="font-size:11px;color:#666;padding:4px;">No active quests. Quest tracking activates when your story mentions objectives, missions, or quests.</div>';
+    rpgQuestListActive.innerHTML = '<div class="empty-state-sm" style="padding:4px;">No active quests. Quest tracking activates when your story mentions objectives, missions, or quests.</div>';
   } else {
     rpgQuestListActive.innerHTML = active.map(q => buildQuestCardHTML(q)).join('');
   }
 
   rpgQuestListDone.innerHTML = done.length === 0
-    ? '<div style="font-size:11px;color:#666;padding:4px;">None yet.</div>'
+    ? '<div class="empty-state-sm" style="padding:4px;">None yet.</div>'
     : done.map(q => buildQuestCardHTML(q)).join('');
 }
 
@@ -897,17 +1297,17 @@ function highlightMatch(text, query) {
 function buildNpcCardHTML(id, npc, q) {
   const dispColor = DISP_RING_COLORS[npc.disposition] || DISP_RING_COLORS.unknown;
   return `
-  <div class="rpg-npc-card rpg-clickable" data-char-id="${escapeHtml(id)}" style="cursor:pointer;">
-    <div class="rpg-portrait" style="width:28px;height:28px;flex-shrink:0;border: 2px solid ${dispColor};border-radius:50%;">
+  <div class="rpg-npc-card rpg-clickable" data-char-id="${escapeHtml(id)}" style="cursor:pointer;--disp-color:${dispColor};">
+    <div class="rpg-portrait rpg-npc-portrait">
       ${npc._thumbnailData
         ? `<img src="data:image/png;base64,${npc._thumbnailData}" alt="${escapeHtml(npc.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
         : `<span class="rpg-portrait-initial rpg-portrait-initial-sm">${escapeHtml((npc.name || '?')[0].toUpperCase())}</span>`}
     </div>
     <div style="flex:1;min-width:0;">
       <span class="rpg-npc-name">${highlightMatch(npc.name, q)}${npc.level ? ` (Lv.${npc.level})` : ''}${npc.class ? ` — ${highlightMatch(npc.class, q)}` : ''}</span>
-      ${npc.faction ? `<div style="font-size:9px;color:var(--cat-faction);">${highlightMatch(npc.faction, q)}</div>` : ''}
-      <div style="display:flex;gap:4px;flex-wrap:wrap;">
-        ${npc.npcRole ? `<span style="font-size:9px;color:#a0a0ff;">${highlightMatch(npc.npcRole, q)}</span>` : ''}
+      ${npc.faction ? `<div class="detail-muted" style="font-size:9px;color:var(--cat-faction);">${highlightMatch(npc.faction, q)}</div>` : ''}
+      <div class="flex-row-wrap" style="gap:4px;">
+        ${npc.npcRole ? `<span class="detail-muted" style="font-size:9px;color:#a0a0ff;">${highlightMatch(npc.npcRole, q)}</span>` : ''}
         <span class="rpg-disposition ${npc.disposition || 'unknown'}">${highlightMatch((npc.disposition || 'unknown').toUpperCase(), q)}</span>
       </div>
     </div>
@@ -936,7 +1336,7 @@ function renderNPCs(rpg) {
     : `(${npcEntries.length})`;
 
   if (npcEntries.length === 0) {
-    rpgNpcList.innerHTML = '<div style="font-size:11px;color:#666;padding:4px;">No NPCs identified. NPCs are detected during story scanning — keep writing!</div>';
+    rpgNpcList.innerHTML = '<div class="empty-state-sm" style="padding:4px;">No NPCs identified. NPCs are detected during story scanning — keep writing!</div>';
     return;
   }
 
@@ -952,7 +1352,7 @@ function renderNPCs(rpg) {
     for (const [disp, entries] of Object.entries(groups)) {
       if (entries.length === 0) continue;
       const color = DISP_RING_COLORS[disp] || DISP_RING_COLORS.unknown;
-      html += `<div class="rpg-npc-group-header" style="border-left-color:${color};color:${color};">${disp.toUpperCase()} (${entries.length})</div>`;
+      html += `<div class="rpg-npc-group-header" style="--disp-color:${color};">${disp.toUpperCase()} (${entries.length})</div>`;
       html += entries.map(([id, npc]) => buildNpcCardHTML(id, npc, q)).join('');
     }
     rpgNpcList.innerHTML = html;
@@ -1001,7 +1401,7 @@ function renderNPCs(rpg) {
         },
         onExpire: async () => {
           // Persist delete to backend when undo window expires
-          const result = await window.sceneVisualizer.litrpgDeleteCharacter(state.currentStoryId, charId);
+          const result = await window.powertool.litrpgDeleteCharacter(state.currentStoryId, charId);
           if (result.success) {
             state.litrpgState = result.state;
             refreshRpgUI();
@@ -1053,8 +1453,8 @@ function renderPendingUpdates(rpg) {
         <div class="update-desc">${desc}</div>
         ${diffHTML}
         <div class="update-actions">
-          <button class="btn-accept rpg-accept-update" style="font-size:10px;padding:2px 8px;">Accept</button>
-          <button class="btn-reject rpg-reject-update" style="font-size:10px;padding:2px 8px;">Reject</button>
+          <button class="btn-accept btn-xs rpg-accept-update">Accept</button>
+          <button class="btn-reject btn-xs rpg-reject-update">Reject</button>
         </div>
       </div>
     `;
@@ -1065,7 +1465,7 @@ function renderPendingUpdates(rpg) {
     btn.addEventListener('click', async () => {
       const card = btn.closest('.rpg-update-card');
       const updateId = card.dataset.updateId;
-      const result = await window.sceneVisualizer.litrpgAcceptUpdate(state.currentStoryId, updateId);
+      const result = await window.powertool.litrpgAcceptUpdate(state.currentStoryId, updateId);
       if (result.success) {
         state.litrpgState = result.state;
         refreshRpgUI();
@@ -1080,7 +1480,7 @@ function renderPendingUpdates(rpg) {
     btn.addEventListener('click', async () => {
       const card = btn.closest('.rpg-update-card');
       const updateId = card.dataset.updateId;
-      const result = await window.sceneVisualizer.litrpgRejectUpdate(state.currentStoryId, updateId);
+      const result = await window.powertool.litrpgRejectUpdate(state.currentStoryId, updateId);
       if (result.success) {
         state.litrpgState = result.state;
         refreshRpgUI();
@@ -1109,7 +1509,7 @@ function renderInventory(rpg) {
   }
 
   rpgInventoryList.innerHTML = `<div class="rpg-inv-grid">${allItems.map(i =>
-    `<div class="rpg-inv-slot${i.rarity ? ` rarity-${i.rarity}` : ''}"><span style="flex:1;color:#e0e0e0;">${escapeHtml(i.name)}</span><span class="rpg-inv-qty">x${i.quantity || 1}</span><span style="font-size:9px;color:#666;">${escapeHtml(i.owner)}</span></div>`
+    `<div class="rpg-inv-slot${i.rarity ? ` rarity-${i.rarity}` : ''}"><span style="flex:1;color:var(--text-primary);">${escapeHtml(i.name)}</span><span class="rpg-inv-qty">x${i.quantity || 1}</span><span class="detail-muted" style="font-size:9px;">${escapeHtml(i.owner)}</span></div>`
   ).join('')}</div>`;
 }
 
@@ -1137,7 +1537,7 @@ function renderCurrency(rpg) {
   }
 
   rpgCurrencyList.innerHTML = entries.map(e =>
-    `<div style="margin-bottom:6px;"><div style="font-size:9px;color:#666;margin-bottom:3px;">${escapeHtml(e.owner)}</div><div style="display:flex;flex-wrap:wrap;gap:6px;">${Object.entries(e.currency).map(([unit, amount]) =>
+    `<div class="mb-sm"><div class="detail-muted" style="font-size:9px;margin-bottom:3px;">${escapeHtml(e.owner)}</div><div class="flex-row-wrap">${Object.entries(e.currency).map(([unit, amount]) =>
       `<div class="rpg-currency-card"><span class="rpg-currency-amount">${amount}</span><span class="rpg-currency-unit">${escapeHtml(unit)}</span></div>`
     ).join('')}</div></div>`
   ).join('');
@@ -1185,14 +1585,14 @@ function renderFactions(rpg) {
       `<span class="rpg-entity-member-link" data-member-name="${escapeHtml(m)}">${escapeHtml(m)}</span>`
     ).join(', ');
     return `<div class="rpg-entity-card rpg-clickable">
-      <div style="display:flex;align-items:center;gap:6px;">
+      <div class="flex-row">
         <span class="rpg-entity-name">${escapeHtml(fac.name)}</span>
         <span class="rpg-disposition ${dispClass}">${escapeHtml(fac.disposition || 'unknown')}</span>
-        <span style="font-size:9px;color:#666;">${(fac.members || []).length} members</span>
+        <span class="detail-muted" style="font-size:9px;">${(fac.members || []).length} members</span>
         ${(fac.members || []).length === 0 ? '<span class="rpg-orphan-tag">orphaned</span>' : ''}
       </div>
       ${fac.description ? `<div class="rpg-entity-desc">${escapeHtml(fac.description)}</div>` : ''}
-      ${fac.territory ? `<div style="font-size:10px;color:#888;">Territory: ${escapeHtml(fac.territory)}</div>` : ''}
+      ${fac.territory ? `<div class="detail-muted">Territory: ${escapeHtml(fac.territory)}</div>` : ''}
       ${memberLinks ? `<div class="rpg-entity-members">Members: ${memberLinks}</div>` : ''}
     </div>`;
   }).join('');
@@ -1232,17 +1632,17 @@ function renderClasses(rpg) {
     const practitionerLinks = (cls.practitioners || []).map(p =>
       `<span class="rpg-entity-member-link" data-member-name="${escapeHtml(p)}">${escapeHtml(p)}</span>`
     ).join(', ');
-    const typeLabel = cls.type === 'subclass' ? `<span style="font-size:9px;color:#ce93d8;">subclass</span>` : '';
-    const parent = cls.parentClass ? `<span style="font-size:9px;color:#888;"> of ${escapeHtml(cls.parentClass)}</span>` : '';
-    return `<div class="rpg-entity-card" style="${cls.type === 'subclass' ? 'margin-left:12px;' : ''}">
-      <div style="display:flex;align-items:center;gap:6px;">
+    const typeLabel = cls.type === 'subclass' ? `<span class="detail-muted" style="font-size:9px;color:#ce93d8;">subclass</span>` : '';
+    const parent = cls.parentClass ? `<span class="detail-muted" style="font-size:9px;"> of ${escapeHtml(cls.parentClass)}</span>` : '';
+    return `<div class="rpg-entity-card${cls.type === 'subclass' ? ' rpg-entity-subclass' : ''}">
+      <div class="flex-row">
         <span class="rpg-entity-name">${escapeHtml(cls.name)}</span>
         ${typeLabel}${parent}
-        <span style="font-size:9px;color:#666;">${(cls.practitioners || []).length} practitioners</span>
+        <span class="detail-muted" style="font-size:9px;">${(cls.practitioners || []).length} practitioners</span>
         ${(cls.practitioners || []).length === 0 ? '<span class="rpg-orphan-tag">orphaned</span>' : ''}
       </div>
       ${cls.description ? `<div class="rpg-entity-desc">${escapeHtml(cls.description)}</div>` : ''}
-      ${cls.requirements ? `<div style="font-size:10px;color:#888;">Requires: ${escapeHtml(cls.requirements)}</div>` : ''}
+      ${cls.requirements ? `<div class="detail-muted">Requires: ${escapeHtml(cls.requirements)}</div>` : ''}
       ${practitionerLinks ? `<div class="rpg-entity-members">${practitionerLinks}</div>` : ''}
     </div>`;
   }).join('');
@@ -1280,13 +1680,13 @@ function renderRaces(rpg) {
       ? race.traits.split(',').map(t => t.trim()).filter(Boolean).map(t => `<span class="rpg-trait-pill">${escapeHtml(t)}</span>`).join('')
       : '';
     return `<div class="rpg-entity-card">
-      <div style="display:flex;align-items:center;gap:6px;">
+      <div class="flex-row">
         <span class="rpg-entity-name">${escapeHtml(race.name)}</span>
-        <span style="font-size:9px;color:#666;">${(race.knownMembers || []).length} known</span>
+        <span class="detail-muted" style="font-size:9px;">${(race.knownMembers || []).length} known</span>
         ${(race.knownMembers || []).length === 0 ? '<span class="rpg-orphan-tag">orphaned</span>' : ''}
       </div>
       ${race.description ? `<div class="rpg-entity-desc">${escapeHtml(race.description)}</div>` : ''}
-      ${traitPills ? `<div style="margin-top:3px;">${traitPills}</div>` : ''}
+      ${traitPills ? `<div class="mt-xs">${traitPills}</div>` : ''}
       ${memberLinks ? `<div class="rpg-entity-members">${memberLinks}</div>` : ''}
     </div>`;
   }).join('');
@@ -1327,15 +1727,15 @@ function renderScanHistory(rpg) {
       return `${k}: ${p.succeeded}/${p.attempted}`;
     }).join(', ');
     const errorBadge = entry.errorCount > 0
-      ? `<span class="rpg-scan-history-errors" style="color:#e94560;font-size:9px;margin-left:4px;">${entry.errorCount} error${entry.errorCount !== 1 ? 's' : ''}</span>`
+      ? `<span class="rpg-scan-history-errors">${entry.errorCount} error${entry.errorCount !== 1 ? 's' : ''}</span>`
       : '';
-    return `<div class="rpg-scan-history-item" style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span style="color:#ccc;">${timeStr}</span>
-        <span style="color:#888;">${durationStr}${errorBadge}</span>
+    return `<div class="rpg-scan-history-item">
+      <div class="flex-row" style="justify-content:space-between;">
+        <span style="color:var(--text-secondary);">${timeStr}</span>
+        <span class="detail-muted">${durationStr}${errorBadge}</span>
       </div>
-      <div style="color:#999;margin-top:2px;">${escapeHtml(entry.summary || '')}</div>
-      ${passSummary ? `<div style="color:#666;margin-top:1px;font-size:10px;">${escapeHtml(passSummary)}</div>` : ''}
+      <div class="detail-muted" style="margin-top:2px;">${escapeHtml(entry.summary || '')}</div>
+      ${passSummary ? `<div class="detail-muted" style="margin-top:1px;font-size:10px;color:var(--text-disabled);">${escapeHtml(passSummary)}</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -1354,7 +1754,7 @@ async function generatePortrait(charId) {
   if (genBtn) genBtn.disabled = true;
   showToast('Generating portrait...');
   try {
-    const result = await window.sceneVisualizer.portraitGenerate(
+    const result = await window.powertool.portraitGenerate(
       state.currentStoryId, charId, char.loreEntryName, char
     );
     if (result.success) {
@@ -1375,7 +1775,7 @@ async function generatePortrait(charId) {
 async function uploadPortrait(charId) {
   if (!state.currentStoryId) return;
   try {
-    const result = await window.sceneVisualizer.portraitUpload(state.currentStoryId, charId);
+    const result = await window.powertool.portraitUpload(state.currentStoryId, charId);
     if (result.success) {
       const rpg = getRpgState();
       const char = rpg.characters?.[charId];
@@ -1403,11 +1803,11 @@ async function loadAlbumStrip(charId) {
   if (!strip) return;
 
   try {
-    const items = await window.sceneVisualizer.portraitAlbumList(state.currentStoryId, charId);
+    const items = await window.powertool.portraitAlbumList(state.currentStoryId, charId);
     if (countEl) countEl.textContent = `(${items.length})`;
 
     if (items.length === 0) {
-      strip.innerHTML = '<div style="font-size:10px;color:#555;padding:4px;">No images yet. Generate or upload a portrait to start the album.</div>';
+      strip.innerHTML = '<div class="empty-state-sm" style="padding:4px;">No images yet. Generate or upload a portrait to start the album.</div>';
       return;
     }
 
@@ -1458,7 +1858,7 @@ async function loadAlbumStrip(charId) {
       });
     });
   } catch (err) {
-    strip.innerHTML = '<div style="font-size:10px;color:#f66;">Failed to load album</div>';
+    strip.innerHTML = '<div class="empty-state-sm" style="color:var(--error-light);">Failed to load album</div>';
     console.error('[LitRPG] Album load error:', err);
   }
 }
@@ -1481,7 +1881,7 @@ async function showAlbumLightbox() {
   const item = albumItems[albumIndex];
   if (!item) return;
   try {
-    const imageData = await window.sceneVisualizer.portraitAlbumGet(state.currentStoryId, albumCharId, item.id);
+    const imageData = await window.powertool.portraitAlbumGet(state.currentStoryId, albumCharId, item.id);
     if (!imageData) return;
     rpgAlbumLightboxImg.src = `data:image/png;base64,${imageData}`;
     if (rpgAlbumCounter) rpgAlbumCounter.textContent = `${albumIndex + 1} of ${albumItems.length}`;
@@ -1494,7 +1894,7 @@ async function showAlbumLightbox() {
 async function setAlbumAsActive(charId, imageId) {
   if (!state.currentStoryId) return;
   try {
-    const result = await window.sceneVisualizer.portraitAlbumSetActive(state.currentStoryId, charId, imageId);
+    const result = await window.powertool.portraitAlbumSetActive(state.currentStoryId, charId, imageId);
     if (result.success) {
       const rpg = getRpgState();
       const char = rpg.characters?.[charId];
@@ -1517,7 +1917,7 @@ async function setAlbumAsActive(charId, imageId) {
 async function deleteAlbumImage(charId, imageId) {
   if (!state.currentStoryId) return;
   try {
-    await window.sceneVisualizer.portraitAlbumDelete(state.currentStoryId, charId, imageId);
+    await window.powertool.portraitAlbumDelete(state.currentStoryId, charId, imageId);
     // Reload album strip
     loadAlbumStrip(charId);
     showToast('Album image deleted');
@@ -1536,6 +1936,7 @@ let lastEtaText = '';
 async function runRpgScan() {
   if (!state.currentStoryId || state.litrpgScanning) return;
   state.litrpgScanning = true;
+  state.llmBusy = true;
   if (rpgScanStatus) rpgScanStatus.style.display = '';
   if (rpgScanPhase) rpgScanPhase.textContent = 'Starting RPG scan...';
   if (rpgScanBtn) { rpgScanBtn.disabled = true; rpgScanBtn.classList.add('scanning'); }
@@ -1585,7 +1986,7 @@ async function runRpgScan() {
       scanOptions.forceReEnrich = true;
       rpgForceReEnrich.checked = false;
     }
-    const result = await window.sceneVisualizer.litrpgScan(storyText, state.currentStoryId, loreEntries, scanOptions);
+    const result = await window.powertool.litrpgScan(storyText, state.currentStoryId, loreEntries, scanOptions);
 
     // Discard result if story changed during scan
     if (state.currentStoryId !== startedForStory) {
@@ -1639,6 +2040,7 @@ async function runRpgScan() {
     console.error('[LitRPG] Scan error:', err);
   } finally {
     state.litrpgScanning = false;
+    state.llmBusy = false;
     lastEtaText = '';
     if (scanElapsedTimer) { clearInterval(scanElapsedTimer); scanElapsedTimer = null; }
     if (rpgScanPhase) rpgScanPhase.textContent = 'Scan complete';
@@ -1685,7 +2087,7 @@ async function syncToLorebook() {
       if (entries.length === 0) continue;
       const entry = entries[0];
 
-      const updatedText = await window.sceneVisualizer.litrpgBuildLorebookText(entry.text, char);
+      const updatedText = await window.powertool.litrpgBuildLorebookText(entry.text, char);
 
       await webview.executeJavaScript(`
         (function() {
@@ -1727,7 +2129,7 @@ async function applyRoleUpdatesToLorebook(roleUpdates) {
       if (entries.length === 0) continue;
       const entry = entries[0];
 
-      const updatedText = await window.sceneVisualizer.litrpgBuildRoleUpdate(entry.text, role);
+      const updatedText = await window.powertool.litrpgBuildRoleUpdate(entry.text, role);
       if (!updatedText) continue; // already correct
 
       await webview.executeJavaScript(`
@@ -1780,7 +2182,7 @@ async function handleReverseSync() {
       return;
     }
 
-    const result = await window.sceneVisualizer.litrpgReverseSyncAll(characterEntries, state.currentStoryId);
+    const result = await window.powertool.litrpgReverseSyncAll(characterEntries, state.currentStoryId);
 
     if (!result.success) {
       showToast(result.error || 'Reverse sync failed', null, 'error');
@@ -1945,7 +2347,7 @@ async function acceptAll() {
   if (!state.currentStoryId) return;
   if (rpgAcceptAllBtn) rpgAcceptAllBtn.disabled = true;
   try {
-    const result = await window.sceneVisualizer.litrpgAcceptAllUpdates(state.currentStoryId);
+    const result = await window.powertool.litrpgAcceptAllUpdates(state.currentStoryId);
     if (result.success) {
       state.litrpgState = result.state;
       refreshRpgUI();
@@ -1962,7 +2364,7 @@ async function rejectAll() {
   const snapshot = JSON.parse(JSON.stringify(state.litrpgState?.pendingUpdates || []));
   if (rpgRejectAllBtn) rpgRejectAllBtn.disabled = true;
   try {
-    const result = await window.sceneVisualizer.litrpgRejectAllUpdates(state.currentStoryId);
+    const result = await window.powertool.litrpgRejectAllUpdates(state.currentStoryId);
     if (result.success) {
       state.litrpgState = result.state;
       refreshRpgUI();
@@ -1988,7 +2390,7 @@ async function rejectAll() {
 // =========================================================================
 
 function setupIPCListeners() {
-  window.sceneVisualizer.onLitrpgScanProgress((progress) => {
+  window.powertool.onLitrpgScanProgress((progress) => {
     const phaseLabels = {
       characters: 'Extracting character RPG data',
       quests: 'Scanning for quests',
@@ -2033,7 +2435,7 @@ function setupIPCListeners() {
     }
   });
 
-  window.sceneVisualizer.onLitrpgStateUpdated(async (data) => {
+  window.powertool.onLitrpgStateUpdated(async (data) => {
     // Support both old shape (raw state) and new shape ({ state, roleUpdates, pendingLoreEntries })
     const newState = data.state || data;
     state.litrpgState = newState;
@@ -2061,12 +2463,11 @@ function setupIPCListeners() {
     }
   });
 
-  window.sceneVisualizer.onLitrpgDetected(({ systemType }) => {
+  window.powertool.onLitrpgDetected(({ systemType }) => {
     if (!state.litrpgState) state.litrpgState = {};
     state.litrpgState.detected = true;
     state.litrpgState.systemType = systemType;
     saveLitrpgState();
-    if (rpgTab) rpgTab.style.display = '';
     if (rpgDetectedType) {
       const typeLabels = {
         generic: 'Generic RPG', dnd: 'D&D Style', cultivation: 'Cultivation',
@@ -2184,4 +2585,9 @@ export function init() {
 
   // Listen for story switch events
   bus.on('story:changed', onStorySwitch);
+
+  // Refresh Cast tab when a timeline scan completes — new scene characters may have been detected
+  bus.on('timeline:scanned', () => {
+    refreshRpgUI();
+  });
 }

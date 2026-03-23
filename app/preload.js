@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 // Expose secure API to renderer
-contextBridge.exposeInMainWorld('sceneVisualizer', {
+contextBridge.exposeInMainWorld('powertool', {
   // Image generation
   generateImage: (prompt, negativePrompt, opts = {}) =>
     ipcRenderer.invoke('generate-image', { prompt, negativePrompt, ...opts }),
@@ -256,6 +256,14 @@ contextBridge.exposeInMainWorld('sceneVisualizer', {
   ttsRemoveCharacterVoice: (storyId, characterName) =>
     ipcRenderer.invoke('tts:remove-character-voice', { storyId, characterName }),
 
+  // Character Persona
+  personaScan: (storyId, storyText, existingEntries) =>
+    ipcRenderer.invoke('persona:scan', { storyId, storyText, existingEntries }),
+  onPersonaScanProgress: (callback) => {
+    ipcRenderer.removeAllListeners('persona:scan-progress');
+    ipcRenderer.on('persona:scan-progress', (event, data) => callback(data));
+  },
+
   // Media Gallery
   mediaSaveImage: (storyId, imageDataUrl, metadata) =>
     ipcRenderer.invoke('media:save-image', { storyId, imageDataUrl, metadata }),
@@ -305,5 +313,19 @@ contextBridge.exposeInMainWorld('sceneVisualizer', {
     ipcRenderer.invoke('portrait:album-set-active', { storyId, characterId, imageId }),
   onPortraitAutoSaveFailed: (callback) => {
     ipcRenderer.on('portrait:auto-save-failed', (_, data) => callback(data));
+  },
+
+  // Scene Timeline
+  timelineGetState: (storyId) => ipcRenderer.invoke('timeline:get-state', storyId),
+  timelineSetState: (storyId, state) => ipcRenderer.invoke('timeline:set-state', { storyId, state }),
+  timelineScan: (storyId, storyText, lorebookEntries) =>
+    ipcRenderer.invoke('timeline:scan', { storyId, storyText, lorebookEntries }),
+  timelineUpdateScene: (storyId, sceneId, updates) =>
+    ipcRenderer.invoke('timeline:update-scene', { storyId, sceneId, updates }),
+  timelineDetectNew: (storyId, storyText) =>
+    ipcRenderer.invoke('timeline:detect-new', { storyId, storyText }),
+  onTimelineScanProgress: (callback) => {
+    ipcRenderer.removeAllListeners('timeline:scan-progress');
+    ipcRenderer.on('timeline:scan-progress', (event, data) => callback(data));
   },
 });

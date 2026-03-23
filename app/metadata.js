@@ -25,7 +25,7 @@ const VALID_ENTRY_TYPES = ['character', 'location', 'item', 'faction', 'concept'
  * and `rest` is the text without the header.
  */
 function parseMetadata(text) {
-  const empty = { type: null, version: null, updated: null, source: null, role: null, protagonist: false, rest: '', all: {} };
+  const empty = { type: null, version: null, updated: null, source: null, role: null, protagonist: false, narrativeRole: null, arc: null, rest: '', all: {} };
   if (!text) return empty;
   const lines = text.split('\n');
   const meta = { type: null, version: null, updated: null, source: null, role: null, protagonist: false };
@@ -55,7 +55,7 @@ function parseMetadata(text) {
     headerEnd++;
   }
 
-  return { ...meta, rest: lines.slice(headerEnd).join('\n'), all };
+  return { ...meta, narrativeRole: all['narrative-role'] || null, arc: all['arc'] || null, rest: lines.slice(headerEnd).join('\n'), all };
 }
 
 /**

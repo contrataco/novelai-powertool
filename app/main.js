@@ -159,7 +159,7 @@ function createWindow() {
       contextIsolation: true,
       webviewTag: true
     },
-    title: 'NovelAI Scene Visualizer'
+    title: 'NovelAI PowerTool'
   });
 
   // Load the wrapper HTML that contains the webview
@@ -1411,15 +1411,26 @@ ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artS
 
       // Gather RPG data if available
       let rpgData = null;
+      let litrpgStateForVisuals = null;
       if (storyId) {
         const litrpgState = db.getLitrpgState(storyId);
         if (litrpgState?.enabled && litrpgState?.characters) {
           rpgData = litrpgState;
+          litrpgStateForVisuals = litrpgState;
         }
       }
 
-      // Get stored visual profiles
-      const visualProfiles = storyId ? db.getVisualProfiles(storyId) : {};
+      // Build visual profiles: prefer character.visual data, fall back to visual_profiles table
+      const storedTableProfiles = storyId ? db.getVisualProfiles(storyId) : {};
+      const visualProfiles = { ...storedTableProfiles };
+      if (litrpgStateForVisuals?.characters) {
+        for (const char of Object.values(litrpgStateForVisuals.characters)) {
+          if (char.name && char.visual) {
+            // character.visual takes precedence over the legacy table entry
+            visualProfiles[char.name] = { ...storedTableProfiles[char.name], ...char.visual };
+          }
+        }
+      }
 
       const result = await withTimeout(
         scenePromptPipeline.generateScenePromptV2({
@@ -1433,10 +1444,28 @@ ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artS
         'Scene prompt pipeline'
       );
 
-      // Persist updated visual profiles
+      // Persist updated visual profiles to both the legacy table and character objects
       if (result.success && result.updatedProfiles && storyId) {
         for (const [charName, profile] of Object.entries(result.updatedProfiles)) {
           db.setVisualProfile(storyId, charName, profile);
+        }
+        // Also write back to character.visual when litrpg is active
+        if (litrpgStateForVisuals?.characters) {
+          let litrpgDirty = false;
+          for (const [charName, profile] of Object.entries(result.updatedProfiles)) {
+            const chars = Object.values(litrpgStateForVisuals.characters);
+            const match = chars.find(c =>
+              loreCreator.fuzzyNameScore(c.name, charName) >= FUZZY_MATCH_THRESHOLD ||
+              (c.aliases || []).some(a => loreCreator.fuzzyNameScore(a, charName) >= FUZZY_MATCH_THRESHOLD)
+            );
+            if (match) {
+              match.visual = { ...(match.visual || {}), ...profile };
+              litrpgDirty = true;
+            }
+          }
+          if (litrpgDirty) {
+            db.setLitrpgState(storyId, litrpgStateForVisuals);
+          }
         }
       }
 
@@ -1917,6 +1946,42 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
 
     // Save updated state
     db.setLoreState(storyId, result.state);
+
+    // Persona extraction (all stories with character entries)
+    const characterEntries = existingEntries.filter(e => {
+      const type = loreCreator.getEntryType(e.text, e.displayName);
+      return type === 'character';
+    });
+    if (characterEntries.length > 0) {
+      // Fire-and-forget — don't block lore scan return (matches chained LitRPG scan pattern)
+      (async () => {
+        try {
+          const personaExtractor = require('./persona-extractor');
+          const litrpgState = db.getOrCreateLitrpgState(storyId);
+          const compStateForPersona = db.getComprehension(storyId);
+          const comprehensionCtx = compStateForPersona
+            ? loreComprehension.formatComprehensionContext(compStateForPersona.masterSummary, compStateForPersona.entityProfiles)
+            : '';
+          const personaCtx = {
+            storyText, characterEntries, generateTextFn,
+            state: litrpgState, comprehensionCtx,
+            onProgress: (p) => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('lore:scan-progress', p);
+              }
+            },
+          };
+          await personaExtractor.runPersonaExtraction(personaCtx);
+          db.setLitrpgState(storyId, personaCtx.state);
+          hydratePortraits(personaCtx.state, storyId);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('litrpg:state-updated', { state: personaCtx.state });
+          }
+        } catch (err) {
+          console.error('[Persona] Extraction failed:', err);
+        }
+      })();
+    }
 
     // Chain LitRPG scan asynchronously — don't block lore scan return
     const rpgState = db.getLitrpgState(storyId);
@@ -2780,6 +2845,37 @@ ipcMain.handle('litrpg:reverse-sync-all', (event, { entries, storyId }) => {
   return { success: true, results, updatedCount, failedCount, state: rpgState };
 });
 
+// IPC Handlers — Character Persona
+
+ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntries }) => {
+  try {
+    const generateTextFn = makeLoreGenerateTextFn(store);
+    const litrpgState = db.getOrCreateLitrpgState(storyId);
+    const compState = db.getComprehension(storyId);
+    const comprehensionCtx = compState
+      ? loreComprehension.formatComprehensionContext(compState.masterSummary, compState.entityProfiles)
+      : '';
+    const metadata = require('./metadata');
+    const characterEntries = existingEntries.filter(e => {
+      const type = metadata.getEntryType(e.text, e.displayName);
+      return type === 'character';
+    });
+    const personaExtractor = require('./persona-extractor');
+    const ctx = {
+      storyText, characterEntries, generateTextFn,
+      state: litrpgState, comprehensionCtx,
+      onProgress: (p) => event.sender.send('persona:scan-progress', p),
+    };
+    await personaExtractor.runPersonaExtraction(ctx);
+    db.setLitrpgState(storyId, ctx.state);
+    hydratePortraits(ctx.state, storyId);
+    return { success: true, state: ctx.state };
+  } catch (err) {
+    console.error('[Persona] Scan failed:', err);
+    return { success: false, error: err.message };
+  }
+});
+
 // IPC Handlers — Portraits
 
 ipcMain.handle('portrait:generate', async (event, { storyId, characterId, characterEntry, rpgData }) => {
@@ -2903,6 +2999,61 @@ ipcMain.handle('story:load-all', (event, { storyId, storyTitle }) => {
   return allData;
 });
 
+// IPC Handlers — Scene Timeline
+const sceneTimeline = require('./scene-timeline');
+
+ipcMain.handle('timeline:get-state', (event, storyId) => {
+  return db.getTimelineState(storyId);
+});
+
+ipcMain.handle('timeline:set-state', (event, { storyId, state }) => {
+  db.setTimelineState(storyId, state);
+  return { success: true };
+});
+
+ipcMain.handle('timeline:scan', async (event, { storyId, storyText, lorebookEntries }) => {
+  try {
+    const generateTextFn = makeLoreGenerateTextFn(store);
+    const existingState = db.getTimelineState(storyId);
+    const result = await sceneTimeline.scanForScenes(
+      storyText, lorebookEntries, generateTextFn, existingState,
+      (progress) => event.sender.send('timeline:scan-progress', progress)
+    );
+    db.setTimelineState(storyId, result.state);
+    return { success: true, state: result.state, report: result.report };
+  } catch (err) {
+    console.error('[Timeline] Scan failed:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('timeline:update-scene', (event, { storyId, sceneId, updates }) => {
+  const state = db.getTimelineState(storyId);
+  if (!state) return { success: false, error: 'No timeline state' };
+  const scene = state.scenes.find(s => s.id === sceneId);
+  if (!scene) return { success: false, error: 'Scene not found' };
+  Object.assign(scene, updates, { updatedAt: Date.now() });
+  db.setTimelineState(storyId, state);
+  return { success: true, scene };
+});
+
+ipcMain.handle('timeline:detect-new', async (event, { storyId, storyText }) => {
+  try {
+    const generateTextFn = makeLoreGenerateTextFn(store);
+    const existingState = db.getTimelineState(storyId);
+    if (!existingState) return { success: true, noChange: true };
+    const result = await sceneTimeline.detectNewScenes(storyText, existingState, generateTextFn);
+    if (result) {
+      db.setTimelineState(storyId, result.state);
+      return { success: true, state: result.state, newScenes: result.newScenes };
+    }
+    return { success: true, noChange: true };
+  } catch (err) {
+    console.error('[Timeline] Incremental detection failed:', err);
+    return { success: false, error: err.message };
+  }
+});
+
 // IPC Handlers — Storyboard
 ipcMain.handle('storyboard:list', () => storyboard.list());
 ipcMain.handle('storyboard:create', (event, name) => storyboard.create(name));
@@ -2972,6 +3123,42 @@ app.whenReady().then(() => {
       console.log('[Main] Migrated Venice video resolution to 1080p');
     }
     store.set('migratedVeniceVideoRes', true);
+  }
+
+  // One-time: migrate visual_profiles table data into character.visual objects
+  if (!store.get('migratedVisualProfiles')) {
+    try {
+      const stories = db.listStories();
+      const { CHARACTER_PERSONA_DEFAULTS } = require('./litrpg-tracker');
+      for (const story of stories) {
+        const storyId = story.id || story.story_id;
+        const profiles = db.getVisualProfiles(storyId);
+        if (!profiles || Object.keys(profiles).length === 0) continue;
+        const litrpgState = db.getOrCreateLitrpgState(storyId);
+        for (const [charName, profileData] of Object.entries(profiles)) {
+          const chars = Object.values(litrpgState.characters || {});
+          const match = chars.find(c =>
+            loreCreator.fuzzyNameScore(c.name, charName) >= 0.7 ||
+            (c.aliases || []).some(a => loreCreator.fuzzyNameScore(a, charName) >= 0.7)
+          );
+          if (match && profileData) {
+            const data = typeof profileData === 'string' ? JSON.parse(profileData) : profileData;
+            match.visual = { ...CHARACTER_PERSONA_DEFAULTS.visual, ...data };
+          }
+        }
+        // Also migrate @protagonist metadata → narrative.storyFunction
+        for (const char of Object.values(litrpgState.characters || {})) {
+          if (char.isProtagonist || char._protagonistTag) {
+            char.narrative = { ...(char.narrative || CHARACTER_PERSONA_DEFAULTS.narrative), storyFunction: 'protagonist' };
+          }
+        }
+        db.setLitrpgState(storyId, litrpgState);
+      }
+      store.set('migratedVisualProfiles', true);
+      console.log('[Main] Visual profiles migrated to character objects');
+    } catch (err) {
+      console.error('[Main] Visual profile migration failed:', err);
+    }
   }
 
   setupTokenInterception();

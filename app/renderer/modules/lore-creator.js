@@ -28,6 +28,7 @@ import {
   loreAddCategoryForm, loreNewCategoryName, loreNewCategoryColor,
   loreAddCategoryConfirm, loreAddCategoryCancel, dynamicCategoriesStyle,
   loreOptProfile, loreOptimizeAllBtn, loreDiscoverFieldsBtn, loreOptStatus,
+  storyboardSubTab, timelineSubTab, storyboardView, timelineView,
 } from './dom-refs.js';
 import { escapeHtml, showToast, timeAgo } from './utils.js';
 import { parseMetadataClient } from './metadata.js';
@@ -119,7 +120,7 @@ function rebuildCategoryUI() {
           e.preventDefault();
           e.stopPropagation();
           if (!confirm(`Remove custom category "${cat.singularName}"?`)) return;
-          await window.sceneVisualizer.loreRemoveCustomCategory(state.currentStoryId, cat.id);
+          await window.powertool.loreRemoveCustomCategory(state.currentStoryId, cat.id);
           await loadCategoryRegistry();
         });
         label.appendChild(removeBtn);
@@ -182,7 +183,7 @@ function rebuildCategoryUI() {
 export async function loadCategoryRegistry() {
   if (!state.currentStoryId) return;
   try {
-    state.categoryRegistry = await window.sceneVisualizer.loreGetCategoryRegistry(state.currentStoryId);
+    state.categoryRegistry = await window.powertool.loreGetCategoryRegistry(state.currentStoryId);
   } catch (e) {
     console.error('[Lore] Failed to load category registry:', e);
     // Fallback to builtins
@@ -657,14 +658,14 @@ export async function checkProxyStatus(cmdLabel, resPrefix) {
 // Load state for current story
 async function loadLoreState() {
   if (!state.currentStoryId) return;
-  state.loreState = await window.sceneVisualizer.loreGetState(state.currentStoryId);
+  state.loreState = await window.powertool.loreGetState(state.currentStoryId);
   await loadCategoryRegistry();
   refreshLoreUI();
 }
 
 export async function saveLoreState() {
   if (!state.currentStoryId || !state.loreState) return;
-  await window.sceneVisualizer.loreSetState(state.currentStoryId, state.loreState);
+  await window.powertool.loreSetState(state.currentStoryId, state.loreState);
 }
 
 export async function checkLoreProxy() {
@@ -791,7 +792,7 @@ function buildMetaBadges(text) {
     else if (key === 'opt-at') continue; // skip date, shown via opt-v
     else if (key === 'opt-speech') continue; // internal cache
     else label = `@${key}: ${val}`;
-    badges.push(`<span style="background:${c.bg};color:${c.fg};font-size:9px;padding:1px 4px;border-radius:3px;margin-left:4px;" title="${key === 'opt-v' ? 'Lorebook optimizer applied' : ''}">${escapeHtml(label)}</span>`);
+    badges.push(`<span class="meta-badge" style="background:${c.bg};color:${c.fg};" title="${key === 'opt-v' ? 'Lorebook optimizer applied' : ''}">${escapeHtml(label)}</span>`);
   }
   return badges.join('');
 }
@@ -805,7 +806,7 @@ function createEntryCard(entry) {
   const templateTypes = ['character', 'location', 'item', 'faction', 'concept'];
   const hasTemplate = templateTypes.includes(entry.category);
   const reformatBtn = hasTemplate
-    ? `<button class="btn-reformat" data-action="reformat" data-id="${entry.id}" style="background:#4d96ff;color:#fff;border:none;padding:4px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Reformat</button>`
+    ? `<button class="btn-reformat" data-action="reformat" data-id="${entry.id}">Reformat</button>`
     : '';
 
   // Build metadata badges from parsed header
@@ -887,14 +888,14 @@ function createUpdateCard(update) {
   card.className = `lore-card ${update.category || ''}`;
   let typeBadge = '';
   if (update.isNameUpdate) {
-    typeBadge = ' <span style="font-size:9px;background:#f59e0b;color:#000;padding:1px 5px;border-radius:3px;margin-left:4px;">NAME</span>';
+    typeBadge = ' <span class="meta-badge" style="background:#f59e0b;color:#000;">NAME</span>';
   } else if (update.isRelationshipUpdate) {
-    typeBadge = ' <span style="font-size:9px;background:#ec4899;color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px;">RELATIONSHIPS</span>';
+    typeBadge = ' <span class="meta-badge" style="background:#ec4899;color:#fff;">RELATIONSHIPS</span>';
   } else if (update.isReformat) {
-    typeBadge = ' <span style="font-size:9px;background:#a855f7;color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px;">ENRICHED</span>';
+    typeBadge = ' <span class="meta-badge" style="background:#a855f7;color:#fff;">ENRICHED</span>';
   }
   const nameReasonHtml = update.nameReason
-    ? `<div style="font-size:11px;color:#f59e0b;margin:4px 8px;">${escapeHtml(update.nameReason)}</div>`
+    ? `<div class="detail-reason" style="margin:4px 8px;">${escapeHtml(update.nameReason)}</div>`
     : '';
   card.innerHTML = `
     <div class="lore-card-header">
@@ -1058,7 +1059,7 @@ function editEntry(entryId, card) {
     for (const [k, v] of Object.entries(meta.all)) {
       if (!knownKeys.has(k)) extras[k] = v;
     }
-    entry.text = await window.sceneVisualizer.loreSetMetadata(textarea.value, {
+    entry.text = await window.powertool.loreSetMetadata(textarea.value, {
       ...(meta.type ? { type: meta.type } : {}),
       ...(meta.version ? { version: meta.version } : {}),
       ...(meta.source ? { source: meta.source } : {}),
@@ -1112,7 +1113,7 @@ async function acceptMerge(mergeId) {
       if (!knownKeys.has(k) && !(k in proposedMeta.all)) extras[k] = v;
     }
     if (Object.keys(preserveFields).length > 0 || Object.keys(extras).length > 0) {
-      mergedText = await window.sceneVisualizer.loreSetMetadata(merge.proposedText, { ...preserveFields, extras });
+      mergedText = await window.powertool.loreSetMetadata(merge.proposedText, { ...preserveFields, extras });
     }
   }
 
@@ -1176,7 +1177,7 @@ function editMerge(mergeId, card) {
     for (const [k, v] of Object.entries(meta.all)) {
       if (!knownKeys.has(k)) extras[k] = v;
     }
-    merge.proposedText = await window.sceneVisualizer.loreSetMetadata(textarea.value, {
+    merge.proposedText = await window.powertool.loreSetMetadata(textarea.value, {
       ...(meta.type ? { type: meta.type } : {}),
       ...(meta.version ? { version: meta.version } : {}),
       ...(meta.source ? { source: meta.source } : {}),
@@ -1281,6 +1282,7 @@ async function runLoreScan(scanType = 'all') {
   if (state.loreIsScanning || !state.currentStoryId) return;
 
   state.loreIsScanning = true;
+  state.llmBusy = true;
   const scanStartedForStory = state.currentStoryId;
   let scanHadError = false;
   loreScanBtn.disabled = true;
@@ -1322,7 +1324,7 @@ async function runLoreScan(scanType = 'all') {
       scanOptions.categoryFilter = scanType;
     }
 
-    const result = await window.sceneVisualizer.loreScan(storyText, existingEntries, state.currentStoryId, scanOptions);
+    const result = await window.powertool.loreScan(storyText, existingEntries, state.currentStoryId, scanOptions);
 
     // Discard result if story changed during scan
     if (state.currentStoryId !== scanStartedForStory) {
@@ -1378,6 +1380,7 @@ async function runLoreScan(scanType = 'all') {
     loreScanProgressFill.style.width = '100%';
     loreScanPhase.textContent = 'Scan complete';
     state.loreIsScanning = false;
+    state.llmBusy = false;
     loreScanBtn.disabled = false;
     loreScanBtn.title = '';
     refreshLoreUI();
@@ -1416,7 +1419,7 @@ async function runLoreOrganize() {
       if (catId) categoryMap[catId] = catName;
     }
 
-    const result = await window.sceneVisualizer.loreOrganize(
+    const result = await window.powertool.loreOrganize(
       entries, storyText || '', state.currentStoryId, categoryMap
     );
 
@@ -1466,7 +1469,7 @@ function createCleanupCard(cleanup) {
           <div class="cleanup-text">${cleanup.removeEntry.text.slice(0, 200)}</div>
         </div>
       </div>
-      <div style="font-size:10px;color:#f59e0b;margin-bottom:6px;">${cleanup.reason || ''}</div>
+      <div class="detail-reason mb-sm">${cleanup.reason || ''}</div>
       <div class="lore-card-actions">
         <button class="btn-accept" data-action="accept-cleanup">Merge</button>
         <button class="btn-reject" data-action="reject-cleanup">Dismiss</button>
@@ -1480,15 +1483,15 @@ function createCleanupCard(cleanup) {
         <span class="category-badge cleanup">DUPLICATES (${totalCount})</span>
         <span class="entry-name">${escapeHtml(cleanup.keepEntry.displayName)}</span>
       </div>
-      <div style="font-size:11px;color:#bbb;margin-bottom:6px;">
-        <div style="margin-bottom:4px;"><strong style="color:#10b981;">Keep:</strong> ${escapeHtml(cleanup.keepEntry.displayName)}</div>
-        <div><strong style="color:#ef4444;">Remove:</strong> ${removeNames}</div>
+      <div class="detail-muted mb-sm" style="color:var(--text-tertiary);">
+        <div class="mb-xs"><strong style="color:var(--cat-rpg);">Keep:</strong> ${escapeHtml(cleanup.keepEntry.displayName)}</div>
+        <div><strong style="color:var(--error);">Remove:</strong> ${removeNames}</div>
       </div>
-      <details style="margin-bottom:6px;">
-        <summary style="font-size:10px;color:#888;cursor:pointer;">Merged text preview</summary>
-        <div class="cleanup-text" style="margin-top:4px;max-height:150px;overflow-y:auto;">${escapeHtml((cleanup.mergedText || '').slice(0, 500))}</div>
+      <details class="mb-sm">
+        <summary class="section-summary" style="font-size:10px;">Merged text preview</summary>
+        <div class="cleanup-text mt-xs" style="max-height:150px;overflow-y:auto;">${escapeHtml((cleanup.mergedText || '').slice(0, 500))}</div>
       </details>
-      <div style="font-size:10px;color:#f59e0b;margin-bottom:6px;">${escapeHtml(cleanup.reason || '')}</div>
+      <div class="detail-reason mb-sm">${escapeHtml(cleanup.reason || '')}</div>
       <div class="lore-card-actions">
         <button class="btn-accept" data-action="accept-cleanup">Merge All</button>
         <button class="btn-reject" data-action="reject-cleanup">Dismiss</button>
@@ -1503,7 +1506,7 @@ function createCleanupCard(cleanup) {
         <span class="category-badge cleanup">ADD HEADER</span>
         <span class="entry-name">${cleanup.displayName}</span>
       </div>
-      <div style="font-size:11px;color:#bbb;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+      <div class="flex-row mb-sm detail-muted" style="color:var(--text-tertiary);">
         Add @type: <span class="category-badge editable ${cleanup.proposedType || ''}" title="Click to change type">${metaLabel}</span> metadata header
       </div>
       <div class="lore-card-actions">
@@ -1531,17 +1534,17 @@ function createCleanupCard(cleanup) {
         <span class="category-badge cleanup">${label}</span>
         <span class="entry-name">${cleanup.displayName}</span>
       </div>
-      <div style="font-size:11px;color:#bbb;margin-bottom:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-        <span style="color:#888;">${cleanup.currentCategory}</span>
+      <div class="flex-row-wrap mb-sm detail-muted" style="color:var(--text-tertiary);">
+        <span class="detail-muted">${cleanup.currentCategory}</span>
         <span class="cleanup-arrow"> → </span>
         <span class="category-badge editable ${cleanup.proposedType || ''}" title="Click to change">${proposedLabel}</span>
-        <button class="btn-new-cat" title="Create new category" style="background:none;border:1px solid #555;color:#aaa;font-size:10px;padding:1px 6px;border-radius:3px;cursor:pointer;">+ New</button>
+        <button class="btn-new-cat btn-xs" style="background:none;border:1px solid var(--border-strong);color:var(--text-muted);border-radius:var(--radius-xs);cursor:pointer;">+ New</button>
       </div>
       <div class="cleanup-new-cat-form" style="display:none;margin-bottom:8px;gap:6px;align-items:center;flex-wrap:wrap;">
-        <input type="text" placeholder="Category name" class="new-cat-name" style="background:#2a2a40;border:1px solid #555;color:#eee;padding:3px 6px;font-size:11px;border-radius:3px;width:120px;">
+        <input type="text" placeholder="Category name" class="new-cat-name rpg-edit-input" style="width:120px;">
         <input type="color" value="#ff9900" class="new-cat-color" style="width:28px;height:22px;border:none;padding:0;cursor:pointer;background:transparent;">
-        <button class="new-cat-confirm" style="background:#10b981;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Add</button>
-        <button class="new-cat-cancel" style="background:none;border:1px solid #555;color:#aaa;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button class="new-cat-confirm btn-xs" style="background:var(--cat-rpg);color:#fff;border:none;border-radius:var(--radius-xs);cursor:pointer;">Add</button>
+        <button class="new-cat-cancel btn-xs" style="background:none;border:1px solid var(--border-strong);color:var(--text-muted);border-radius:var(--radius-xs);cursor:pointer;">Cancel</button>
       </div>
       <div class="lore-card-actions">
         <button class="btn-accept" data-action="accept-cleanup">Move</button>
@@ -1581,7 +1584,7 @@ function createCleanupCard(cleanup) {
       if (!id) { showToast('Invalid category name'); return; }
       const color = colorInput.value || '#ff9900';
       const { singular, plural } = deriveSingularPlural(name);
-      const result = await window.sceneVisualizer.loreAddCustomCategory(state.currentStoryId, {
+      const result = await window.powertool.loreAddCustomCategory(state.currentStoryId, {
         id, displayName: plural, singularName: singular, color,
       });
       if (result.success) {
@@ -1695,7 +1698,7 @@ async function acceptCleanup(cleanupId) {
     showToast(`Merged ${deleted + 1} entries into "${cleanup.keepEntry.displayName}"`);
   } else if (cleanup.type === 'add-metadata') {
     // Prepend metadata header to existing entry text
-    const metadataResult = await window.sceneVisualizer.loreSetMetadata(cleanup.currentText, {
+    const metadataResult = await window.powertool.loreSetMetadata(cleanup.currentText, {
       type: cleanup.proposedType,
       updated: new Date().toISOString().slice(0, 10),
       source: 'import',
@@ -1757,7 +1760,7 @@ async function reformatEntry(entryId) {
       storyText = await loreCall('getStoryText') || '';
     } catch (_) {}
 
-    const result = await window.sceneVisualizer.loreReformatEntry(entry.displayName, entry.text, storyText, state.currentStoryId, entry.category);
+    const result = await window.powertool.loreReformatEntry(entry.displayName, entry.text, storyText, state.currentStoryId, entry.category);
     if (result.success && result.result) {
       entry.text = result.result;
       await saveLoreState();
@@ -1800,7 +1803,7 @@ async function runEnrich() {
     }
 
     // Pass 1: Identify target
-    const identifyResult = await window.sceneVisualizer.loreIdentifyTarget(promptText, entries);
+    const identifyResult = await window.powertool.loreIdentifyTarget(promptText, entries);
     if (!identifyResult.success || !identifyResult.result || identifyResult.result.confidence < 2) {
       showLoreError('Could not identify which entry to update. Try mentioning the entry name.');
       return;
@@ -1809,7 +1812,7 @@ async function runEnrich() {
     const targetEntry = identifyResult.result.entry;
 
     // Pass 2: Generate enriched text
-    const enrichResult = await window.sceneVisualizer.loreGenerateEnriched(
+    const enrichResult = await window.powertool.loreGenerateEnriched(
       promptText,
       targetEntry.text || '',
       targetEntry.displayName
@@ -1856,7 +1859,7 @@ async function runLoreCreate() {
     let storyText = await loreCall('getStoryText');
 
     const category = loreCreateCategory.value;
-    const result = await window.sceneVisualizer.loreCreateFromPrompt(promptText, category, storyText, state.currentStoryId);
+    const result = await window.powertool.loreCreateFromPrompt(promptText, category, storyText, state.currentStoryId);
 
     if (result.success && result.entries && result.entries.length > 0) {
       state.loreCreateResults = result.entries;
@@ -2144,27 +2147,27 @@ export async function buildFamilyTree() {
     }
     if (!label) label = `${characters[memberIndices[0]].name}'s Family`;
 
-    html += `<div style="margin-bottom:12px;border:1px solid #333;border-radius:6px;overflow:hidden;">`;
-    html += `<div style="background:#2a2a4a;padding:6px 10px;font-weight:600;color:#e94560;font-size:12px;">${escapeHtml(label)}</div>`;
-    html += `<div style="padding:6px 10px;">`;
+    html += `<div class="family-group">`;
+    html += `<div class="family-group-header">${escapeHtml(label)}</div>`;
+    html += `<div class="family-group-body">`;
 
     for (const idx of memberIndices) {
       const member = characters[idx];
       const role = getRoleLabel(idx, memberIndices);
-      html += `<div style="margin:3px 0;padding:3px 0;border-bottom:1px solid #222;">`;
-      html += `<span style="color:#ccc;font-size:12px;">${escapeHtml(member.name)}</span>`;
+      html += `<div class="family-member">`;
+      html += `<span class="family-member-name">${escapeHtml(member.name)}</span>`;
       if (role) {
-        html += ` <span style="color:#e94560;font-size:10px;font-style:italic;">(${escapeHtml(role)})</span>`;
+        html += ` <span class="family-member-role">(${escapeHtml(role)})</span>`;
       }
 
       if (member.family.length > 0) {
-        const famStr = member.family.map(f => `<span style="color:#888;font-size:10px;">${escapeHtml(f.name)} (${escapeHtml(f.role)})</span>`).join(', ');
-        html += `<div style="margin-left:16px;margin-top:2px;">${famStr}</div>`;
+        const famStr = member.family.map(f => `<span class="family-relation">${escapeHtml(f.name)} (${escapeHtml(f.role)})</span>`).join(', ');
+        html += `<div class="family-sub-list">${famStr}</div>`;
       }
 
       if (member.relationships.length > 0) {
-        const relStr = member.relationships.map(r => `<span style="color:#6a9ec9;font-size:10px;">${escapeHtml(r.name)} (${escapeHtml(r.role)})</span>`).join(', ');
-        html += `<div style="margin-left:16px;margin-top:2px;">${relStr}</div>`;
+        const relStr = member.relationships.map(r => `<span class="family-relation" style="color:#6a9ec9;">${escapeHtml(r.name)} (${escapeHtml(r.role)})</span>`).join(', ');
+        html += `<div class="family-sub-list">${relStr}</div>`;
       }
       html += `</div>`;
     }
@@ -2244,7 +2247,7 @@ async function loadComprehensionState() {
     return;
   }
   console.log('[Comprehension] Loading state for story:', state.currentStoryId);
-  const compState = await window.sceneVisualizer.loreGetComprehension(state.currentStoryId);
+  const compState = await window.powertool.loreGetComprehension(state.currentStoryId);
   console.log('[Comprehension] Got state:', compState ? `masterSummary=${!!compState.masterSummary}, entities=${Object.keys(compState.entityProfiles || {}).length}` : 'null');
   renderComprehensionState(compState);
 }
@@ -2263,7 +2266,7 @@ async function updateLlmIndicator(provider, model) {
       if (provider === 'ollama') {
         hybridLabel = ' + NovelAI';
       } else {
-        const ollamaStatus = await window.sceneVisualizer.loreCheckOllama();
+        const ollamaStatus = await window.powertool.loreCheckOllama();
         if (ollamaStatus.available) {
           hybridLabel = ' + Ollama';
         }
@@ -2272,7 +2275,7 @@ async function updateLlmIndicator(provider, model) {
   }
 
   if (hybridLabel) {
-    loreLlmIndicator.innerHTML = 'LLM: <span>' + primary + '</span> <span style="color:#22c55e;font-weight:bold;">&#9889; Hybrid</span> <span style="color:#888;font-size:9px;">(' + primary + hybridLabel + ')</span>';
+    loreLlmIndicator.innerHTML = 'LLM: <span>' + primary + '</span> <span style="color:var(--success);font-weight:bold;">&#9889; Hybrid</span> <span class="detail-muted" style="font-size:9px;">(' + primary + hybridLabel + ')</span>';
   } else {
     loreLlmIndicator.innerHTML = 'LLM: <span>' + primary + '</span>';
   }
@@ -2294,11 +2297,11 @@ function saveLoreSettings() {
     enabledCategories: cats,
     hybridEnabled: loreHybridToggle.checked,
   };
-  window.sceneVisualizer.loreSetSettings(state.loreSettings);
+  window.powertool.loreSetSettings(state.loreSettings);
 }
 
 async function refreshOllamaModels() {
-  const result = await window.sceneVisualizer.loreCheckOllama();
+  const result = await window.powertool.loreCheckOllama();
   loreOllamaModelSelect.innerHTML = '';
   if (result.available && result.models) {
     for (const m of result.models) {
@@ -2307,7 +2310,7 @@ async function refreshOllamaModels() {
       opt.textContent = m.name;
       loreOllamaModelSelect.appendChild(opt);
     }
-    const llmConfig = await window.sceneVisualizer.loreGetLlmProvider();
+    const llmConfig = await window.powertool.loreGetLlmProvider();
     loreOllamaModelSelect.value = llmConfig.ollamaModel;
   } else {
     const opt = document.createElement('option');
@@ -2368,6 +2371,21 @@ export function init() {
   if (rpgTab) rpgTab.addEventListener('click', () => switchPanelTab('rpg'));
   if (mediaTab) mediaTab.addEventListener('click', () => switchPanelTab('media'));
 
+  // Scene sub-tab switching (Storyboard / Timeline)
+  storyboardSubTab?.addEventListener('click', () => {
+    storyboardSubTab.classList.add('active');
+    timelineSubTab.classList.remove('active');
+    storyboardView.style.display = '';
+    timelineView.style.display = 'none';
+  });
+  timelineSubTab?.addEventListener('click', () => {
+    timelineSubTab.classList.add('active');
+    storyboardSubTab.classList.remove('active');
+    storyboardView.style.display = 'none';
+    timelineView.style.display = '';
+    import('./scene-timeline.js').then(m => m.refreshTimelineUI && m.refreshTimelineUI());
+  });
+
   // Periodically refresh last-scanned timestamp
   setInterval(() => {
     const lastScanEl = document.getElementById('loreLastScan');
@@ -2379,7 +2397,7 @@ export function init() {
   // Initialize lore settings
   (async function initLore() {
     try {
-      state.loreSettings = await window.sceneVisualizer.loreGetSettings();
+      state.loreSettings = await window.powertool.loreGetSettings();
       loreAutoScan.checked = state.loreSettings.autoScan;
       loreAutoUpdates.checked = state.loreSettings.autoDetectUpdates;
       loreMinChars.value = state.loreSettings.minNewCharsForScan;
@@ -2392,7 +2410,7 @@ export function init() {
       await loadCategoryRegistry();
 
       // LLM provider
-      const llmConfig = await window.sceneVisualizer.loreGetLlmProvider();
+      const llmConfig = await window.powertool.loreGetLlmProvider();
       loreLlmSelect.value = llmConfig.provider;
       updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel);
       if (llmConfig.provider === 'ollama') {
@@ -2412,7 +2430,7 @@ export function init() {
   loreAutoUpdates.addEventListener('change', saveLoreSettings);
   loreHybridToggle.addEventListener('change', async () => {
     saveLoreSettings();
-    const llmConfig = await window.sceneVisualizer.loreGetLlmProvider();
+    const llmConfig = await window.powertool.loreGetLlmProvider();
     updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel);
   });
   loreMinChars.addEventListener('input', () => {
@@ -2429,14 +2447,14 @@ export function init() {
   loreLlmSelect.addEventListener('change', async () => {
     const provider = loreLlmSelect.value;
     loreOllamaSettings.style.display = provider === 'ollama' ? '' : 'none';
-    await window.sceneVisualizer.loreSetLlmProvider({ provider });
+    await window.powertool.loreSetLlmProvider({ provider });
     if (provider === 'ollama') await refreshOllamaModels();
-    const llmConfig = await window.sceneVisualizer.loreGetLlmProvider();
+    const llmConfig = await window.powertool.loreGetLlmProvider();
     updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel);
   });
 
   loreOllamaModelSelect.addEventListener('change', async () => {
-    await window.sceneVisualizer.loreSetLlmProvider({ ollamaModel: loreOllamaModelSelect.value });
+    await window.powertool.loreSetLlmProvider({ ollamaModel: loreOllamaModelSelect.value });
     updateLlmIndicator('ollama', loreOllamaModelSelect.value);
   });
 
@@ -2466,7 +2484,7 @@ export function init() {
       const color = loreNewCategoryColor ? loreNewCategoryColor.value : '#ff9900';
       const { singular, plural } = deriveSingularPlural(name);
 
-      const result = await window.sceneVisualizer.loreAddCustomCategory(state.currentStoryId, {
+      const result = await window.powertool.loreAddCustomCategory(state.currentStoryId, {
         id,
         displayName: plural,
         singularName: singular,
@@ -2527,7 +2545,7 @@ export function init() {
 
           const { singular, plural } = deriveSingularPlural(name);
 
-          await window.sceneVisualizer.loreAddCustomCategory(state.currentStoryId, {
+          await window.powertool.loreAddCustomCategory(state.currentStoryId, {
             id,
             displayName: plural,
             singularName: singular,
@@ -2566,7 +2584,7 @@ export function init() {
   // Dropdown items are populated dynamically in rebuildCategoryUI()
 
   // Scan progress listener
-  window.sceneVisualizer.onLoreScanProgress((progress) => {
+  window.powertool.onLoreScanProgress((progress) => {
     const phaseLabels = {
       deduplicating: 'Finding duplicates...',
       'confirming-duplicates': 'Confirming duplicates...',
@@ -2623,7 +2641,7 @@ export function init() {
   loreOrganizeBtn.addEventListener('click', () => runLoreOrganize());
 
   // Organize progress listener
-  window.sceneVisualizer.onLoreOrganizeProgress((progress) => {
+  window.powertool.onLoreOrganizeProgress((progress) => {
     const phaseLabels = {
       classifying: 'Classifying entries...',
       'classifying-llm': 'Classifying (LLM)...',
@@ -2818,7 +2836,7 @@ export function init() {
       let entries = [];
       try { entries = await loreCall('getEntries'); } catch (_) { /* best-effort */ }
 
-      await window.sceneVisualizer.loreStartProgressiveScan(state.currentStoryId, storyText, entries);
+      await window.powertool.loreStartProgressiveScan(state.currentStoryId, storyText, entries);
     } catch (e) {
       comprehensionStatusText.textContent = 'Error: ' + (e.message || 'Scan failed');
     } finally {
@@ -2832,11 +2850,11 @@ export function init() {
   pauseProgressiveScanBtn.addEventListener('click', async () => {
     if (!state.currentStoryId) return;
     if (state.comprehensionPaused) {
-      await window.sceneVisualizer.loreResumeProgressiveScan(state.currentStoryId);
+      await window.powertool.loreResumeProgressiveScan(state.currentStoryId);
       state.comprehensionPaused = false;
       pauseProgressiveScanBtn.textContent = 'Pause';
     } else {
-      await window.sceneVisualizer.lorePauseProgressiveScan(state.currentStoryId);
+      await window.powertool.lorePauseProgressiveScan(state.currentStoryId);
       state.comprehensionPaused = true;
       pauseProgressiveScanBtn.textContent = 'Resume';
     }
@@ -2844,12 +2862,12 @@ export function init() {
 
   cancelProgressiveScanBtn.addEventListener('click', async () => {
     if (!state.currentStoryId) return;
-    await window.sceneVisualizer.loreCancelProgressiveScan(state.currentStoryId);
+    await window.powertool.loreCancelProgressiveScan(state.currentStoryId);
     comprehensionStatusText.textContent = 'Cancelled';
   });
 
   // Progress listener
-  window.sceneVisualizer.onProgressiveScanProgress((data) => {
+  window.powertool.onProgressiveScanProgress((data) => {
     if (data.storyId !== state.currentStoryId) return;
     const pct = data.chunksTotal > 0
       ? Math.round((data.chunksProcessed / data.chunksTotal) * 100)
@@ -2865,7 +2883,7 @@ export function init() {
   });
 
   // Completion listener
-  window.sceneVisualizer.onProgressiveScanComplete((data) => {
+  window.powertool.onProgressiveScanComplete((data) => {
     if (data.storyId !== state.currentStoryId) return;
     state.comprehensionScanning = false;
     startProgressiveScanBtn.disabled = false;
@@ -2879,7 +2897,7 @@ export function init() {
     if (state.comprehensionAutoUpdatePending || state.comprehensionScanning || !state.currentStoryId) return;
 
     try {
-      const compState = await window.sceneVisualizer.loreGetComprehension(state.currentStoryId);
+      const compState = await window.powertool.loreGetComprehension(state.currentStoryId);
       if (!compState || !compState.lastProcessedLength) return;
 
       await checkLoreProxy();
@@ -2895,7 +2913,7 @@ export function init() {
         let entries = [];
         try { entries = await loreCall('getEntries'); } catch (_) { /* best-effort */ }
 
-        await window.sceneVisualizer.loreIncrementalUpdate(state.currentStoryId, storyText, entries);
+        await window.powertool.loreIncrementalUpdate(state.currentStoryId, storyText, entries);
         await loadComprehensionState();
         state.comprehensionAutoUpdatePending = false;
       }
@@ -2929,7 +2947,7 @@ export function init() {
       if (state.currentStoryId) {
         const existing = state.storySettings || {};
         existing.lorebookProfile = loreOptProfile.value;
-        await window.sceneVisualizer.storySettingsSet(state.currentStoryId, existing);
+        await window.powertool.storySettingsSet(state.currentStoryId, existing);
         state.storySettings = existing;
       }
     });
@@ -2939,7 +2957,7 @@ export function init() {
   async function runDiscovery() {
     const inspectResult = await loreCall('inspectEntry');
     const writeTestResult = await loreCall('testAdvancedWrite');
-    const report = await window.sceneVisualizer.loreParseDiscovery(inspectResult, writeTestResult);
+    const report = await window.powertool.loreParseDiscovery(inspectResult, writeTestResult);
 
     state.loreOptConfirmedFields = report.writableFields;
 
@@ -2947,7 +2965,7 @@ export function init() {
     if (state.currentStoryId) {
       const existing = state.storySettings || {};
       existing.loreOptConfirmedFields = report.writableFields;
-      await window.sceneVisualizer.storySettingsSet(state.currentStoryId, existing);
+      await window.powertool.storySettingsSet(state.currentStoryId, existing);
       state.storySettings = existing;
     }
 
@@ -3036,7 +3054,7 @@ export function init() {
           return;
         }
 
-        const result = await window.sceneVisualizer.loreOptimizeEntries(
+        const result = await window.powertool.loreOptimizeEntries(
           entries, state.loreOptProfile, state.currentStoryId, confirmedFields
         );
 

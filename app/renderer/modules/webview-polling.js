@@ -146,7 +146,7 @@ async function handleStoryContextChange(storyId, storyTitle) {
 
   // SINGLE CALL: load all per-story data from SQLite
   try {
-    const allData = await window.sceneVisualizer.storyLoadAll(storyId, storyTitle);
+    const allData = await window.powertool.storyLoadAll(storyId, storyTitle);
 
     // Restore scene state
     const ss = allData.sceneState;
@@ -213,11 +213,11 @@ async function handleStoryContextChange(storyId, storyTitle) {
 
   // Auto-switch storyboard (filesystem-based, unchanged)
   try {
-    const result = await window.sceneVisualizer.storyboardGetOrCreateForStory(storyId, storyTitle);
+    const result = await window.powertool.storyboardGetOrCreateForStory(storyId, storyTitle);
     if (result && result.id) {
       state.activeStoryboardId = result.id;
       state.activeStoryboardName = result.name;
-      await window.sceneVisualizer.storyboardSetActive(result.id);
+      await window.powertool.storyboardSetActive(result.id);
       commitSbName.textContent = state.activeStoryboardName;
       if (result.created) {
         showToast('Storyboard created for story: ' + (storyTitle || storyId.slice(0, 12)));
@@ -261,7 +261,7 @@ export function init() {
   // -- Scene settings cache (used by auto-gen poll) --
   let cachedSceneSettings = null;
   async function refreshSceneSettings() {
-    try { cachedSceneSettings = await window.sceneVisualizer.getSceneSettings(); } catch (e) { /* ignore */ }
+    try { cachedSceneSettings = await window.powertool.getSceneSettings(); } catch (e) { /* ignore */ }
   }
   refreshSceneSettings();
 
@@ -345,7 +345,7 @@ export function init() {
       if (!entries || entries.length === 0) return;
 
       const profileId = state.loreOptProfile || 'general';
-      const result = await window.sceneVisualizer.loreAdjustEntries(
+      const result = await window.powertool.loreAdjustEntries(
         entries, profileId, state.currentStoryId
       );
 
@@ -360,6 +360,28 @@ export function init() {
       console.log('[LoreOpt] Continuous adjustment error:', e.message);
     }
   }, 15000);
+
+  // 5. Incremental scene detection (~30s)
+  polling.register('scene-detect', async () => {
+    if (!state.currentStoryId) return;
+    if (!state.timelineState?.settings?.autoDetect) return;
+    if (state.llmBusy) return; // avoid NovelAI 429 concurrent request errors
+
+    const storyText = await readStoryTextFromDOM();
+    if (!storyText || storyText.length < 1000) return;
+
+    try {
+      const result = await window.powertool.timelineDetectNew(state.currentStoryId, storyText);
+      if (result?.success && !result.noChange && result.newScenes?.length) {
+        state.timelineState = result.state;
+        bus.emit('timeline:scene-detected', { scenes: result.newScenes });
+      }
+    } catch (err) {
+      console.error('[Timeline] Incremental detection error:', err);
+    }
+  }, 30000, {
+    condition: () => state.currentStoryId && state.timelineState?.settings?.autoDetect
+  });
 
   // Start the coordinator
   polling.start();
