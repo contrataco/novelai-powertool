@@ -108,4 +108,8 @@ export const state = {
   loreOptProfile: 'general',
   loreOptConfirmedFields: null,  // fields confirmed writable by discovery
   loreOptLastAdjust: 0,          // timestamp of last continuous adjustment
+
+  // Scene Timeline state
+  timelineState: null,
+  llmBusy: false,
 };

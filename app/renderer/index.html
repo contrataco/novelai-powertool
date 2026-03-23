@@ -3787,6 +3787,124 @@
     .media-lightbox-actions .btn-danger:hover {
       background: #3a1a1a;
     }
+
+    /* Scene sub-tabs */
+    .scene-sub-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 8px 12px;
+      border-bottom: 1px solid #2a2a4e;
+    }
+    .scene-sub-tab {
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .scene-sub-tab.active {
+      background: #2a2a4e;
+      color: #e0e0e0;
+    }
+
+    /* Timeline cards */
+    .timeline-chapter {
+      margin-bottom: 12px;
+    }
+    .timeline-chapter summary {
+      color: #e94560;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      padding: 6px 0;
+      border-bottom: 1px solid #2a2a4e;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .timeline-chapter-count {
+      background: #2a2a4e;
+      color: #888;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 8px;
+      margin-left: auto;
+    }
+    .timeline-scene-card {
+      background: #22223a;
+      border-radius: 8px;
+      padding: 10px;
+      margin: 8px 0;
+      cursor: pointer;
+      border-left: 3px solid #4a9eff;
+      transition: border-color 0.2s;
+    }
+    .timeline-scene-card:hover {
+      border-left-color: #e94560;
+    }
+    .timeline-scene-card.current {
+      border-left-color: #e94560;
+      box-shadow: 0 0 8px rgba(233,69,96,0.2);
+    }
+    .timeline-scene-card.tentative {
+      border-left: 3px dashed #888;
+    }
+    .timeline-scene-card.has-image {
+      border-left-color: #4ade80;
+    }
+    .scene-card-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #e0e0e0;
+    }
+    .scene-card-desc {
+      font-size: 10px;
+      color: #888;
+      margin-top: 2px;
+    }
+    .scene-card-badges {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+      flex-wrap: wrap;
+    }
+    .scene-badge {
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .scene-badge.location { background: #1a3a5c; color: #4a9eff; }
+    .scene-badge.mood { background: #1a3c2a; color: #4ade80; }
+    .scene-badge.time { background: #3a1a3c; color: #c084fc; }
+    .scene-badge.action { background: #3c1a1a; color: #f87171; }
+    .scene-badge.now { background: #3c1a1a; color: #e94560; font-weight: bold; }
+    .scene-badge.tentative { background: #2a2a4e; color: #888; }
+    .scene-badge.current-chapter { background: #3c1a1a; color: #e94560; }
+    .scene-card-avatars {
+      display: flex;
+      gap: 3px;
+      margin-top: 6px;
+    }
+    .scene-avatar {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      color: white;
+      font-weight: bold;
+    }
+    .empty-state {
+      color: #666;
+      text-align: center;
+      padding: 40px 20px;
+      font-size: 13px;
+    }
   </style>
   <style id="dynamic-categories">/* Populated by JS from category registry */</style>
 </head>
@@ -3872,6 +3990,11 @@
         <button class="close-btn" id="closePanelBtn">&times;</button>
       </div>
       <div class="image-panel-content active" id="sceneContent">
+        <div class="scene-sub-tabs" id="sceneSubTabs">
+          <button class="scene-sub-tab active" id="storyboardSubTab">Storyboard</button>
+          <button class="scene-sub-tab" id="timelineSubTab">Timeline</button>
+        </div>
+        <div id="storyboardView">
         <div id="imageContainer">
           <div class="scene-image placeholder">
             Click "Generate Scene" to create an image
@@ -3921,6 +4044,15 @@
             <button class="btn-confirm" id="commitConfirmBtn">Confirm</button>
             <button class="btn-cancel" id="commitCancelBtn">Cancel</button>
           </div>
+        </div>
+        </div><!-- /#storyboardView -->
+
+        <div id="timelineView" style="display:none;">
+          <div class="timeline-actions" id="timelineActions">
+            <button id="timelineScanBtn" class="action-btn" style="background:#e94560;color:white;border:none;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;">Scan Story</button>
+            <span id="timelineScanStatus" class="scan-status" style="color:#888;font-size:11px;margin-left:8px;"></span>
+          </div>
+          <div id="timelineList" style="margin-top:12px;"></div>
         </div>
 
       </div>
@@ -4424,6 +4556,14 @@
         <div class="rpg-stat-overlay-panel">
           <button class="rpg-stat-overlay-close" id="rpgStatOverlayClose">&times;</button>
           <div id="rpgStatOverlayContent"></div>
+        </div>
+      </div>
+
+      <!-- Scene Explorer Overlay -->
+      <div id="sceneExplorerOverlay" class="stat-overlay" style="display:none;">
+        <div class="stat-overlay-content" style="max-width:480px;">
+          <div class="scene-explorer-header" id="sceneExplorerHeader"></div>
+          <div class="scene-explorer-body" id="sceneExplorerBody" style="padding:16px;max-height:70vh;overflow-y:auto;"></div>
         </div>
       </div>
     </div>

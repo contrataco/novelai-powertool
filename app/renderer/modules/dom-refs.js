@@ -386,3 +386,15 @@ export const loreNewCategoryColor = document.getElementById('loreNewCategoryColo
 export const loreAddCategoryConfirm = document.getElementById('loreAddCategoryConfirm');
 export const loreAddCategoryCancel = document.getElementById('loreAddCategoryCancel');
 export const dynamicCategoriesStyle = document.getElementById('dynamic-categories');
+
+// Scene sub-tab elements
+export const storyboardSubTab = document.getElementById('storyboardSubTab');
+export const timelineSubTab = document.getElementById('timelineSubTab');
+export const storyboardView = document.getElementById('storyboardView');
+export const timelineView = document.getElementById('timelineView');
+export const timelineScanBtn = document.getElementById('timelineScanBtn');
+export const timelineScanStatus = document.getElementById('timelineScanStatus');
+export const timelineList = document.getElementById('timelineList');
+export const sceneExplorerOverlay = document.getElementById('sceneExplorerOverlay');
+export const sceneExplorerHeader = document.getElementById('sceneExplorerHeader');
+export const sceneExplorerBody = document.getElementById('sceneExplorerBody');
