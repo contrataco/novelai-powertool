@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const { LITRPG_STATE_DEFAULTS } = require('./litrpg-tracker');
+const { TIMELINE_STATE_DEFAULTS } = require('./scene-timeline');
 
 const LOG_PREFIX = '[DB]';
 
@@ -98,6 +99,12 @@ function createTables() {
       version INTEGER PRIMARY KEY,
       applied_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS timeline_state (
+      story_id TEXT PRIMARY KEY REFERENCES stories(id),
+      data TEXT NOT NULL DEFAULT '{}',
+      updated_at INTEGER NOT NULL
+    );
   `);
   console.log(`${LOG_PREFIX} Tables verified`);
 }
@@ -125,7 +132,7 @@ function listStories() {
 
 // --- Generic per-story CRUD ---
 
-const VALID_TABLES = new Set(['scene_state', 'lore_state', 'lore_comprehension', 'memory_state', 'litrpg_state', 'tts_state', 'story_settings']);
+const VALID_TABLES = new Set(['scene_state', 'lore_state', 'lore_comprehension', 'memory_state', 'litrpg_state', 'tts_state', 'story_settings', 'timeline_state']);
 
 function getData(table, storyId) {
   if (!VALID_TABLES.has(table)) throw new Error(`Invalid table: ${table}`);
@@ -215,6 +222,16 @@ function setStorySettings(storyId, data) {
   setData('story_settings', storyId, data);
 }
 
+function getTimelineState(storyId) {
+  const data = getData('timeline_state', storyId);
+  if (!data) return null;
+  return { ...TIMELINE_STATE_DEFAULTS, ...data };
+}
+
+function setTimelineState(storyId, state) {
+  setData('timeline_state', storyId, state);
+}
+
 // --- Bulk load (used on story switch) ---
 
 function loadAllStoryData(storyId) {
@@ -226,6 +243,7 @@ function loadAllStoryData(storyId) {
     litrpgState: getLitrpgState(storyId),
     ttsState: getTtsState(storyId),
     storySettings: getStorySettings(storyId),
+    timelineState: getTimelineState(storyId),
   };
 }
 
@@ -304,5 +322,6 @@ module.exports = {
   getTtsState, setTtsState, TTS_STATE_DEFAULTS,
   getStorySettings, setStorySettings,
   getVisualProfiles, setVisualProfile, resetVisualProfiles,
+  getTimelineState, setTimelineState,
   loadAllStoryData, migrateFromStore,
 };
