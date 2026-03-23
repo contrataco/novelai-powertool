@@ -2818,7 +2818,7 @@ ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntri
   try {
     const generateTextFn = makeLoreGenerateTextFn(store);
     const litrpgState = db.getOrCreateLitrpgState(storyId);
-    const compState = db.getLoreComprehension(storyId);
+    const compState = db.getComprehension(storyId);
     const comprehensionCtx = compState
       ? loreComprehension.formatComprehensionContext(compState.masterSummary, compState.entityProfiles)
       : '';
