@@ -389,6 +389,8 @@ export function init() {
   let lastGenEndedTimestamp = '';
   polling.register('generation-ended', async () => {
     if (!state.currentStoryId || state.isGenerating || state.isGeneratingPrompt) return;
+    if (cachedSceneSettings && cachedSceneSettings.autoGeneratePrompts === false) return;
+    if (state.llmBusy || state.loreIsScanning) return;
     try {
       const ts = await webview.executeJavaScript(`
         (function() {
@@ -397,13 +399,10 @@ export function init() {
         })()
       `);
       if (ts && ts !== lastGenEndedTimestamp) {
+        console.log('[PowerTool] Generation ended signal detected, triggering prompt generation');
+        await generateScenePromptFromEditor();
+        // Only consume timestamp after successful prompt generation
         lastGenEndedTimestamp = ts;
-        console.log('[Polling] Generation ended signal detected, triggering prompt generation');
-        // Import and call the existing prompt generation function
-        const imageGen = await import('./image-gen.js');
-        if (imageGen.generateScenePromptFromEditor) {
-          await imageGen.generateScenePromptFromEditor();
-        }
       }
     } catch (_) {
       // Silent — webview may not be ready
