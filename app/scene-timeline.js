@@ -15,7 +15,7 @@ const TIMELINE_STATE_DEFAULTS = {
   scanHistory: [],
   settings: {
     autoDetect: true,
-    minSceneLength: 500,
+    minSceneLength: 300,
     chapterGrouping: true,
   },
 };
@@ -102,12 +102,13 @@ function segmentIntoScenes(storyText, boundaries) {
     return { start, end, boundary };
   });
 
-  // Merge short segments into the previous one
+  // Merge short segments into the previous one (bounded — prevent cascading)
   const merged = [];
   for (const seg of rawSegments) {
     const length = seg.end - seg.start;
-    if (length < minLength && merged.length > 0) {
-      // Extend previous segment's end
+    const prevLength = merged.length > 0 ? (merged[merged.length - 1].end - merged[merged.length - 1].start) : 0;
+    if (length < minLength && merged.length > 0 && (prevLength + length) < minLength * 2) {
+      // Extend previous segment's end (only if combined stays reasonable)
       merged[merged.length - 1].end = seg.end;
     } else {
       merged.push({ ...seg });

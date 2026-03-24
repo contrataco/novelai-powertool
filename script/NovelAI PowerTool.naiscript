@@ -4,7 +4,7 @@ id: e02be7b4-4993-4ebf-abc0-ca7ed996744f
 name: NovelAI PowerTool
 createdAt: 1766945065236
 updatedAt: 1771655623976
-version: 3.0.0
+version: 3.0.1
 author: Contrataco
 description: Lightweight bridge for PowerTool Electron app — story identity, text relay, suggestion insertion
 memoryLimit: 16
@@ -160,52 +160,9 @@ function registerHooks(): void {
   });
 }
 
-// ============================================================================
-// UI PANEL — Minimal status display
-// ============================================================================
-
-async function createUIPanel(): Promise<void> {
-  const buildPanel = async () => {
-    return api.v1.ui.part.column({
-      content: [
-        api.v1.ui.part.text({
-          text: 'PowerTool v3.0.0',
-          style: { fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' }
-        }),
-        api.v1.ui.part.text({
-          text: currentStoryTitle
-            ? `Story: ${currentStoryTitle}`
-            : 'No story detected',
-          style: { fontSize: '12px', color: '#888', marginBottom: '4px' }
-        }),
-        api.v1.ui.part.text({
-          text: currentStoryId
-            ? `ID: ${currentStoryId.slice(0, 12)}…`
-            : '',
-          style: { fontSize: '10px', color: '#666', marginBottom: '12px' }
-        }),
-        api.v1.ui.part.text({
-          text: 'All prompts, suggestions, and image generation are handled by the Electron app. This script provides story data relay and text insertion.',
-          style: { fontSize: '11px', color: '#888', lineHeight: '1.4' }
-        }),
-      ],
-      style: { padding: '12px' }
-    });
-  };
-
-  try {
-    const initialPanel = await buildPanel();
-    await api.v1.ui.register([
-      api.v1.ui.extension.scriptPanel({
-        id: 'powertoolPanel',
-        name: 'PowerTool',
-        content: [initialPanel]
-      })
-    ]);
-  } catch (e) {
-    api.v1.error('[PowerTool] Error creating panel:', e);
-  }
-}
+// No UI panel registered — bridge-only script.
+// Registering a scriptPanel interferes with the Lore Creator Proxy's
+// sidebarPanel registration (NovelAI only renders one panel at a time).
 
 // ============================================================================
 // INITIALIZATION
@@ -259,7 +216,6 @@ async function initialize(): Promise<void> {
     }
 
     await getStorage();
-    await createUIPanel();
     registerHooks();
 
     // Expose insertion function for Electron to call via webview.executeJavaScript
