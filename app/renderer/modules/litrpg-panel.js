@@ -1962,8 +1962,10 @@ async function runRpgScan() {
     try {
       storyText = await webview.executeJavaScript(`
         (function() {
-          const el = document.querySelector('#scene-vis-story-text');
-          return el ? el.textContent : '';
+          var pm = document.querySelector('.ProseMirror');
+          if (pm) return pm.textContent || '';
+          var el = document.querySelector('#scene-vis-story-text');
+          return el ? (el.dataset.text || el.textContent || '') : '';
         })()
       `);
     } catch (_) { /* fallback empty */ }

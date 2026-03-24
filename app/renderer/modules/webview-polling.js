@@ -383,6 +383,34 @@ export function init() {
     condition: () => state.currentStoryId && state.timelineState?.settings?.autoDetect
   });
 
+  // 6. Generation-ended signal detection (~2s)
+  // The companion script sets #scene-vis-gen-ended timestamp on every onGenerationEnd.
+  // Detecting this allows near-instant prompt generation instead of waiting for the 10s auto-gen cycle.
+  let lastGenEndedTimestamp = '';
+  polling.register('generation-ended', async () => {
+    if (!state.currentStoryId || state.isGenerating || state.isGeneratingPrompt) return;
+    if (cachedSceneSettings && cachedSceneSettings.autoGeneratePrompts === false) return;
+    if (state.llmBusy || state.loreIsScanning) return;
+    try {
+      const ts = await webview.executeJavaScript(`
+        (function() {
+          var el = document.getElementById('scene-vis-gen-ended');
+          return el ? el.dataset.timestamp || '' : '';
+        })()
+      `);
+      if (ts && ts !== lastGenEndedTimestamp) {
+        console.log('[PowerTool] Generation ended signal detected, triggering prompt generation');
+        await generateScenePromptFromEditor();
+        // Only consume timestamp after successful prompt generation
+        lastGenEndedTimestamp = ts;
+      }
+    } catch (_) {
+      // Silent — webview may not be ready
+    }
+  }, 2000, {
+    condition: () => !!state.currentStoryId
+  });
+
   // Start the coordinator
   polling.start();
 }
