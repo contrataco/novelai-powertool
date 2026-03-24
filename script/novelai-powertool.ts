@@ -1,71 +1,30 @@
-/**
- * NovelAI Scene Visualizer Script
- *
- * Automatically generates images representing the current story scene.
- * Works in conjunction with the Scene Visualizer Electron app.
- *
- * @version 1.3.0
- * @author ryanrobson
- */
+/*---
+compatibilityVersion: naiscript-1.0
+id: e02be7b4-4993-4ebf-abc0-ca7ed996744f
+name: NovelAI PowerTool
+createdAt: 1766945065236
+updatedAt: 1771655623976
+version: 3.0.0
+author: Contrataco
+description: Lightweight bridge for PowerTool Electron app — story identity, text relay, suggestion insertion
+memoryLimit: 16
+---*/
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
-interface ScriptSettings {
-  autoGenerate: boolean;
-  minTextLength: number; // Minimum new text length to trigger generation
-  artStyle: string;
-  useCharacterLore: boolean; // Pull character descriptions from lorebook
-}
-
-interface Suggestion {
-  type: 'action' | 'dialogue' | 'narrative' | 'mixed';
-  text: string;
-}
-
-interface CharacterAppearance {
-  name: string;
-  appearance: string;
-}
-
 interface ScriptStorage {
-  settings: ScriptSettings;
   lastProcessedSectionId: number | null;
-  currentImage: string;
-  lastPrompt: string;
-  suggestions: Suggestion[];
-  suggestionsLoading: boolean;
-  suggestionsError: string;
 }
-
-const DEFAULT_SETTINGS: ScriptSettings = {
-  autoGenerate: true,
-  minTextLength: 100,
-  artStyle: 'anime style, detailed, high quality',
-  useCharacterLore: true,
-};
 
 const DEFAULT_STORAGE: ScriptStorage = {
-  settings: DEFAULT_SETTINGS,
   lastProcessedSectionId: null,
-  currentImage: '',
-  lastPrompt: '',
-  suggestions: [],
-  suggestionsLoading: false,
-  suggestionsError: '',
 };
-
-// Processing locks
-let isProcessing = false;
-let isSuggestionsProcessing = false;
 
 // Story identity
 let currentStoryId: string | null = null;
 let currentStoryTitle: string | null = null;
-
-// Maximum text to send to suggestion LLM
-const MAX_SUGGESTION_CONTEXT = 4000;
 
 // ============================================================================
 // STORAGE UTILITIES
@@ -78,7 +37,7 @@ async function getStorage(): Promise<ScriptStorage> {
       return { ...DEFAULT_STORAGE, ...JSON.parse(stored) };
     }
   } catch (e) {
-    api.v1.error('[SceneVis] Error loading storage:', e);
+    api.v1.error('[PowerTool] Error loading storage:', e);
   }
   return { ...DEFAULT_STORAGE };
 }
@@ -87,12 +46,12 @@ async function saveStorage(data: ScriptStorage): Promise<void> {
   try {
     await api.v1.storyStorage.set('sceneVisualizerData', JSON.stringify(data));
   } catch (e) {
-    api.v1.error('[SceneVis] Error saving storage:', e);
+    api.v1.error('[PowerTool] Error saving storage:', e);
   }
 }
 
 // ============================================================================
-// PROMPT STORAGE (for Electron to read)
+// DOM RELAY — Data bridge for Electron polling
 // ============================================================================
 
 // Broadcast story context to Electron via DOM element (the contextBridge is
@@ -124,456 +83,42 @@ function broadcastStoryText(storyText: string): void {
       el.style.display = 'none';
       document.body.appendChild(el);
     }
-    el.dataset.text = storyText.slice(-4000); // Match MAX_SUGGESTION_CONTEXT
+    el.dataset.text = storyText.slice(-4000);
     el.dataset.timestamp = String(Date.now());
   } catch (e) {
     // DOM not available
   }
 }
 
-// Store the latest prompt in a global location that Electron can access
-// The prompt is also displayed in the UI panel for visibility
-let currentPromptData: { prompt: string; negativePrompt: string } | null = null;
-
-function setCurrentPrompt(prompt: string, negativePrompt: string, storyExcerpt: string = ''): void {
-  currentPromptData = { prompt, negativePrompt };
-  api.v1.log('[SceneVis] Prompt ready for generation');
-
-  // Send to Electron app via bridge (if running in Electron webview)
+// Signal that a generation just completed — Electron polls this for
+// near-instant prompt generation instead of waiting for the 10s auto-gen cycle.
+function broadcastGenerationEnded(textLength: number): void {
   try {
-    if ((globalThis as any).__sceneVisualizerBridge?.updatePrompt) {
-      (globalThis as any).__sceneVisualizerBridge.updatePrompt(prompt, negativePrompt, storyExcerpt, currentStoryId, currentStoryTitle);
-    }
-  } catch (e) {
-    // Bridge not available — not running in Electron webview
-  }
-}
-
-function getCurrentPrompt(): { prompt: string; negativePrompt: string } | null {
-  return currentPromptData;
-}
-
-// ============================================================================
-// SUGGESTION GENERATION ENGINE
-// ============================================================================
-
-/**
- * Sends suggestion state to Electron via DOM data attribute relay.
- * The contextBridge is inaccessible from the script sandbox, so we use
- * the same DOM relay pattern as broadcastStoryContext().
- */
-function sendSuggestionsUpdate(data: { suggestions?: Suggestion[]; isLoading?: boolean; error?: string }): void {
-  try {
-    let el = document.getElementById('scene-vis-suggestions');
+    let el = document.getElementById('scene-vis-gen-ended');
     if (!el) {
       el = document.createElement('div');
-      el.id = 'scene-vis-suggestions';
+      el.id = 'scene-vis-gen-ended';
       el.style.display = 'none';
       document.body.appendChild(el);
     }
-    el.dataset.payload = JSON.stringify(data);
     el.dataset.timestamp = String(Date.now());
+    el.dataset.textLength = String(textLength);
   } catch (e) {
     // DOM not available
   }
-
-  // Keep bridge call as fallback
-  try {
-    if ((globalThis as any).__sceneVisualizerBridge?.updateSuggestions) {
-      (globalThis as any).__sceneVisualizerBridge.updateSuggestions(data);
-    }
-  } catch (e) {
-    // Bridge not available
-  }
-}
-
-/**
- * Generates 3 story continuation suggestions using GLM-4-6
- */
-async function generateSuggestions(storyText: string): Promise<Suggestion[]> {
-  // Hardcoded defaults — settings now live in the Electron renderer popover
-  const temperature = 0.6;
-
-  // Limit story context to avoid token budget issues
-  let contextText = storyText;
-  if (storyText.length > MAX_SUGGESTION_CONTEXT) {
-    contextText = storyText.slice(-MAX_SUGGESTION_CONTEXT);
-    api.v1.log(`[SceneVis] Suggestion context truncated to ${MAX_SUGGESTION_CONTEXT} chars`);
-  }
-
-  const styleInstructions = `Vary the format naturally based on what fits the story moment:
-- For action scenes: Brief 1-2 sentence prompts
-- For dialogue moments: A character line with brief context
-- For dramatic beats: Longer 2-4 sentence continuations`;
-
-  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-    {
-      role: 'system',
-      content: `You are a creative writing assistant helping with interactive fiction. Generate exactly 3 different, compelling story continuation suggestions.
-
-${styleInstructions}
-
-Each suggestion should:
-- Feel natural as something the user might type
-- Offer a distinct direction (don't repeat the same idea)
-- Match the tone and style of the existing story
-- Be written from the perspective the story uses (first/second/third person)
-
-Output ONLY valid JSON in this exact format:
-{"suggestions":[{"type":"action","text":"suggestion 1"},{"type":"dialogue","text":"suggestion 2"},{"type":"narrative","text":"suggestion 3"}]}
-
-Types: "action" for physical actions, "dialogue" for speech, "narrative" for description/thought, "mixed" for combinations.`
-    },
-    {
-      role: 'user',
-      content: `Based on this story so far, generate 3 distinct continuation suggestions:
-
----
-${contextText}
----
-
-Remember: Output ONLY the JSON object, nothing else.`
-    }
-  ];
-
-  try {
-    const response = await api.v1.generate(messages, {
-      model: 'glm-4-6',
-      max_tokens: 300,
-      temperature,
-    });
-
-    if (response.choices && response.choices.length > 0) {
-      const content = response.choices[0].text || '';
-
-      // Parse JSON from response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        let jsonStr = jsonMatch[0];
-
-        // Try to fix truncated JSON (common with token limits)
-        try {
-          JSON.parse(jsonStr);
-        } catch (parseErr) {
-          const openBraces = (jsonStr.match(/\{/g) || []).length;
-          const closeBraces = (jsonStr.match(/\}/g) || []).length;
-          const openBrackets = (jsonStr.match(/\[/g) || []).length;
-          const closeBrackets = (jsonStr.match(/\]/g) || []).length;
-
-          // Check if we're in the middle of a string
-          const quoteCount = (jsonStr.match(/"/g) || []).length;
-          if (quoteCount % 2 !== 0) {
-            jsonStr += '"';
-          }
-
-          // Close any open structures
-          for (let i = 0; i < openBrackets - closeBrackets; i++) {
-            jsonStr += ']';
-          }
-          for (let i = 0; i < openBraces - closeBraces; i++) {
-            jsonStr += '}';
-          }
-        }
-
-        try {
-          const parsed = JSON.parse(jsonStr);
-          if (Array.isArray(parsed.suggestions)) {
-            return parsed.suggestions.map((s: any) => ({
-              type: s.type || 'mixed',
-              text: typeof s.text === 'string' ? s.text : String(s.text || ''),
-            })).filter((s: Suggestion) => s.text.length > 0).slice(0, 3);
-          }
-        } catch (finalParseErr) {
-          api.v1.log('[SceneVis] Could not parse suggestion JSON response');
-        }
-      }
-    }
-  } catch (e) {
-    const errMsg = e instanceof Error ? e.message : String(e);
-    if (errMsg.includes('token budget')) {
-      api.v1.log('[SceneVis] Suggestion token budget exceeded, try shorter context');
-    } else {
-      api.v1.error('[SceneVis] Error generating suggestions:', e);
-    }
-    throw e;
-  }
-
-  return [];
-}
-
-/**
- * Process suggestion generation independently from image prompt generation
- */
-async function processSuggestions(storyText: string): Promise<void> {
-  if (isSuggestionsProcessing) return;
-
-  if (storyText.trim().length < 100) return;
-
-  const storage = await getStorage();
-
-  isSuggestionsProcessing = true;
-  storage.suggestionsLoading = true;
-  storage.suggestionsError = '';
-  await saveStorage(storage);
-  sendSuggestionsUpdate({ isLoading: true });
-  if (panelUpdateFn) await panelUpdateFn();
-
-  try {
-    api.v1.log('[SceneVis] Generating suggestions...');
-    const suggestions = await generateSuggestions(storyText);
-
-    storage.suggestions = suggestions;
-    storage.suggestionsLoading = false;
-    await saveStorage(storage);
-
-    sendSuggestionsUpdate({ suggestions });
-
-    if (suggestions.length > 0) {
-      api.v1.log(`[SceneVis] Generated ${suggestions.length} suggestions`);
-    }
-  } catch (e) {
-    const errMsg = e instanceof Error ? e.message : String(e);
-    storage.suggestionsLoading = false;
-    storage.suggestionsError = errMsg;
-    await saveStorage(storage);
-    sendSuggestionsUpdate({ error: errMsg });
-  } finally {
-    isSuggestionsProcessing = false;
-    if (panelUpdateFn) await panelUpdateFn();
-  }
-}
-
-async function forceRegenerateSuggestions(): Promise<void> {
-  // Suggestion generation now runs through Electron's direct API for parallelism.
-  // Broadcast story text so Electron can pick it up, and direct user to the popover.
-  let storyText = '';
-  const scanResults = await api.v1.document.scan();
-  for (const { section } of scanResults) {
-    if (section.text) {
-      storyText += section.text + '\n';
-    }
-  }
-
-  if (storyText.trim().length < 100) {
-    api.v1.ui.toast('Not enough story content for suggestions', { autoClose: 2000 });
-    return;
-  }
-
-  broadcastStoryText(storyText);
-  api.v1.ui.toast('Use the Suggestions button in the toolbar to regenerate', { autoClose: 3000 });
-}
-
-async function clearSuggestions(): Promise<void> {
-  const storage = await getStorage();
-  storage.suggestions = [];
-  storage.suggestionsError = '';
-  await saveStorage(storage);
-  sendSuggestionsUpdate({ suggestions: [] });
-  if (panelUpdateFn) await panelUpdateFn();
-  api.v1.ui.toast('Suggestions cleared', { autoClose: 2000 });
 }
 
 // ============================================================================
-// CHARACTER LOREBOOK INTEGRATION
+// STORY IDENTITY
 // ============================================================================
 
-/**
- * Scans lorebook entries for character appearance descriptions.
- * Looks for entries that contain appearance-related keywords.
- */
-async function getCharacterAppearances(): Promise<CharacterAppearance[]> {
-  const characters: CharacterAppearance[] = [];
-
-  try {
-    const entries = await api.v1.lorebook.entries();
-
-    for (const entry of entries) {
-      // Skip disabled entries
-      if (!entry.enabled) continue;
-
-      const text = entry.text || '';
-      const displayName = entry.displayName || '';
-      const keys = entry.keys || [];
-
-      // Look for appearance-related content in the entry
-      // Common patterns: "Appearance:", "Physical:", "Looks like:", etc.
-      const appearancePatterns = [
-        /appearance[:\s]+([^.]+(?:\.[^.]+){0,3})/i,
-        /physical(?:\s+description)?[:\s]+([^.]+(?:\.[^.]+){0,3})/i,
-        /looks?\s+like[:\s]+([^.]+(?:\.[^.]+){0,2})/i,
-        /(?:has|with)\s+([\w\s,]+(?:hair|eyes|skin|build|height)[^.]*)/i,
-        /description[:\s]+([^.]+(?:\.[^.]+){0,3})/i,
-      ];
-
-      let appearance = '';
-
-      // Try to extract appearance from the entry text
-      for (const pattern of appearancePatterns) {
-        const match = text.match(pattern);
-        if (match && match[1]) {
-          appearance = match[1].trim();
-          break;
-        }
-      }
-
-      // If no specific appearance section, check if entry looks like a character description
-      // (contains visual descriptors but is reasonably short)
-      if (!appearance && text.length < 500) {
-        const visualKeywords = ['hair', 'eyes', 'tall', 'short', 'wears', 'wearing', 'dressed', 'skin', 'face', 'build'];
-        const hasVisualContent = visualKeywords.some(kw => text.toLowerCase().includes(kw));
-
-        if (hasVisualContent) {
-          // Use the whole entry as appearance (it's likely a character card)
-          appearance = text;
-        }
-      }
-
-      if (appearance) {
-        // Use display name or first key as character name
-        const name = displayName || (keys.length > 0 ? keys[0] : '');
-
-        if (name) {
-          characters.push({
-            name: name,
-            appearance: appearance.slice(0, 300) // Limit length
-          });
-        }
-      }
-    }
-
-    api.v1.log(`[SceneVis] Found ${characters.length} character appearances in lorebook`);
-  } catch (e) {
-    api.v1.error('[SceneVis] Error reading lorebook:', e);
-  }
-
-  return characters;
-}
-
-/**
- * Detects which characters from the lorebook are mentioned in the given text.
- */
-function detectCharactersInText(text: string, characters: CharacterAppearance[]): CharacterAppearance[] {
-  const mentioned: CharacterAppearance[] = [];
-  const lowerText = text.toLowerCase();
-
-  for (const char of characters) {
-    // Check if character name appears in the text
-    if (lowerText.includes(char.name.toLowerCase())) {
-      mentioned.push(char);
-    }
-  }
-
-  return mentioned;
-}
-
-/**
- * Builds a character reference string for the image prompt.
- */
-function buildCharacterReference(characters: CharacterAppearance[]): string {
-  if (characters.length === 0) return '';
-
-  const refs = characters.map(c => `[${c.name}: ${c.appearance}]`);
-  return '\n\nCharacter References:\n' + refs.join('\n');
-}
-
-// ============================================================================
-// SCENE ANALYSIS
-// ============================================================================
-
-async function analyzeSceneForImage(storyText: string, characterRefs: string = ''): Promise<{
-  prompt: string;
-  negativePrompt: string;
-}> {
-  const storage = await getStorage();
-
-  // Build the system prompt with character reference instructions if available
-  let systemContent = `You are an expert at creating image generation prompts. Analyze story text and create a vivid visual prompt that captures the current scene.
-
-Output ONLY a JSON object with this format:
-{"prompt": "detailed visual description", "negativePrompt": "things to avoid"}
-
-Guidelines:
-- Focus on the CURRENT scene, not backstory
-- Describe characters' appearance, poses, expressions
-- Include setting details (location, lighting, atmosphere)
-- Use comma-separated tags/descriptors
-- Add style tags: ${storage.settings.artStyle}
-- Keep prompts under 200 words
-- For negativePrompt: list common image generation issues to avoid`;
-
-  if (characterRefs) {
-    systemContent += `
-
-IMPORTANT: Use the provided Character References for accurate character appearances. Include their visual details (hair color, eye color, clothing, etc.) in the prompt when they appear in the scene.`;
-  }
-
-  let userContent = `Create an image prompt for this scene:
-
-${storyText.slice(-2000)}`;
-
-  if (characterRefs) {
-    userContent += characterRefs;
-  }
-
-  userContent += `
-
-Remember: Output ONLY valid JSON with "prompt" and "negativePrompt" keys.`;
-
-  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-    { role: 'system', content: systemContent },
-    { role: 'user', content: userContent }
-  ];
-
-  try {
-    const response = await api.v1.generate(messages, {
-      model: 'glm-4-6',
-      max_tokens: 400,
-      temperature: 0.7,
-    });
-
-    if (response.choices && response.choices.length > 0) {
-      const content = response.choices[0].text || '';
-
-      // Parse JSON from response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          prompt: parsed.prompt || '',
-          negativePrompt: parsed.negativePrompt || 'lowres, bad anatomy, bad hands, text, error, missing fingers',
-        };
-      }
-    }
-  } catch (e) {
-    api.v1.error('[SceneVis] Error analyzing scene:', e);
-  }
-
-  return {
-    prompt: '',
-    negativePrompt: 'lowres, bad anatomy, bad hands, text, error',
-  };
-}
-
-// ============================================================================
-// MAIN PROCESSING
-// ============================================================================
-
-async function processNewContent(): Promise<void> {
-  if (isProcessing) {
-    api.v1.log('[SceneVis] Already processing, skipping...');
-    return;
-  }
-
-  const storage = await getStorage();
-  if (!storage.settings.autoGenerate) return;
-
-  // Re-detect story ID to handle story switches between generations
+async function refreshStoryIdentity(): Promise<void> {
   try {
     if ((api.v1 as any).story?.id) {
       const id = await (api.v1 as any).story.id();
       if (id && String(id) !== currentStoryId) {
         currentStoryId = String(id);
-        api.v1.log(`[SceneVis] Story changed to: ${currentStoryId}`);
+        api.v1.log(`[PowerTool] Story changed to: ${currentStoryId}`);
       }
     }
     if ((api.v1 as any).story?.title?.get) {
@@ -582,279 +127,84 @@ async function processNewContent(): Promise<void> {
     }
     broadcastStoryContext();
   } catch (e) {
-    // Non-fatal — continue with existing story context
-  }
-
-  isProcessing = true;
-
-  try {
-    // Get document content
-    let storyText = '';
-    const sectionIds = await api.v1.document.sectionIds();
-
-    if (sectionIds.length === 0) {
-      isProcessing = false;
-      return;
-    }
-
-    // Collect recent story text
-    const scanResults = await api.v1.document.scan();
-    for (const { section } of scanResults) {
-      if (section.text) {
-        storyText += section.text + '\n';
-      }
-    }
-
-    // Check if we have enough new content
-    if (storyText.length < storage.settings.minTextLength) {
-      isProcessing = false;
-      return;
-    }
-
-    // Get character references from lorebook if enabled
-    let characterRefs = '';
-    if (storage.settings.useCharacterLore) {
-      api.v1.log('[SceneVis] Scanning lorebook for characters...');
-      const allCharacters = await getCharacterAppearances();
-      const recentText = storyText.slice(-3000); // Check recent text for character mentions
-      const mentionedCharacters = detectCharactersInText(recentText, allCharacters);
-
-      if (mentionedCharacters.length > 0) {
-        api.v1.log(`[SceneVis] Found ${mentionedCharacters.length} characters in scene: ${mentionedCharacters.map(c => c.name).join(', ')}`);
-        characterRefs = buildCharacterReference(mentionedCharacters);
-      }
-    }
-
-    // Broadcast story text for Electron-side suggestion generation
-    broadcastStoryText(storyText);
-
-    // Analyze scene and generate prompt
-    const promptStart = Date.now();
-    api.v1.log('[SceneVis] Analyzing scene...');
-    const { prompt, negativePrompt } = await analyzeSceneForImage(storyText, characterRefs);
-    api.v1.log(`[SceneVis] Image prompt completed in ${Date.now() - promptStart}ms`);
-
-    if (!prompt) {
-      api.v1.log('[SceneVis] Could not generate prompt');
-      isProcessing = false;
-      return;
-    }
-
-    // Save the prompt for Electron to access
-    storage.lastPrompt = prompt;
-    await saveStorage(storage);
-    setCurrentPrompt(prompt, negativePrompt, storyText.slice(-500));
-
-    // Update panel to show new prompt
-    if (panelUpdateFn) await panelUpdateFn();
-
-    api.v1.ui.toast('Scene prompt ready! Click Generate in Electron toolbar.', { autoClose: 3000 });
-
-  } catch (e) {
-    api.v1.error('[SceneVis] Error processing:', e);
-  } finally {
-    isProcessing = false;
+    // Non-fatal
   }
 }
 
-async function forceGenerate(): Promise<void> {
-  isProcessing = false;
-  const storage = await getStorage();
-  storage.settings.autoGenerate = true;
-  await saveStorage(storage);
-  await processNewContent();
+// ============================================================================
+// HOOK — onGenerationEnd
+// ============================================================================
+
+// Lightweight hook: reads story text, broadcasts via DOM, signals Electron.
+// All LLM work (prompt gen, suggestions, character extraction) is handled
+// by the Electron app — the script never calls api.v1.generate().
+function registerHooks(): void {
+  api.v1.hooks.register('onGenerationEnd', async () => {
+    try {
+      await refreshStoryIdentity();
+
+      // Read full story text
+      let storyText = '';
+      const scanResults = await api.v1.document.scan();
+      for (const { section } of scanResults) {
+        if (section.text) storyText += section.text + '\n';
+      }
+
+      if (storyText.length >= 100) {
+        broadcastStoryText(storyText);
+        broadcastGenerationEnded(storyText.length);
+      }
+    } catch (e) {
+      api.v1.error('[PowerTool] Error in onGenerationEnd hook:', e);
+    }
+  });
 }
 
 // ============================================================================
-// UI PANEL
+// UI PANEL — Minimal status display
 // ============================================================================
-
-let panelUpdateFn: (() => Promise<void>) | null = null;
 
 async function createUIPanel(): Promise<void> {
   const buildPanel = async () => {
-    const storage = await getStorage();
-    const hasPrompt = storage.lastPrompt.length > 0;
-
-    const content: any[] = [
-      // Header
-      api.v1.ui.part.text({
-        text: 'Scene Visualizer',
-        style: { fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' }
-      }),
-
-      // Instructions
-      api.v1.ui.part.text({
-        text: 'Prompts are generated automatically. Use the Electron toolbar to generate images.',
-        style: { fontSize: '12px', color: '#888', marginBottom: '12px' }
-      }),
-    ];
-
-    // Current prompt display (with special ID for Electron to find)
-    content.push(
-      api.v1.ui.part.text({
-        text: 'Current Prompt:',
-        style: { fontWeight: 'bold', marginBottom: '4px', fontSize: '12px' }
-      })
-    );
-
-    // Prompt text area - Electron will read this
-    content.push(
-      api.v1.ui.part.multilineTextInput({
-        initialValue: storage.lastPrompt || '(No prompt yet - generate some story content)',
-        placeholder: 'Scene prompt will appear here...',
-        style: {
-          marginBottom: '12px',
-          fontFamily: 'monospace',
-          fontSize: '11px',
-          minHeight: '100px'
-        }
-      })
-    );
-
-    // Generate Prompt button
-    content.push(
-      api.v1.ui.part.button({
-        text: hasPrompt ? 'Regenerate Prompt' : 'Generate Prompt',
-        callback: async () => {
-          await forceGenerate();
-        },
-        style: { marginBottom: '12px' }
-      })
-    );
-
-    // Settings
-    content.push(
-      api.v1.ui.part.collapsibleSection({
-        title: 'Settings',
-        initialCollapsed: true,
-        content: [
-          api.v1.ui.part.row({
-            content: [
-              api.v1.ui.part.text({
-                text: 'Auto-generate prompts:',
-                style: { flex: '1' }
-              }),
-              api.v1.ui.part.checkboxInput({
-                initialValue: storage.settings.autoGenerate,
-                onChange: async (checked: boolean) => {
-                  const s = await getStorage();
-                  s.settings.autoGenerate = checked;
-                  await saveStorage(s);
-                  api.v1.ui.toast(checked ? 'Auto-generate enabled' : 'Auto-generate disabled', { autoClose: 2000 });
-                }
-              }),
-            ],
-            style: { marginBottom: '8px' }
-          }),
-          api.v1.ui.part.row({
-            content: [
-              api.v1.ui.part.text({
-                text: 'Use character lore:',
-                style: { flex: '1' }
-              }),
-              api.v1.ui.part.checkboxInput({
-                initialValue: storage.settings.useCharacterLore,
-                onChange: async (checked: boolean) => {
-                  const s = await getStorage();
-                  s.settings.useCharacterLore = checked;
-                  await saveStorage(s);
-                  api.v1.ui.toast(checked ? 'Character lore enabled' : 'Character lore disabled', { autoClose: 2000 });
-                }
-              }),
-            ],
-            style: { marginBottom: '8px' }
-          }),
-          api.v1.ui.part.text({
-            text: 'Pulls character appearance from lorebook entries for consistent visuals.',
-            style: { fontSize: '10px', color: '#666', marginBottom: '12px', marginLeft: '4px' }
-          }),
-          api.v1.ui.part.text({
-            text: 'Art Style Tags:',
-            style: { marginBottom: '4px', fontSize: '12px' }
-          }),
-          api.v1.ui.part.textInput({
-            initialValue: storage.settings.artStyle,
-            placeholder: 'e.g., anime style, oil painting, watercolor',
-            onChange: async (value: string) => {
-              const s = await getStorage();
-              s.settings.artStyle = value;
-              await saveStorage(s);
-            },
-            style: { marginBottom: '8px' }
-          }),
-          api.v1.ui.part.text({
-            text: 'Min text length for auto-generate:',
-            style: { marginBottom: '4px', fontSize: '12px' }
-          }),
-          api.v1.ui.part.sliderInput({
-            initialValue: storage.settings.minTextLength,
-            min: 50,
-            max: 500,
-            step: 50,
-            label: `${storage.settings.minTextLength} characters`,
-            onChange: async (value: number) => {
-              const s = await getStorage();
-              s.settings.minTextLength = value;
-              await saveStorage(s);
-            }
-          }),
-        ]
-      })
-    );
-
     return api.v1.ui.part.column({
-      content,
+      content: [
+        api.v1.ui.part.text({
+          text: 'PowerTool v3.0.0',
+          style: { fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' }
+        }),
+        api.v1.ui.part.text({
+          text: currentStoryTitle
+            ? `Story: ${currentStoryTitle}`
+            : 'No story detected',
+          style: { fontSize: '12px', color: '#888', marginBottom: '4px' }
+        }),
+        api.v1.ui.part.text({
+          text: currentStoryId
+            ? `ID: ${currentStoryId.slice(0, 12)}…`
+            : '',
+          style: { fontSize: '10px', color: '#666', marginBottom: '12px' }
+        }),
+        api.v1.ui.part.text({
+          text: 'All prompts, suggestions, and image generation are handled by the Electron app. This script provides story data relay and text insertion.',
+          style: { fontSize: '11px', color: '#888', lineHeight: '1.4' }
+        }),
+      ],
       style: { padding: '12px' }
     });
   };
 
-  const updatePanel = async () => {
-    try {
-      const panel = await buildPanel();
-      await api.v1.ui.update([
-        {
-          type: 'scriptPanel' as const,
-          id: 'sceneVisualizerPanel',
-          name: 'Scene Visualizer',
-          content: [panel]
-        }
-      ]);
-    } catch (e) {
-      api.v1.error('[SceneVis] Error updating panel:', e);
-    }
-  };
-
-  panelUpdateFn = updatePanel;
-
-  // Register panel
   try {
     const initialPanel = await buildPanel();
     await api.v1.ui.register([
       api.v1.ui.extension.scriptPanel({
-        id: 'sceneVisualizerPanel',
-        name: 'Scene Visualizer',
+        id: 'powertoolPanel',
+        name: 'PowerTool',
         content: [initialPanel]
       })
     ]);
   } catch (e) {
-    api.v1.error('[SceneVis] Error creating panel:', e);
+    api.v1.error('[PowerTool] Error creating panel:', e);
   }
-}
-
-// ============================================================================
-// HOOK REGISTRATION
-// ============================================================================
-
-function registerHooks(): void {
-  api.v1.hooks.register('onGenerationEnd', async () => {
-    try {
-      await processNewContent();
-      if (panelUpdateFn) await panelUpdateFn();
-    } catch (e) {
-      api.v1.error('[SceneVis] Error in hook:', e);
-    }
-  });
 }
 
 // ============================================================================
@@ -863,22 +213,21 @@ function registerHooks(): void {
 
 async function initialize(): Promise<void> {
   try {
-    api.v1.log('[SceneVis] Initializing Scene Visualizer...');
+    api.v1.log('[PowerTool] Initializing v3.0.0 (bridge mode)...');
 
     // Request storyEdit permission (needed for suggestion insertion via document.append)
     const hasPermissions = await api.v1.permissions.request(['storyEdit']);
     if (!hasPermissions) {
-      api.v1.log('[SceneVis] storyEdit permission not granted — suggestion insertion in script panel may not work');
+      api.v1.log('[PowerTool] storyEdit permission not granted — suggestion insertion may not work');
     }
 
     // Extract story identity
     try {
-      // Try the story API first
       if ((api.v1 as any).story?.id) {
         const id = await (api.v1 as any).story.id();
         if (id) {
           currentStoryId = String(id);
-          api.v1.log(`[SceneVis] Story ID from API: ${currentStoryId}`);
+          api.v1.log(`[PowerTool] Story ID from API: ${currentStoryId}`);
         }
       }
 
@@ -887,11 +236,11 @@ async function initialize(): Promise<void> {
         const stored = await api.v1.storyStorage.get('sceneVisualizerStoryId');
         if (stored) {
           currentStoryId = stored;
-          api.v1.log(`[SceneVis] Story ID from storage: ${currentStoryId}`);
+          api.v1.log(`[PowerTool] Story ID from storage: ${currentStoryId}`);
         } else {
           currentStoryId = 'sv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
           await api.v1.storyStorage.set('sceneVisualizerStoryId', currentStoryId);
-          api.v1.log(`[SceneVis] Generated new story ID: ${currentStoryId}`);
+          api.v1.log(`[PowerTool] Generated new story ID: ${currentStoryId}`);
         }
       }
 
@@ -900,68 +249,46 @@ async function initialize(): Promise<void> {
         const title = await (api.v1 as any).story.title.get();
         if (title) {
           currentStoryTitle = String(title);
-          api.v1.log(`[SceneVis] Story title: ${currentStoryTitle}`);
+          api.v1.log(`[PowerTool] Story title: ${currentStoryTitle}`);
         }
       }
 
-      // Send story context to Electron via DOM
       broadcastStoryContext();
     } catch (e) {
-      api.v1.log('[SceneVis] Could not extract story identity (non-fatal):' + e);
+      api.v1.log('[PowerTool] Could not extract story identity (non-fatal):' + e);
     }
 
     await getStorage();
     await createUIPanel();
     registerHooks();
 
-    // Expose insertion function for Electron sidebar to call via executeJavaScript
+    // Expose insertion function for Electron to call via webview.executeJavaScript
     (globalThis as any).__sceneVisInsert = async (text: string): Promise<boolean> => {
       try {
         await api.v1.document.append('\n' + text);
-        api.v1.log(`[SceneVis] Sidebar insertion via document.append: "${text.slice(0, 50)}..."`);
+        api.v1.log(`[PowerTool] Insertion via document.append: "${text.slice(0, 50)}..."`);
         return true;
       } catch (e) {
-        api.v1.log('[SceneVis] Sidebar insertion via document.append failed: ' + e);
+        api.v1.log('[PowerTool] document.append failed: ' + e);
         try {
           if (api.v1.prefill?.set) {
             await api.v1.prefill.set(text);
-            api.v1.log(`[SceneVis] Sidebar insertion via prefill.set: "${text.slice(0, 50)}..."`);
+            api.v1.log(`[PowerTool] Insertion via prefill.set: "${text.slice(0, 50)}..."`);
             return true;
           }
         } catch (e2) {
-          api.v1.log('[SceneVis] Sidebar insertion via prefill.set also failed: ' + e2);
+          api.v1.log('[PowerTool] prefill.set also failed: ' + e2);
         }
         return false;
       }
     };
 
-    // Expose regen/clear globals so Electron renderer can invoke via executeJavaScript
-    (globalThis as any).__sceneVisRegenSuggestions = async (): Promise<boolean> => {
-      try {
-        await forceRegenerateSuggestions();
-        return true;
-      } catch (e) {
-        api.v1.error('[SceneVis] Regen suggestions failed:', e);
-        return false;
-      }
-    };
-
-    (globalThis as any).__sceneVisClearSuggestions = async (): Promise<boolean> => {
-      try {
-        await clearSuggestions();
-        return true;
-      } catch (e) {
-        api.v1.error('[SceneVis] Clear suggestions failed:', e);
-        return false;
-      }
-    };
-
-    api.v1.ui.toast('Scene Visualizer loaded', { autoClose: 3000, type: 'success' });
-    api.v1.log('[SceneVis] Initialization complete');
+    api.v1.ui.toast('PowerTool bridge loaded', { autoClose: 2000, type: 'success' });
+    api.v1.log('[PowerTool] v3.0.0 initialization complete (bridge mode)');
 
   } catch (e) {
-    api.v1.error('[SceneVis] Initialization failed:', e);
-    api.v1.ui.toast('Scene Visualizer failed to load', { autoClose: 5000, type: 'error' });
+    api.v1.error('[PowerTool] Initialization failed:', e);
+    api.v1.ui.toast('PowerTool failed to load', { autoClose: 5000, type: 'error' });
   }
 }
 

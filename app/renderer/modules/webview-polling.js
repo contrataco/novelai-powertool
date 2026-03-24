@@ -383,6 +383,35 @@ export function init() {
     condition: () => state.currentStoryId && state.timelineState?.settings?.autoDetect
   });
 
+  // 6. Generation-ended signal detection (~2s)
+  // The companion script sets #scene-vis-gen-ended timestamp on every onGenerationEnd.
+  // Detecting this allows near-instant prompt generation instead of waiting for the 10s auto-gen cycle.
+  let lastGenEndedTimestamp = '';
+  polling.register('generation-ended', async () => {
+    if (!state.currentStoryId || state.isGenerating || state.isGeneratingPrompt) return;
+    try {
+      const ts = await webview.executeJavaScript(`
+        (function() {
+          var el = document.getElementById('scene-vis-gen-ended');
+          return el ? el.dataset.timestamp || '' : '';
+        })()
+      `);
+      if (ts && ts !== lastGenEndedTimestamp) {
+        lastGenEndedTimestamp = ts;
+        console.log('[Polling] Generation ended signal detected, triggering prompt generation');
+        // Import and call the existing prompt generation function
+        const imageGen = await import('./image-gen.js');
+        if (imageGen.generateScenePromptFromEditor) {
+          await imageGen.generateScenePromptFromEditor();
+        }
+      }
+    } catch (_) {
+      // Silent — webview may not be ready
+    }
+  }, 2000, {
+    condition: () => !!state.currentStoryId
+  });
+
   // Start the coordinator
   polling.start();
 }
