@@ -3,15 +3,44 @@ compatibilityVersion: naiscript-1.0
 id: e02be7b4-4993-4ebf-abc0-ca7ed996744f
 name: NovelAI PowerTool
 createdAt: 1766945065236
-updatedAt: 1771655623976
-version: 3.0.1
+updatedAt: 1774381797637
+version: 4.0.0
 author: Contrataco
-description: Lightweight bridge for PowerTool Electron app — story identity, text relay, suggestion insertion
+description: Unified PowerTool script — story relay, lorebook proxy, memory proxy, suggestion insertion
 memoryLimit: 16
 ---*/
 
 // ============================================================================
-// CONFIGURATION
+// UNIFIED POWERTOOL SCRIPT v4.0.0
+//
+// Single script that provides ALL proxy functionality for the Electron app:
+// - Story identity detection + DOM relay
+// - Lorebook CRUD proxy (createEntry, updateEntry, deleteEntry, etc.)
+// - Memory proxy (get/set memory, count tokens)
+// - Suggestion insertion (document.append / prefill.set)
+// - onGenerationEnd hook signaling
+//
+// The Electron app handles all LLM work (prompt gen, character extraction,
+// suggestions). This script never calls api.v1.generate().
+// ============================================================================
+
+const LOG_PREFIX = '[PowerTool]';
+
+// Story identity
+let currentStoryId: string | null = null;
+let currentStoryTitle: string | null = null;
+
+// Proxy response state
+let loreResponsePayload = '';
+let memoryResponsePayload = '';
+let panelUpdateFn: (() => Promise<void>) | null = null;
+
+// Deduplication guards (input+change events both fire onChange)
+let lastLoreReqId = '';
+let lastMemoryReqId = '';
+
+// ============================================================================
+// STORAGE UTILITIES
 // ============================================================================
 
 interface ScriptStorage {
@@ -22,14 +51,6 @@ const DEFAULT_STORAGE: ScriptStorage = {
   lastProcessedSectionId: null,
 };
 
-// Story identity
-let currentStoryId: string | null = null;
-let currentStoryTitle: string | null = null;
-
-// ============================================================================
-// STORAGE UTILITIES
-// ============================================================================
-
 async function getStorage(): Promise<ScriptStorage> {
   try {
     const stored = await api.v1.storyStorage.get('sceneVisualizerData');
@@ -37,7 +58,7 @@ async function getStorage(): Promise<ScriptStorage> {
       return { ...DEFAULT_STORAGE, ...JSON.parse(stored) };
     }
   } catch (e) {
-    api.v1.error('[PowerTool] Error loading storage:', e);
+    api.v1.error(`${LOG_PREFIX} Error loading storage:`, e);
   }
   return { ...DEFAULT_STORAGE };
 }
@@ -46,7 +67,7 @@ async function saveStorage(data: ScriptStorage): Promise<void> {
   try {
     await api.v1.storyStorage.set('sceneVisualizerData', JSON.stringify(data));
   } catch (e) {
-    api.v1.error('[PowerTool] Error saving storage:', e);
+    api.v1.error(`${LOG_PREFIX} Error saving storage:`, e);
   }
 }
 
@@ -54,9 +75,6 @@ async function saveStorage(data: ScriptStorage): Promise<void> {
 // DOM RELAY — Data bridge for Electron polling
 // ============================================================================
 
-// Broadcast story context to Electron via DOM element (the contextBridge is
-// inaccessible from NovelAI's script sandbox, so we use DOM data attributes
-// that the webview-preload MutationObserver can detect and relay via IPC).
 function broadcastStoryContext(): void {
   if (!currentStoryId) return;
   try {
@@ -90,8 +108,6 @@ function broadcastStoryText(storyText: string): void {
   }
 }
 
-// Signal that a generation just completed — Electron polls this for
-// near-instant prompt generation instead of waiting for the 10s auto-gen cycle.
 function broadcastGenerationEnded(textLength: number): void {
   try {
     let el = document.getElementById('scene-vis-gen-ended');
@@ -118,7 +134,7 @@ async function refreshStoryIdentity(): Promise<void> {
       const id = await (api.v1 as any).story.id();
       if (id && String(id) !== currentStoryId) {
         currentStoryId = String(id);
-        api.v1.log(`[PowerTool] Story changed to: ${currentStoryId}`);
+        api.v1.log(`${LOG_PREFIX} Story changed to: ${currentStoryId}`);
       }
     }
     if ((api.v1 as any).story?.title?.get) {
@@ -132,37 +148,456 @@ async function refreshStoryIdentity(): Promise<void> {
 }
 
 // ============================================================================
+// LOREBOOK OPERATIONS
+// ============================================================================
+
+async function updateLorebookEntry(rawEntry: any, updates: Record<string, any>): Promise<boolean> {
+  const entryId = rawEntry.id;
+
+  // Strategy 1: updateEntry API
+  try {
+    await (api.v1.lorebook as any).updateEntry(entryId, updates);
+    api.v1.log(`${LOG_PREFIX} Updated via updateEntry: ${rawEntry.displayName}`);
+    return true;
+  } catch (_) {}
+
+  // Strategy 2: Direct mutation + save
+  try {
+    for (const [key, value] of Object.entries(updates)) {
+      rawEntry[key] = value;
+    }
+    if (typeof rawEntry.save === 'function') {
+      await rawEntry.save();
+      api.v1.log(`${LOG_PREFIX} Updated via mutation: ${rawEntry.displayName}`);
+      return true;
+    }
+  } catch (_) {}
+
+  // Strategy 3: Delete + recreate (preserve advanced fields)
+  try {
+    await (api.v1.lorebook as any).removeEntry(entryId);
+    const recreated: any = {
+      displayName: updates.displayName ?? rawEntry.displayName,
+      text: updates.text ?? rawEntry.text,
+      keys: updates.keys ?? rawEntry.keys ?? [],
+      enabled: rawEntry.enabled !== false,
+    };
+    const finalCategory = updates.category ?? rawEntry.category;
+    if (finalCategory) recreated.category = finalCategory;
+    const advancedKeys = ['searchRange', 'forceActivation', 'keyRelative', 'nonStoryActivatable',
+      'budgetPriority', 'contextConfig', 'loreBias', 'contextSize'];
+    for (const key of advancedKeys) {
+      const val = updates[key] ?? rawEntry[key];
+      if (val !== undefined) recreated[key] = val;
+    }
+    await (api.v1.lorebook as any).createEntry(recreated);
+    api.v1.log(`${LOG_PREFIX} Updated via delete+recreate: ${recreated.displayName}`);
+    return true;
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} All update strategies failed for ${rawEntry.displayName}:`, e);
+    return false;
+  }
+}
+
+async function proxyGetEntries(): Promise<any[]> {
+  try {
+    const entries = await api.v1.lorebook.entries();
+    return entries.map((entry: any) => ({
+      id: entry.id,
+      displayName: entry.displayName || '',
+      keys: entry.keys || [],
+      text: entry.text || '',
+      category: entry.category || null,
+      enabled: entry.enabled !== false,
+    }));
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error reading entries:`, e);
+    return [];
+  }
+}
+
+async function proxyCreateEntry(data: any): Promise<string | null> {
+  try {
+    const entry: any = {
+      displayName: data.displayName,
+      text: data.text,
+      keys: data.keys,
+      enabled: data.enabled !== false,
+    };
+    if (data.category) entry.category = data.category;
+    const result = await (api.v1.lorebook as any).createEntry(entry);
+    const entryId = (result && result.id) ? result.id : result;
+    api.v1.log(`${LOG_PREFIX} Created: ${data.displayName} (${entryId})`);
+    return entryId;
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error creating ${data.displayName}:`, e);
+    return null;
+  }
+}
+
+async function proxyUpdateEntry(id: string, updates: any): Promise<boolean> {
+  try {
+    const entries = await api.v1.lorebook.entries();
+    const rawEntry = entries.find((e: any) => e.id === id);
+    if (!rawEntry) {
+      api.v1.error(`${LOG_PREFIX} Entry not found: ${id}`);
+      return false;
+    }
+    return await updateLorebookEntry(rawEntry, updates);
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error updating ${id}:`, e);
+    return false;
+  }
+}
+
+async function proxyDeleteEntry(id: string): Promise<boolean> {
+  try {
+    await (api.v1.lorebook as any).removeEntry(id);
+    api.v1.log(`${LOG_PREFIX} Deleted: ${id}`);
+    return true;
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error deleting ${id}:`, e);
+    return false;
+  }
+}
+
+async function proxyCreateCategory(data: any): Promise<string | null> {
+  try {
+    const category = await (api.v1.lorebook as any).createCategory({
+      name: data.name,
+      enabled: data.enabled !== false,
+    });
+    const categoryId = (category && category.id) ? category.id : category;
+    api.v1.log(`${LOG_PREFIX} Created category: ${data.name} (${categoryId})`);
+    return categoryId;
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error creating category ${data.name}:`, e);
+    return null;
+  }
+}
+
+async function proxyGetCategories(): Promise<any[]> {
+  try {
+    if (typeof (api.v1.lorebook as any).categories === 'function') {
+      const cats = await (api.v1.lorebook as any).categories();
+      if (Array.isArray(cats)) {
+        return cats.map((c: any) => ({ id: c.id, name: c.name || c.displayName || '', enabled: c.enabled !== false }));
+      }
+    }
+  } catch (_) {}
+  try {
+    const entries = await api.v1.lorebook.entries();
+    const catMap = new Map<string, string>();
+    for (const entry of entries) {
+      const catId = (entry as any).category;
+      if (catId && !catMap.has(catId)) catMap.set(catId, '');
+    }
+    return Array.from(catMap.entries()).map(([id, name]) => ({ id, name, enabled: true }));
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error getting categories:`, e);
+    return [];
+  }
+}
+
+async function proxyGetStoryText(): Promise<string> {
+  try {
+    const scanResults = await api.v1.document.scan();
+    let text = '';
+    for (const { section } of scanResults) {
+      if (section.text) text += section.text + '\n';
+    }
+    return text;
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error reading story:`, e);
+    return '';
+  }
+}
+
+async function proxyGetEntriesExpanded(): Promise<any[]> {
+  try {
+    const entries = await api.v1.lorebook.entries();
+    return entries.map((entry: any) => {
+      const base: Record<string, any> = {
+        id: entry.id, displayName: entry.displayName || '', keys: entry.keys || [],
+        text: entry.text || '', category: entry.category || null, enabled: entry.enabled !== false,
+      };
+      const advancedKeys = ['searchRange', 'forceActivation', 'keyRelative', 'nonStoryActivatable',
+        'budgetPriority', 'contextConfig', 'loreBias', 'contextSize'];
+      for (const key of advancedKeys) {
+        if (entry[key] !== undefined) {
+          try { base[key] = JSON.parse(JSON.stringify(entry[key])); } catch (_) {}
+        }
+      }
+      return base;
+    });
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error reading expanded entries:`, e);
+    return [];
+  }
+}
+
+async function proxyInspectEntry(): Promise<any> {
+  try {
+    const entries = await api.v1.lorebook.entries();
+    if (entries.length === 0) return { fields: [], protoFields: [], sample: null };
+    const sample = entries[0] as any;
+    const fields = Object.keys(sample);
+    const proto = Object.getPrototypeOf(sample);
+    const protoFields = proto ? Object.getOwnPropertyNames(proto).filter((k: string) => k !== 'constructor') : [];
+    const serialized: Record<string, any> = {};
+    for (const key of fields) {
+      try { const val = sample[key]; serialized[key] = typeof val !== 'function' ? JSON.parse(JSON.stringify(val)) : '[function]'; } catch (_) { serialized[key] = '[non-serializable]'; }
+    }
+    return { fields, protoFields, sample: serialized };
+  } catch (e) { return { fields: [], protoFields: [], sample: null, error: String(e) }; }
+}
+
+async function proxyInspectCategory(): Promise<any> {
+  try {
+    if (typeof (api.v1.lorebook as any).categories !== 'function') return { fields: [], sample: null, error: 'categories() not available' };
+    const cats = await (api.v1.lorebook as any).categories();
+    if (!Array.isArray(cats) || cats.length === 0) return { fields: [], sample: null };
+    const sample = cats[0] as any;
+    const fields = Object.keys(sample);
+    const serialized: Record<string, any> = {};
+    for (const key of fields) {
+      try { const val = sample[key]; serialized[key] = typeof val !== 'function' ? JSON.parse(JSON.stringify(val)) : '[function]'; } catch (_) { serialized[key] = '[non-serializable]'; }
+    }
+    return { fields, sample: serialized };
+  } catch (e) { return { fields: [], sample: null, error: String(e) }; }
+}
+
+async function proxyTestAdvancedWrite(): Promise<any> {
+  const results: Record<string, { success: boolean; readBack?: any; error?: string }> = {};
+  let testEntryId: string | null = null;
+  try {
+    const testEntry = await (api.v1.lorebook as any).createEntry({
+      displayName: '__test_advanced__', text: 'test', keys: ['__test__'], enabled: false,
+    });
+    testEntryId = (testEntry && testEntry.id) ? testEntry.id : testEntry;
+    if (!testEntryId) return { error: 'Failed to create test entry' };
+    const fieldsToTest: Record<string, any> = {
+      searchRange: 2000, forceActivation: true, keyRelative: true, nonStoryActivatable: true,
+      budgetPriority: 100,
+      contextConfig: { prefix: '[test prefix]', suffix: '[test suffix]', budgetPriority: 100, reservedTokens: 0 },
+      loreBias: [{ bias: 0.1, ensure_sequence_finish: false, generate_once: false, enabled: true, phrases: ['test'] }],
+    };
+    for (const [field, testValue] of Object.entries(fieldsToTest)) {
+      try {
+        let writeOk = false;
+        try { await (api.v1.lorebook as any).updateEntry(testEntryId, { [field]: testValue }); writeOk = true; } catch (_) {
+          try { const entries = await api.v1.lorebook.entries(); const raw = entries.find((e: any) => e.id === testEntryId) as any; if (raw) { raw[field] = testValue; if (typeof raw.save === 'function') await raw.save(); writeOk = true; } } catch (_2) {}
+        }
+        if (!writeOk) { results[field] = { success: false, error: 'write failed' }; continue; }
+        const entries = await api.v1.lorebook.entries();
+        const readBack = entries.find((e: any) => e.id === testEntryId) as any;
+        results[field] = readBack && readBack[field] !== undefined
+          ? { success: true, readBack: JSON.parse(JSON.stringify(readBack[field])) }
+          : { success: false, error: 'read-back missing' };
+      } catch (e) { results[field] = { success: false, error: String(e) }; }
+    }
+  } catch (e) { return { error: String(e) }; }
+  finally { if (testEntryId) { try { await (api.v1.lorebook as any).removeEntry(testEntryId); } catch (_) {} } }
+  return results;
+}
+
+async function proxyBatchUpdateAdvanced(updates: Array<{ id: string; fields: Record<string, any> }>): Promise<{ success: number; failed: number; errors: string[] }> {
+  let success = 0, failed = 0;
+  const errors: string[] = [];
+  const allEntries = await api.v1.lorebook.entries();
+  const entryMap = new Map<string, any>();
+  for (const e of allEntries) entryMap.set((e as any).id, e);
+  for (const update of updates) {
+    try {
+      const rawEntry = entryMap.get(update.id);
+      if (!rawEntry) { errors.push(`Entry not found: ${update.id}`); failed++; continue; }
+      const ok = await updateLorebookEntry(rawEntry as any, update.fields);
+      if (ok) success++; else { errors.push(`Update failed for ${update.id}`); failed++; }
+    } catch (e) { errors.push(`${update.id}: ${String(e)}`); failed++; }
+  }
+  return { success, failed, errors };
+}
+
+// ============================================================================
+// MEMORY OPERATIONS
+// ============================================================================
+
+async function proxyGetMemory(): Promise<string> {
+  try { const memory = await api.v1.memory.get(); return memory || ''; }
+  catch (e) { api.v1.error(`${LOG_PREFIX} Error reading memory:`, e); return ''; }
+}
+
+async function proxySetMemory(text: string): Promise<boolean> {
+  try { await api.v1.memory.set(text); api.v1.log(`${LOG_PREFIX} Memory updated (${text.length} chars)`); return true; }
+  catch (e) { api.v1.error(`${LOG_PREFIX} Error setting memory:`, e); return false; }
+}
+
+async function proxyCountTokens(text: string): Promise<number> {
+  try { const tokens = await api.v1.tokenizer.encode(text, 'glm-4-6'); return tokens.length; }
+  catch (e) { return Math.ceil(text.length / 4); }
+}
+
+// ============================================================================
+// REQUEST HANDLERS
+// ============================================================================
+
+async function handleLoreRequest(req: { id: string; method: string; args: any[] }): Promise<any> {
+  switch (req.method) {
+    case 'getEntries': return proxyGetEntries();
+    case 'createEntry': return proxyCreateEntry(req.args[0]);
+    case 'updateEntry': return proxyUpdateEntry(req.args[0], req.args[1]);
+    case 'deleteEntry': return proxyDeleteEntry(req.args[0]);
+    case 'createCategory': return proxyCreateCategory(req.args[0]);
+    case 'getCategories': return proxyGetCategories();
+    case 'getStoryText': return proxyGetStoryText();
+    case 'getEntriesExpanded': return proxyGetEntriesExpanded();
+    case 'inspectEntry': return proxyInspectEntry();
+    case 'inspectCategory': return proxyInspectCategory();
+    case 'testAdvancedWrite': return proxyTestAdvancedWrite();
+    case 'batchUpdateAdvanced': return proxyBatchUpdateAdvanced(req.args[0]);
+    case 'ping': return { ok: true, ts: Date.now() };
+    default: return { __error: 'Unknown lore method: ' + req.method };
+  }
+}
+
+async function handleMemoryRequest(req: { id: string; method: string; args: any[] }): Promise<any> {
+  switch (req.method) {
+    case 'getMemory': return proxyGetMemory();
+    case 'setMemory': return proxySetMemory(req.args[0]);
+    case 'getStoryText': return proxyGetStoryText();
+    case 'countTokens': return proxyCountTokens(req.args[0]);
+    case 'ping': return { ok: true, ts: Date.now() };
+    default: return { __error: 'Unknown memory method: ' + req.method };
+  }
+}
+
+// ============================================================================
+// PROXY COMMAND/RESPONSE CHANNELS
+// ============================================================================
+
+const DOM_IDS = {
+  loreCmd: '__lore_proxy_dom_cmd__',
+  loreRes: '__lore_proxy_dom_res__',
+  memoryCmd: '__memory_proxy_dom_cmd__',
+  memoryRes: '__memory_proxy_dom_res__',
+};
+
+function ensureDomElement(id: string): HTMLElement | null {
+  try {
+    let el = document.getElementById(id);
+    if (!el) { el = document.createElement('div'); el.id = id; el.style.display = 'none'; document.body.appendChild(el); }
+    return el;
+  } catch (e) { return null; }
+}
+
+function writeDomResponse(id: string, payload: string): void {
+  try { const el = ensureDomElement(id); if (el) el.textContent = payload; } catch (_) {}
+}
+
+async function processLoreCommand(text: string): Promise<void> {
+  if (!text || !text.startsWith('{')) return;
+  try {
+    const req = JSON.parse(text);
+    if (!req.id || !req.method) return;
+    if (req.id === lastLoreReqId) return;
+    lastLoreReqId = req.id;
+    api.v1.log(`${LOG_PREFIX} [Lore] << ${req.method} (${req.id})`);
+    const result = await handleLoreRequest(req);
+    loreResponsePayload = JSON.stringify({ id: req.id, data: result });
+    api.v1.log(`${LOG_PREFIX} [Lore] >> ${req.method} done`);
+    writeDomResponse(DOM_IDS.loreRes, loreResponsePayload);
+    if (panelUpdateFn) { try { await panelUpdateFn(); } catch (_) {} }
+  } catch (e) { api.v1.error(`${LOG_PREFIX} [Lore] Command error:`, e); }
+}
+
+async function processMemoryCommand(text: string): Promise<void> {
+  if (!text || !text.startsWith('{')) return;
+  try {
+    const req = JSON.parse(text);
+    if (!req.id || !req.method) return;
+    if (req.id === lastMemoryReqId) return;
+    lastMemoryReqId = req.id;
+    api.v1.log(`${LOG_PREFIX} [Memory] << ${req.method} (${req.id})`);
+    const result = await handleMemoryRequest(req);
+    memoryResponsePayload = JSON.stringify({ id: req.id, data: result });
+    api.v1.log(`${LOG_PREFIX} [Memory] >> ${req.method} done`);
+    writeDomResponse(DOM_IDS.memoryRes, memoryResponsePayload);
+    if (panelUpdateFn) { try { await panelUpdateFn(); } catch (_) {} }
+  } catch (e) { api.v1.error(`${LOG_PREFIX} [Memory] Command error:`, e); }
+}
+
+function setupDomCommandChannel(): void {
+  try {
+    const loreCmdEl = ensureDomElement(DOM_IDS.loreCmd);
+    const memoryCmdEl = ensureDomElement(DOM_IDS.memoryCmd);
+    if (loreCmdEl) {
+      new MutationObserver(() => {
+        const text = loreCmdEl.textContent || '';
+        if (text) { loreCmdEl.textContent = ''; processLoreCommand(text); }
+      }).observe(loreCmdEl, { childList: true, characterData: true, subtree: true });
+    }
+    if (memoryCmdEl) {
+      new MutationObserver(() => {
+        const text = memoryCmdEl.textContent || '';
+        if (text) { memoryCmdEl.textContent = ''; processMemoryCommand(text); }
+      }).observe(memoryCmdEl, { childList: true, characterData: true, subtree: true });
+    }
+    api.v1.log(`${LOG_PREFIX} DOM command channels active`);
+  } catch (e) { api.v1.log(`${LOG_PREFIX} DOM command channel setup failed: ${e}`); }
+}
+
+// ============================================================================
+// UI PANEL — sidebarPanel with proxy command channels
+// ============================================================================
+
+async function buildPanel(): Promise<any> {
+  return api.v1.ui.part.column({
+    content: [
+      api.v1.ui.part.text({ text: 'PowerTool v4.0.0 — Electron Bridge' }),
+      // Lore command channel
+      api.v1.ui.part.textInput({
+        initialValue: '',
+        placeholder: '__LORE_PROXY_CMD__',
+        onChange: (text: string) => { processLoreCommand(text); },
+      }),
+      api.v1.ui.part.text({
+        text: '__LORE_PROXY_RES__' + loreResponsePayload + '__LORE_PROXY_END__',
+      }),
+      // Memory command channel
+      api.v1.ui.part.textInput({
+        initialValue: '',
+        placeholder: '__MEMORY_PROXY_CMD__',
+        onChange: (text: string) => { processMemoryCommand(text); },
+      }),
+      api.v1.ui.part.text({
+        text: '__MEMORY_PROXY_RES__' + memoryResponsePayload + '__MEMORY_PROXY_END__',
+      }),
+    ],
+  });
+}
+
+// ============================================================================
 // HOOK — onGenerationEnd
 // ============================================================================
 
-// Lightweight hook: reads story text, broadcasts via DOM, signals Electron.
-// All LLM work (prompt gen, suggestions, character extraction) is handled
-// by the Electron app — the script never calls api.v1.generate().
 function registerHooks(): void {
   api.v1.hooks.register('onGenerationEnd', async () => {
     try {
       await refreshStoryIdentity();
-
-      // Read full story text
       let storyText = '';
       const scanResults = await api.v1.document.scan();
       for (const { section } of scanResults) {
         if (section.text) storyText += section.text + '\n';
       }
-
       if (storyText.length >= 100) {
         broadcastStoryText(storyText);
         broadcastGenerationEnded(storyText.length);
       }
     } catch (e) {
-      api.v1.error('[PowerTool] Error in onGenerationEnd hook:', e);
+      api.v1.error(`${LOG_PREFIX} Error in onGenerationEnd hook:`, e);
     }
   });
 }
-
-// No UI panel registered — bridge-only script.
-// Registering a scriptPanel interferes with the Lore Creator Proxy's
-// sidebarPanel registration (NovelAI only renders one panel at a time).
 
 // ============================================================================
 // INITIALIZATION
@@ -170,80 +605,135 @@ function registerHooks(): void {
 
 async function initialize(): Promise<void> {
   try {
-    api.v1.log('[PowerTool] Initializing v3.0.0 (bridge mode)...');
+    api.v1.log(`${LOG_PREFIX} Initializing v4.0.0 (unified)...`);
 
-    // Request storyEdit permission (needed for suggestion insertion via document.append)
-    const hasPermissions = await api.v1.permissions.request(['storyEdit']);
+    // Request permissions
+    let hasPermissions = false;
+    try {
+      hasPermissions = await api.v1.permissions.request(['storyEdit', 'lorebookEdit']);
+    } catch (e) {
+      try { hasPermissions = await api.v1.permissions.request(['storyEdit']); } catch (_) {}
+    }
     if (!hasPermissions) {
-      api.v1.log('[PowerTool] storyEdit permission not granted — suggestion insertion may not work');
+      api.v1.log(`${LOG_PREFIX} Permissions not fully granted`);
     }
 
     // Extract story identity
     try {
       if ((api.v1 as any).story?.id) {
         const id = await (api.v1 as any).story.id();
-        if (id) {
-          currentStoryId = String(id);
-          api.v1.log(`[PowerTool] Story ID from API: ${currentStoryId}`);
-        }
+        if (id) { currentStoryId = String(id); api.v1.log(`${LOG_PREFIX} Story ID: ${currentStoryId}`); }
       }
-
-      // Fall back to storyStorage-based UUID
       if (!currentStoryId) {
         const stored = await api.v1.storyStorage.get('sceneVisualizerStoryId');
-        if (stored) {
-          currentStoryId = stored;
-          api.v1.log(`[PowerTool] Story ID from storage: ${currentStoryId}`);
-        } else {
+        if (stored) { currentStoryId = stored; }
+        else {
           currentStoryId = 'sv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
           await api.v1.storyStorage.set('sceneVisualizerStoryId', currentStoryId);
-          api.v1.log(`[PowerTool] Generated new story ID: ${currentStoryId}`);
         }
       }
-
-      // Try to get story title
       if ((api.v1 as any).story?.title?.get) {
         const title = await (api.v1 as any).story.title.get();
-        if (title) {
-          currentStoryTitle = String(title);
-          api.v1.log(`[PowerTool] Story title: ${currentStoryTitle}`);
-        }
+        if (title) currentStoryTitle = String(title);
       }
-
       broadcastStoryContext();
     } catch (e) {
-      api.v1.log('[PowerTool] Could not extract story identity (non-fatal):' + e);
+      api.v1.log(`${LOG_PREFIX} Story identity (non-fatal): ${e}`);
     }
 
     await getStorage();
     registerHooks();
 
-    // Expose insertion function for Electron to call via webview.executeJavaScript
+    // Register sidebarPanel (persistent), fallback to scriptPanel
+    const panelTypes = ['sidebarPanel', 'scriptPanel'];
+    let registeredType = '';
+
+    const updatePanel = async () => {
+      if (!registeredType) return;
+      try {
+        const panel = await buildPanel();
+        await api.v1.ui.update([
+          (api.v1.ui.extension as any)[registeredType]({
+            id: 'powertoolPanel',
+            name: 'PowerTool',
+            content: [panel],
+          }),
+        ]);
+      } catch (e) {
+        api.v1.error(`${LOG_PREFIX} Panel update error:`, e);
+      }
+    };
+    panelUpdateFn = updatePanel;
+
+    for (const panelType of panelTypes) {
+      try {
+        const initialPanel = await buildPanel();
+        await api.v1.ui.register([
+          (api.v1.ui.extension as any)[panelType]({
+            id: 'powertoolPanel',
+            name: 'PowerTool',
+            content: [initialPanel],
+          }),
+        ]);
+        registeredType = panelType;
+        api.v1.log(`${LOG_PREFIX} Registered as ${panelType}`);
+        break;
+      } catch (e) {
+        api.v1.log(`${LOG_PREFIX} ${panelType} registration failed, trying next...`);
+      }
+    }
+
+    // Expose proxy interfaces on globalThis
+    (globalThis as any).__loreCreator = {
+      isReady: () => true,
+      getEntries: proxyGetEntries,
+      getEntriesExpanded: proxyGetEntriesExpanded,
+      createEntry: proxyCreateEntry,
+      updateEntry: proxyUpdateEntry,
+      deleteEntry: proxyDeleteEntry,
+      createCategory: proxyCreateCategory,
+      getCategories: proxyGetCategories,
+      getStoryText: proxyGetStoryText,
+      inspectEntry: proxyInspectEntry,
+      inspectCategory: proxyInspectCategory,
+      testAdvancedWrite: proxyTestAdvancedWrite,
+      batchUpdateAdvanced: proxyBatchUpdateAdvanced,
+    };
+
+    (globalThis as any).__memoryProxy = {
+      isReady: () => true,
+      getMemory: proxyGetMemory,
+      setMemory: proxySetMemory,
+      getStoryText: proxyGetStoryText,
+      countTokens: proxyCountTokens,
+    };
+
+    // Expose insertion function for Electron
     (globalThis as any).__sceneVisInsert = async (text: string): Promise<boolean> => {
       try {
         await api.v1.document.append('\n' + text);
-        api.v1.log(`[PowerTool] Insertion via document.append: "${text.slice(0, 50)}..."`);
+        api.v1.log(`${LOG_PREFIX} Insertion via document.append: "${text.slice(0, 50)}..."`);
         return true;
       } catch (e) {
-        api.v1.log('[PowerTool] document.append failed: ' + e);
         try {
-          if (api.v1.prefill?.set) {
-            await api.v1.prefill.set(text);
-            api.v1.log(`[PowerTool] Insertion via prefill.set: "${text.slice(0, 50)}..."`);
-            return true;
-          }
-        } catch (e2) {
-          api.v1.log('[PowerTool] prefill.set also failed: ' + e2);
-        }
+          if (api.v1.prefill?.set) { await api.v1.prefill.set(text); return true; }
+        } catch (_) {}
         return false;
       }
     };
 
-    api.v1.ui.toast('PowerTool bridge loaded', { autoClose: 2000, type: 'success' });
-    api.v1.log('[PowerTool] v3.0.0 initialization complete (bridge mode)');
+    // DOM response + command channels
+    try {
+      ensureDomElement(DOM_IDS.loreRes);
+      ensureDomElement(DOM_IDS.memoryRes);
+    } catch (_) {}
+    setupDomCommandChannel();
+
+    api.v1.ui.toast('PowerTool loaded', { autoClose: 2000, type: 'success' });
+    api.v1.log(`${LOG_PREFIX} v4.0.0 ready (lore + memory + DOM channels active)`);
 
   } catch (e) {
-    api.v1.error('[PowerTool] Initialization failed:', e);
+    api.v1.error(`${LOG_PREFIX} Initialization failed:`, e);
     api.v1.ui.toast('PowerTool failed to load', { autoClose: 5000, type: 'error' });
   }
 }
