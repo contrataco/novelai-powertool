@@ -1909,6 +1909,10 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
     const loreState = db.getLoreState(storyId) || {};
     const effectiveSettings = { ...settings, customCategories: loreState.customCategories || [] };
     if (scanOptions) {
+      if (scanOptions.fullRescan) {
+        effectiveSettings._fullRescan = true;
+        effectiveSettings._categoryMap = scanOptions.categoryMap || null;
+      }
       if (scanOptions.categoryFilter) {
         const registry = loreCreator.buildCategoryRegistry(loreState.customCategories);
         const allCatIds = loreCreator.getCategoryIds(registry);
@@ -1954,11 +1958,15 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       'Lore scan'
     );
 
-    // Extract transient optimization data before saving (renderer-only, not persisted)
+    // Extract transient data before saving (renderer-only, not persisted)
     const pendingOptimizations = result.state._pendingOptimizations || [];
     delete result.state._pendingOptimizations;
+    const proposedGroups = result.state._proposedGroups || [];
+    delete result.state._proposedGroups;
+    const pendingCategoryMoves = result.state._pendingCategoryMoves || [];
+    delete result.state._pendingCategoryMoves;
 
-    // Save updated state
+    // Save updated state (customCategories are per-story in lore_state, not global loreSettings)
     db.setLoreState(storyId, result.state);
 
     // Persona extraction (all stories with character entries)
@@ -2006,8 +2014,16 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       // Fire-and-forget — lore scan result returns immediately
       (async () => {
         try {
+          // Include pending entries from lore scan as pseudo-lorebook entries for R1
+          const pendingAsEntries = (result.state.pendingEntries || []).map(pe => ({
+            displayName: pe.displayName,
+            keys: pe.keys || [],
+            text: pe.text || '',
+            category: pe.category,
+          }));
+          const allEntriesForRPG = [...(existingEntries || []), ...pendingAsEntries];
           const rpgResult = await litrpgTracker.scanForRPGData(
-            storyText, rpgState, existingEntries || [], generateTextFn,
+            storyText, rpgState, allEntriesForRPG, generateTextFn,
             (progress) => {
               if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('litrpg:scan-progress', progress);
@@ -2054,7 +2070,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       }
     }
 
-    return { success: true, ...result, pendingOptimizations };
+    return { success: true, ...result, pendingOptimizations, proposedGroups, pendingCategoryMoves };
   } catch (e) {
     console.error('[Main] Lore scan failed:', e.message);
     return { success: false, error: e.message };

@@ -2266,6 +2266,291 @@ async function pass6_optimizeLorebook(ctx) {
   return optimized;
 }
 
+const CUSTOM_CAT_COLORS = ['#ff9900', '#00bcd4', '#e91e63', '#8bc34a', '#9c27b0', '#ff5722', '#607d8b', '#cddc39', '#3f51b5', '#009688'];
+
+function slugifyCategory(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+async function pass7_semanticGrouping(ctx) {
+  const { existingEntries, generateTextFn, onProgress, state } = ctx;
+  let groupsProposed = 0;
+
+  // Collect all entries: existing lorebook + newly generated pending
+  const pendingEntries = state.pendingEntries || [];
+  const allEntries = [
+    ...existingEntries.map(e => ({
+      name: e.displayName,
+      type: getEntryType(e.text, e.displayName),
+      source: 'existing',
+      id: e.id,
+      currentCategory: e.category || null,
+    })),
+    ...pendingEntries.map(e => ({
+      name: e.displayName,
+      type: e.category || getEntryType(e.text, e.displayName),
+      source: 'pending',
+      id: e.id,
+      currentCategory: null,
+    })),
+  ];
+
+  if (allEntries.length < 2) return 0;
+
+  if (onProgress) onProgress({ phase: 'semantic-grouping' });
+  console.log(`${LOG_PREFIX} Pass 7: Semantic grouping for ${allEntries.length} entries (${existingEntries.length} existing, ${pendingEntries.length} pending)`);
+
+  const entryList = allEntries.map(e => `- ${e.name} (currently: ${e.type})`).join('\n');
+
+  const messages = [
+    {
+      role: 'system',
+      content: 'You are a lorebook organizer for fiction. Create a bespoke category structure optimized for this specific story. You are not limited to standard categories — invent new ones when the story calls for it.',
+    },
+    {
+      role: 'user',
+      content: `Design the ideal lorebook category structure for this story's entries:
+
+${entryList}
+
+You may use any of the 5 standard categories (Characters, Locations, Items, Factions, Concepts) OR create entirely new ones that better fit this story. Examples of custom categories: "Party Members", "Game Mechanics", "City Districts", "Rival Factions", "World Lore", "Quest Lines", "System Abilities", "Supporting Cast".
+
+Rules:
+- Create categories that meaningfully group related entries
+- Keep category names short (2-4 words)
+- Each entry must appear in exactly one category
+- Single-entry categories are fine if the entry is unique enough to warrant it
+- For each category, suggest a hex color code that fits its theme
+- Include a "isNovel" boolean: true if this is a custom category, false if it maps to a standard type (character/location/item/faction/concept)
+
+Output JSON: {"groups": [{"name": "Category Name", "color": "#hex", "isNovel": true, "entries": ["Entry Name 1", "Entry Name 2"]}]}`,
+    },
+  ];
+
+  try {
+    const result = await callLLM(generateTextFn, messages, { maxTokens: 800, label: 'pass7-semantic-grouping' });
+    const parsed = recoverJSON(result.raw);
+
+    if (parsed?.groups && Array.isArray(parsed.groups)) {
+      // Build name → proposed category mapping
+      const nameToGroup = {};
+      for (const group of parsed.groups) {
+        if (!group.name || !Array.isArray(group.entries)) continue;
+        for (const entryName of group.entries) {
+          nameToGroup[entryName.toLowerCase()] = group.name;
+        }
+      }
+
+      // Apply to pending entries
+      for (const pe of pendingEntries) {
+        const proposed = nameToGroup[pe.displayName.toLowerCase()];
+        if (proposed) {
+          pe.proposedSubCategory = proposed;
+          groupsProposed++;
+        }
+      }
+
+      // Build category move proposals for existing entries
+      const categoryMoves = [];
+      for (const entry of allEntries) {
+        if (entry.source !== 'existing') continue;
+        const proposed = nameToGroup[entry.name.toLowerCase()];
+        if (proposed) {
+          categoryMoves.push({
+            entryId: entry.id,
+            entryName: entry.name,
+            currentCategory: entry.currentCategory,
+            proposedCategory: proposed,
+          });
+        }
+      }
+      if (categoryMoves.length > 0) {
+        state._pendingCategoryMoves = categoryMoves;
+        console.log(`${LOG_PREFIX} Pass 7: ${categoryMoves.length} existing entries proposed for category reassignment`);
+      }
+
+      // Auto-register novel categories as custom categories (persisted via state)
+      if (!state.customCategories) state.customCategories = [];
+      const existingIds = new Set(state.customCategories.map(c => c.id));
+      const builtinNames = new Set(['characters', 'locations', 'items', 'factions', 'concepts']);
+      let colorIdx = state.customCategories.length;
+
+      for (const group of parsed.groups) {
+        if (!group.name) continue;
+        const id = slugifyCategory(group.name);
+        if (!id || existingIds.has(id) || builtinNames.has(id)) continue;
+
+        // Skip if it maps to a standard type
+        if (group.isNovel === false) continue;
+
+        const color = (group.color && /^#[0-9a-fA-F]{6}$/.test(group.color))
+          ? group.color
+          : CUSTOM_CAT_COLORS[colorIdx % CUSTOM_CAT_COLORS.length];
+
+        // Derive singular/plural
+        const displayName = group.name;
+        const singularName = displayName.endsWith('s') && displayName.length > 3
+          ? displayName.slice(0, -1) : displayName;
+
+        state.customCategories.push({
+          id,
+          displayName,
+          singularName,
+          color,
+          isBuiltin: false,
+          template: null,
+        });
+        existingIds.add(id);
+        colorIdx++;
+
+        console.log(`${LOG_PREFIX} Pass 7: Registered custom category "${displayName}" (${id})`);
+      }
+
+      // Store proposed groups (transient)
+      state._proposedGroups = parsed.groups;
+
+      console.log(`${LOG_PREFIX} Pass 7: Proposed ${parsed.groups.length} categories, ${groupsProposed} pending entries tagged, ${state.customCategories.length} custom categories registered`);
+    }
+  } catch (err) {
+    console.error(`${LOG_PREFIX} Pass 7 semantic grouping failed: ${err.message}`);
+  }
+
+  return groupsProposed;
+}
+
+// ============================================================================
+// Pass 0b: Classify unknown entries & add metadata
+// ============================================================================
+
+async function pass0b_classifyAndMetadata(ctx) {
+  const { existingEntries, generateTextFn, onProgress, state, settings } = ctx;
+  let cleanupsAdded = 0;
+
+  if (!state.pendingCleanups) state.pendingCleanups = [];
+  const existingCleanupKeys = new Set(state.pendingCleanups.map(c => c.id));
+  const dismissedSet = new Set(state.dismissedCleanupIds || []);
+
+  if (onProgress) onProgress({ phase: 'classifying-entries' });
+  console.log(`${LOG_PREFIX} Pass 0b: Checking ${existingEntries.length} entries for missing/unknown type metadata`);
+
+  const needsClassification = [];
+  const needsMetadataHeader = [];
+
+  for (const entry of existingEntries) {
+    const entryType = getEntryType(entry.text, entry.displayName);
+    const hasMeta = hasMetadata(entry.text);
+
+    if (entryType === 'unknown') {
+      needsClassification.push(entry);
+    } else if (!hasMeta) {
+      // Has a deterministic type but no @type header — propose adding metadata
+      const cleanupId = `add-meta_${entry.id || entry.displayName}`;
+      if (!dismissedSet.has(cleanupId) && !existingCleanupKeys.has(cleanupId)) {
+        needsMetadataHeader.push({ entry, classifiedType: entryType, cleanupId });
+      }
+    }
+  }
+
+  // Classify unknown entries via LLM
+  if (needsClassification.length > 0) {
+    console.log(`${LOG_PREFIX} Pass 0b: ${needsClassification.length} entries need LLM classification`);
+    const classified = await classifyUnknownEntries(needsClassification, generateTextFn, settings.customCategories || []);
+
+    for (const c of classified) {
+      const cleanupId = `add-meta_${c.entryId || c.displayName}`;
+      if (dismissedSet.has(cleanupId) || existingCleanupKeys.has(cleanupId)) continue;
+
+      state.pendingCleanups.push({
+        id: cleanupId,
+        type: 'add-metadata',
+        entryId: c.entryId,
+        displayName: c.displayName,
+        proposedType: c.suggestedType,
+        confidence: c.confidence,
+      });
+      cleanupsAdded++;
+    }
+  }
+
+  // Add metadata headers for entries that have a known type but no @type header
+  for (const { entry, classifiedType, cleanupId } of needsMetadataHeader) {
+    state.pendingCleanups.push({
+      id: cleanupId,
+      type: 'add-metadata',
+      entryId: entry.id,
+      displayName: entry.displayName,
+      proposedType: classifiedType,
+    });
+    cleanupsAdded++;
+  }
+
+  console.log(`${LOG_PREFIX} Pass 0b: ${cleanupsAdded} metadata cleanups proposed`);
+  return cleanupsAdded;
+}
+
+// ============================================================================
+// Pass 0c: Recategorize misplaced entries
+// ============================================================================
+
+async function pass0c_recategorize(ctx) {
+  const { existingEntries, state, settings } = ctx;
+  let cleanupsAdded = 0;
+
+  if (!state.pendingCleanups) state.pendingCleanups = [];
+  const existingCleanupKeys = new Set(state.pendingCleanups.map(c => c.id));
+  const dismissedSet = new Set(state.dismissedCleanupIds || []);
+  const categoryMap = ctx.categoryMap;
+
+  if (!categoryMap) return 0;
+
+  const registry = buildCategoryRegistry(settings.customCategories || []);
+
+  console.log(`${LOG_PREFIX} Pass 0c: Checking ${existingEntries.length} entries for category placement`);
+
+  for (const entry of existingEntries) {
+    const entryType = getEntryType(entry.text, entry.displayName);
+    if (entryType === 'unknown') continue;
+
+    // Find the expected category definition from the registry
+    const expectedCat = registry.find(c => c.id === entryType);
+    if (!expectedCat) continue;
+
+    // Look up the expected NovelAI category UUID from the categoryMap
+    const expectedCategoryId = categoryMap[expectedCat.displayName] || categoryMap[expectedCat.id];
+    const currentCategory = entry.category || null;
+
+    // Determine cleanup type
+    let cleanupType = null;
+    if (!currentCategory) {
+      // Entry is uncategorized — legacy move
+      cleanupType = 'legacy-move';
+    } else if (expectedCategoryId && currentCategory !== expectedCategoryId) {
+      // Entry is in the wrong category
+      cleanupType = 'recategorize';
+    }
+
+    if (!cleanupType) continue;
+
+    const cleanupId = `${cleanupType}_${entry.id || entry.displayName}`;
+    if (dismissedSet.has(cleanupId) || existingCleanupKeys.has(cleanupId)) continue;
+
+    state.pendingCleanups.push({
+      id: cleanupId,
+      type: cleanupType,
+      entryId: entry.id,
+      displayName: entry.displayName,
+      currentCategory,
+      expectedType: entryType,
+      expectedCategoryName: expectedCat.displayName,
+      expectedCategoryId: expectedCategoryId || null,
+    });
+    cleanupsAdded++;
+  }
+
+  console.log(`${LOG_PREFIX} Pass 0c: ${cleanupsAdded} recategorization cleanups proposed`);
+  return cleanupsAdded;
+}
+
 // ============================================================================
 // SCAN ORCHESTRATOR
 // ============================================================================
@@ -2347,29 +2632,49 @@ async function scanForLore(storyText, settings, existingEntries, state, generate
   // Work on a copy of state (moved before Pass 0 so dedup cleanups can be added)
   const updatedState = JSON.parse(JSON.stringify(state));
 
+  // Full rescan: clear tracking state so all passes run from scratch
+  if (settings._fullRescan) {
+    updatedState.charsSinceLastScan = 0;
+    updatedState.lastProcessedLength = 0;
+    updatedState.rejectedNames = [];
+    updatedState.dismissedUpdateNames = [];
+    updatedState.dismissedCleanupIds = [];
+    console.log(`${LOG_PREFIX} Full rescan: cleared tracking state`);
+  }
+
   // Build shared context for pass functions
   const ctx = {
     storyText, settings, existingEntries, generateTextFn,
     onProgress, comprehensionContext, secondaryGenerateTextFn,
     state: updatedState, originalState: state,
     hybrid: null, // set after Pass 1
+    categoryMap: settings._categoryMap || null,
   };
 
   // Pass 0: Proactive deduplication (gated: >=6 entries AND >=2000 chars story text)
-  if (existingEntries.length >= 6 && storyText.length >= 2000) {
+  if (settings._fullRescan || (existingEntries.length >= 6 && storyText.length >= 2000)) {
     await pass0_deduplication(ctx);
+  }
+
+  // Pass 0b: Classify unknown entries & add metadata
+  await pass0b_classifyAndMetadata(ctx);
+
+  // Pass 0c: Recategorize misplaced entries
+  if (ctx.categoryMap) {
+    await pass0c_recategorize(ctx);
   }
 
   // Pass 1: Identify elements
   const pass1Result = await pass1_identifyElements(ctx);
   if (pass1Result.empty) {
-    // No elements identified at all — return original state (matches original behavior)
-    return { state, noResults: true };
+    // No elements identified — return updatedState if Pass 0/0b/0c added cleanups
+    const hasCleanups = (updatedState.pendingCleanups || []).length > (state.pendingCleanups || []).length;
+    return { state: hasCleanups ? updatedState : state, noResults: !hasCleanups };
   }
   if (pass1Result.allKnown) {
-    // All elements already known — return updatedState if Pass 0 added dedup cleanups
-    const hasDedup = (updatedState.pendingCleanups || []).length > (state.pendingCleanups || []).length;
-    return { state: hasDedup ? updatedState : state, noResults: !hasDedup };
+    // All elements already known — return updatedState if Pass 0/0b/0c added cleanups
+    const hasCleanups = (updatedState.pendingCleanups || []).length > (state.pendingCleanups || []).length;
+    return { state: hasCleanups ? updatedState : state, noResults: !hasCleanups };
   }
 
   const { newElements, existingElements, mergeElements } = pass1Result;
@@ -2403,10 +2708,13 @@ async function scanForLore(storyText, settings, existingEntries, state, generate
     optimized = await pass6_optimizeLorebook(ctx);
   }
 
+  // Pass 7: Semantic sub-category grouping
+  const groupsProposed = await pass7_semanticGrouping(ctx);
+
   // Reset scan tracking
   updatedState.charsSinceLastScan = 0;
 
-  const summary = { generated, mergesFound, updatesFound, relationshipUpdatesFound, reformatsFound, nameProposals, optimized };
+  const summary = { generated, mergesFound, updatesFound, relationshipUpdatesFound, reformatsFound, nameProposals, optimized, groupsProposed };
   console.log(`${LOG_PREFIX} Scan complete:`, summary);
 
   return { state: updatedState, summary };

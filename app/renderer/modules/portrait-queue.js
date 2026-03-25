@@ -2,9 +2,7 @@
  * Portrait Queue — sequential portrait generation with progress UI.
  * Listens for new character events and auto-enqueues when enabled.
  */
-import { bus } from './state.js';
-
-let state = null;
+import { state, bus } from './state.js';
 let queue = [];
 let isProcessing = false;
 let currentIndex = 0;
@@ -105,9 +103,7 @@ export function cancel() {
   queue = [];
 }
 
-export async function init(appState) {
-  state = appState;
-
+export async function init() {
   try {
     const settings = await window.powertool.getSettings?.();
     autoGenEnabled = settings?.autoGeneratePortraits !== false;
