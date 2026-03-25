@@ -2851,8 +2851,52 @@ function reverseSyncCharacter(entryText, entryName, rpgState) {
   return { changed: changes.length > 0, isNew: false, parsed, charId, changes };
 }
 
+/**
+ * Deterministic portrait prompt from visual + RPG data. No LLM call.
+ * Returns null if insufficient visual data (< 3 fields populated).
+ */
+function assemblePortraitPrompt(rpgData) {
+  const v = rpgData?.visual || {};
+  const race = v.race || rpgData?.race; // visual race preferred, RPG race as fallback
+  const fields = [v.hair, v.eyes, v.build, race, v.distinguishingFeatures, v.skinTone, v.clothing];
+  const populated = fields.filter(Boolean);
+  if (populated.length < 3) return null;
+
+  const parts = ['portrait', 'upper body', 'solo'];
+  if (race) parts.push(race);
+  if (v.build) parts.push(v.build);
+  if (v.hair) parts.push(v.hair);
+  if (v.eyes) parts.push(v.eyes);
+  if (v.skinTone) parts.push(v.skinTone);
+
+  // Class-appropriate attire from RPG data
+  const cls = rpgData?.class;
+  if (cls) parts.push(`${cls}-appropriate attire`);
+
+  // Key equipment (max 2 items)
+  const equipment = (rpgData?.equipment || []).slice(0, 2).map(e => e.name).filter(Boolean);
+  if (equipment.length) parts.push(equipment.join(', '));
+
+  if (v.distinguishingFeatures) parts.push(v.distinguishingFeatures);
+  if (v.clothing && !cls) parts.push(v.clothing);
+
+  parts.push('detailed face', 'character art', 'white background');
+  return parts.join(', ');
+}
+
 async function generatePortraitPrompt(characterEntryText, rpgData, generateTextFn) {
-  const equipmentStr = (rpgData.equipment || []).map(e => e.name).join(', ') || 'none specified';
+  // Try deterministic assembly first (no LLM cost)
+  const deterministic = assemblePortraitPrompt(rpgData);
+  if (deterministic) return deterministic;
+
+  // LLM fallback when visual data is sparse
+  const equipmentStr = (rpgData?.equipment || []).map(e => e.name).join(', ') || 'none specified';
+  const visualHints = rpgData?.visual || {};
+  const visualStr = Object.entries(visualHints)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(', ') || 'no visual data';
+
   const messages = [
     {
       role: 'system',
@@ -2865,12 +2909,15 @@ async function generatePortraitPrompt(characterEntryText, rpgData, generateTextF
 CHARACTER:
 ${characterEntryText}
 
+VISUAL DATA:
+${visualStr}
+
 RPG DATA:
-Class: ${rpgData.class || 'unknown'}
-Race: ${rpgData.race || 'unknown'}
+Class: ${rpgData?.class || 'unknown'}
+Race: ${rpgData?.race || 'unknown'}
 Equipment: ${equipmentStr}
 
-Write a single-line prompt for a fantasy character portrait. Focus on: race, physical appearance, class-appropriate attire, notable equipment. Format: "portrait, upper body, [descriptors], fantasy art"`
+Write a single-line prompt for a fantasy character portrait. Format: "portrait, upper body, solo, [race], [physical descriptors], [class attire], [equipment], detailed face, character art, white background"`
     }
   ];
 
@@ -3050,6 +3097,7 @@ module.exports = {
   buildLitRPGCharacterText,
   spliceField,
   spliceSection,
+  assemblePortraitPrompt,
   generatePortraitPrompt,
   parseRPGFromEntryText,
   reverseSyncCharacter,
