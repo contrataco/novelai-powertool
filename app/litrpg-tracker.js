@@ -1731,6 +1731,97 @@ Only include entities from the list above. Keep descriptions concise (1-2 senten
 // ============================================================================
 
 /**
+ * R1 fallback: Discover characters directly from story text when no lorebook entries exist.
+ * Makes a single LLM call to identify characters and their RPG data from raw text.
+ */
+async function r1_discoverCharactersFromText(ctx) {
+  const { state, scanText, providers, systemType, onProgress, report } = ctx;
+  const typeConfig = SYSTEM_TYPE_PROMPTS[systemType] || SYSTEM_TYPE_PROMPTS.generic;
+
+  if (onProgress) onProgress({ phase: 'characters', current: 0, total: 1, subPhase: 'R1-discovery' });
+  console.log(`${LOG_PREFIX} R1-discovery: No lorebook entries — discovering characters from story text`);
+
+  const messages = [
+    {
+      role: 'system',
+      content: `You are an RPG character data extractor for ${typeConfig.contextHint || 'a LitRPG'} story. Identify all characters from the story text and extract their RPG attributes.`,
+    },
+    {
+      role: 'user',
+      content: `Identify all characters in this story text and extract their RPG data. Only include characters who are actual people/beings in the story (not game system names, place names, or abstract concepts).
+
+Story text:
+${scanText.slice(0, 6000)}
+
+For each character, extract whatever RPG data is available:
+- name (required)
+- class/subclass (if mentioned)
+- level (if mentioned)
+- race (if mentioned)
+- stats (any stat blocks like STR, DEX, etc.)
+- abilities/skills (if mentioned)
+- equipment (if mentioned)
+- role (tank/healer/dps/support/utility — if inferable)
+
+Output JSON: {"characters": [{"name": "Character Name", "class": "...", "subclass": null, "level": null, "race": null, "stats": {}, "abilities": [], "equipment": [], "role": null}]}
+
+Be thorough — include ALL named characters that appear in the text. Include even characters with minimal RPG data (just a name is fine).`,
+    },
+  ];
+
+  try {
+    const result = await callLLM(providers[0], messages, { maxTokens: 800, label: 'R1-discovery' });
+    const parsed = recoverJSON(result.raw);
+
+    if (parsed?.characters && Array.isArray(parsed.characters)) {
+      let discovered = 0;
+      for (const char of parsed.characters) {
+        if (!char.name || typeof char.name !== 'string') continue;
+
+        // Check if character already exists
+        const existingId = fuzzyMatchCharacter(char.name, state.characters);
+        if (existingId) continue;
+
+        const charId = generateRpgId('char');
+        state.characters[charId] = {
+          name: char.name,
+          loreEntryName: char.name,
+          class: char.class || null,
+          subclass: char.subclass || null,
+          level: char.level || null,
+          race: char.race || null,
+          stats: char.stats || {},
+          xp: null,
+          cultivationRealm: null,
+          cultivationStage: null,
+          role: char.role || null,
+          abilities: Array.isArray(char.abilities) ? char.abilities.map(a => typeof a === 'string' ? { name: a } : a) : [],
+          equipment: Array.isArray(char.equipment) ? char.equipment.map(e => typeof e === 'string' ? { name: e, slot: 'unknown' } : e) : [],
+          inventory: [],
+          currency: {},
+          statusEffects: [],
+          aliases: [],
+          isPartyMember: false,
+          isNPC: true,
+          partyRole: 'npc',
+          lastUpdated: Date.now(),
+        };
+        discovered++;
+        console.log(`${LOG_PREFIX} R1-discovery: Found "${char.name}"${char.class ? ` (${char.class})` : ''}`);
+      }
+
+      console.log(`${LOG_PREFIX} R1-discovery: Discovered ${discovered} characters from story text`);
+      report.passes.r1Discovery = { discovered, duration: Date.now() - report.startedAt };
+    }
+  } catch (err) {
+    console.error(`${LOG_PREFIX} R1-discovery failed:`, err.message);
+    report.errors.push({ pass: 'R1-discovery', category: 'other', message: err.message, timestamp: Date.now() });
+  }
+
+  if (onProgress) onProgress({ phase: 'characters', current: 1, total: 1, subPhase: 'R1-discovery' });
+}
+
+/**
  * Pass R1: Character RPG Extraction (R1a core stats + R1b gear/abilities)
  */
 async function r1_extractCharacterRPG(ctx) {
@@ -2294,6 +2385,10 @@ async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, 
   };
 
   // --- R1: Character RPG Extraction ---
+  // Fallback: discover characters from text when no lorebook character entries exist
+  if (characterEntries.length === 0) {
+    await r1_discoverCharactersFromText(ctx);
+  }
   await r1_extractCharacterRPG(ctx);
   const newCharacterIds = Object.keys(state.characters || {}).filter(id => !preR1CharIds.has(id));
   await delay(INTER_CALL_DELAY);

@@ -1,0 +1,37 @@
+name: Polish / Improvement
+description: UI/UX refinement, code quality, or developer experience improvement
+labels: ["polish"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What needs improvement?
+      description: Describe the current state and what should change
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Changes
+      description: Specific changes to make
+    validations:
+      required: true
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - UI/UX visual polish
+        - Code quality / refactor
+        - Performance optimization
+        - Accessibility
+        - Developer experience
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Files Likely Affected
+      description: List the files that would need changes
+      render: text

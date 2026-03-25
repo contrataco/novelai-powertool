@@ -132,6 +132,18 @@ function rebuildCategoryUI() {
   // Rebuild scan menu
   if (loreScanMenu) {
     loreScanMenu.innerHTML = '';
+
+    const fullScanBtn = document.createElement('button');
+    fullScanBtn.dataset.scan = 'full';
+    fullScanBtn.textContent = 'Full Scan';
+    fullScanBtn.style.cssText = 'font-weight:700;border-bottom:1px solid #333;';
+    fullScanBtn.addEventListener('click', () => {
+      state.scanMenuOpen = false;
+      loreScanMenu.style.display = 'none';
+      runLoreScan('full');
+    });
+    loreScanMenu.appendChild(fullScanBtn);
+
     const allBtn = document.createElement('button');
     allBtn.dataset.scan = 'all';
     allBtn.textContent = 'Scan All';
@@ -814,7 +826,7 @@ function createEntryCard(entry) {
 
   card.innerHTML = `
     <div class="lore-card-header">
-      <span class="category-badge editable ${entry.category || ''}" title="Click to change type">${((getCategoryDef(entry.category) || {}).singularName || entry.category || '').toUpperCase()}</span>
+      <span class="category-badge editable ${entry.category || ''}" title="Click to change type">${((getCategoryDef(entry.category) || {}).singularName || entry.category || '').toUpperCase()}</span>${entry.proposedSubCategory ? `<span class="category-badge" style="background:#0f3460;color:#8ab4f8;font-size:9px;margin-left:2px" title="Will be grouped into: ${escapeHtml(entry.proposedSubCategory)}">${escapeHtml(entry.proposedSubCategory)}</span>` : ''}
       <span class="entry-name">${escapeHtml(entry.displayName)}${metaBadge}</span>
     </div>
     <div class="lore-card-text"><span class="expand-hint">&#9660;</span>${escapeHtml(entry.text)}</div>
@@ -990,11 +1002,29 @@ async function acceptEntry(entryId) {
   } catch (e) { /* proceed on error */ }
 
   try {
-    // Determine category: prefer @type metadata if present, fall back to entry.category
-    let entryCategory = entry.category;
-    const entryMeta = parseMetadataClient(entry.text);
-    if (entryMeta.type) entryCategory = entryMeta.type;
-    const categoryId = await getCategoryForType(entryCategory);
+    // Determine category: use proposed sub-category if available, else @type metadata, else entry.category
+    let categoryName = entry.proposedSubCategory || null;
+    let categoryId;
+    if (categoryName) {
+      // Use semantic sub-category name (e.g., "Party Members" instead of "Characters")
+      if (state.loreState.loreCategoryIds[categoryName]) {
+        categoryId = state.loreState.loreCategoryIds[categoryName];
+      } else {
+        try {
+          categoryId = await loreCall('createCategory', { name: categoryName });
+          if (categoryId) state.loreState.loreCategoryIds[categoryName] = categoryId;
+        } catch (e) {
+          console.warn('[Lore] Sub-category creation failed, falling back to type:', e.message);
+          categoryId = null;
+        }
+      }
+    }
+    if (!categoryId) {
+      let entryCategory = entry.category;
+      const entryMeta = parseMetadataClient(entry.text);
+      if (entryMeta.type) entryCategory = entryMeta.type;
+      categoryId = await getCategoryForType(entryCategory);
+    }
 
     const entryData = {
       displayName: entry.displayName,
@@ -1318,7 +1348,9 @@ async function runLoreScan(scanType = 'all') {
 
     // Build scan options based on type
     const scanOptions = {};
-    if (scanType === 'relationships') {
+    if (scanType === 'full') {
+      scanOptions.fullRescan = true;
+    } else if (scanType === 'relationships') {
       scanOptions.relationshipsOnly = true;
     } else if (scanType !== 'all') {
       scanOptions.categoryFilter = scanType;
@@ -1337,6 +1369,39 @@ async function runLoreScan(scanType = 'all') {
       await saveLoreState();
       state.loreLastStoryLength = storyText.length;
       state.loreLastScanAt = Date.now();
+
+      // Reload category registry if Pass 7 created new custom categories
+      if (result.state.customCategories && result.state.customCategories.length > 0) {
+        await loadCategoryRegistry();
+      }
+
+      // Apply Pass 7 category moves for existing entries (fire-and-forget)
+      if (result.pendingCategoryMoves && result.pendingCategoryMoves.length > 0 && state.loreProxyReady) {
+        (async () => {
+          try {
+            for (const move of result.pendingCategoryMoves) {
+              // Get or create the NovelAI category for the proposed name
+              let catId = state.loreState.loreCategoryIds?.[move.proposedCategory];
+              if (!catId) {
+                catId = await loreCall('createCategory', { name: move.proposedCategory });
+                if (catId) {
+                  if (!state.loreState.loreCategoryIds) state.loreState.loreCategoryIds = {};
+                  state.loreState.loreCategoryIds[move.proposedCategory] = catId;
+                }
+              }
+              if (catId && catId !== move.currentCategory) {
+                // Move entry to new category via proxy
+                await loreCall('updateEntry', move.entryId, { category: catId });
+                console.log(`[LoreCat] Moved "${move.entryName}" to "${move.proposedCategory}"`);
+              }
+            }
+            await saveLoreState();
+            console.log(`[LoreCat] Applied ${result.pendingCategoryMoves.length} category reassignments`);
+          } catch (e) {
+            console.log('[LoreCat] Failed to apply category moves:', e.message);
+          }
+        })();
+      }
 
       // Apply Pass 6 optimizations to lorebook via proxy (fire-and-forget)
       if (result.pendingOptimizations && result.pendingOptimizations.length > 0 && state.loreProxyReady) {
@@ -1367,6 +1432,7 @@ async function runLoreScan(scanType = 'all') {
         if (result.summary.relationshipUpdatesFound > 0) parts.push(`${result.summary.relationshipUpdatesFound} relationship updates`);
         if (result.summary.nameProposals > 0) parts.push(`${result.summary.nameProposals} name updates`);
         if (result.summary.optimized > 0) parts.push(`${result.summary.optimized} optimized`);
+        if (result.summary.groupsProposed > 0) parts.push(`${result.summary.groupsProposed} grouped`);
         showToast(`Found ${parts.join(' and ')}`);
       }
     } else {
@@ -2638,6 +2704,7 @@ export function init() {
   });
 
   // Organize
+  if (loreOrganizeBtn) loreOrganizeBtn.style.display = 'none';
   loreOrganizeBtn.addEventListener('click', () => runLoreOrganize());
 
   // Organize progress listener

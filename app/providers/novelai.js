@@ -72,13 +72,13 @@ const MODEL_CONFIG = {
   'nai-diffusion-4-5-full': { isV4: true, name: 'NAI Diffusion V4.5 Full' },
 };
 
-// Portrait generation preset (portrait aspect ratio, moderate steps, dedicated model)
+// Portrait generation preset (portrait aspect ratio, quality steps, dedicated model)
 const PORTRAIT_PRESET = {
-  width: 512,
-  height: 768,
-  steps: 20,
+  width: 832,
+  height: 1216,
+  steps: 28,
   model: 'nai-diffusion-4-5-curated',
-  negativePrompt: 'multiple people, full body, landscape, background clutter, text, watermark',
+  negativePrompt: 'multiple people, full body, landscape, background clutter, text, watermark, lowres, bad quality, worst quality, jpeg artifacts',
 };
 
 // Quality presets per model

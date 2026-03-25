@@ -245,10 +245,24 @@ export function init() {
   let webviewReady = false;
   let lastPolledStoryId = null;
 
-  webview.addEventListener('did-finish-load', () => {
+  webview.addEventListener('did-finish-load', async () => {
     status.textContent = 'Connected';
     status.className = 'status connected';
     webviewReady = true;
+
+    // Auto-navigate to stories dashboard if user is already authenticated
+    try {
+      const url = webview.getURL();
+      if (url === 'https://novelai.net/' || url === 'https://novelai.net') {
+        const { hasToken } = await window.powertool.getTokenStatus();
+        if (hasToken) {
+          console.log('[Renderer] Token found, navigating to stories dashboard');
+          webview.loadURL('https://novelai.net/stories');
+        }
+      }
+    } catch (e) {
+      console.error('[Renderer] Auto-navigate failed:', e);
+    }
   });
 
   webview.addEventListener('did-fail-load', (e) => {

@@ -2,9 +2,10 @@
 
 const { generateId, recoverJSON, fuzzyNameScore, callLLM } = require('./shared-utils');
 
-const EXPLICIT_BREAK_REGEX = /\n\s*(\*\s*\*\s*\*|\*{3,}|-{3,}|={3,})\s*\n/g;
-const CHAPTER_HEADER_REGEX = /\n\s*(Chapter\s+\d+|CHAPTER\s+\d+|Part\s+\d+|Act\s+\d+)[^\n]*/gi;
-const TIME_SKIP_REGEX = /(?:^|\n\n)\s*((?:The next|That|Three|Two|Several|A few|Many|Some)\s+(?:morning|evening|night|day|days|weeks|months|hours|years)\s+later|(?:Hours|Days|Weeks|Months|Years)\s+(?:later|passed|went by)|When\s+(?:they|she|he|we|I)\s+(?:arrived|returned|woke|came))/gi;
+const EXPLICIT_BREAK_REGEX = /\n\s*(\*\s*\*\s*\*|\*{3,}|-{3,}|={3,}|~{3,})\s*\n/g;
+const CHAPTER_HEADER_REGEX = /\n\s*(?:[—–-]+\s*)?(Chapter\s+(?:\d+|[IVXLC]+)|CHAPTER\s+(?:\d+|[IVXLC]+)|Part\s+(?:\d+|[IVXLC]+)|Act\s+(?:\d+|[IVXLC]+)|Scene\s+\d+|Prologue|Epilogue|Interlude|Intermission)[^\n]*/gi;
+const TIME_SKIP_REGEX = /(?:^|\n\n)\s*((?:The next|That|Three|Two|Several|A few|Many|Some|One|An?)\s+(?:morning|evening|night|day|days|weeks|months|hours|years?|moment|minute|minutes|second|seconds|hour|week|month)\s+(?:later|passed|went by|after|before|ago)|(?:Hours|Days|Weeks|Months|Years|Minutes|Moments)\s+(?:later|passed|went by|after|elapsed)|When\s+(?:they|she|he|we|I|it|the)\s+(?:arrived|returned|woke|came|got|left|reached|entered|stepped|walked)|(?:Later|Afterward|Eventually|Finally|At\s+(?:last|length)|Meanwhile|Elsewhere)(?:,|\.))/gi;
+const TRIPLE_NEWLINE_REGEX = /\n\s*\n\s*\n\s*\n/g;
 
 const TIMELINE_STATE_DEFAULTS = {
   version: 1,
@@ -15,7 +16,7 @@ const TIMELINE_STATE_DEFAULTS = {
   scanHistory: [],
   settings: {
     autoDetect: true,
-    minSceneLength: 300,
+    minSceneLength: 150,
     chapterGrouping: true,
   },
 };
@@ -69,6 +70,17 @@ function detectBoundariesHeuristic(storyText) {
     });
   }
 
+  // Triple+ newlines (common implicit scene break)
+  TRIPLE_NEWLINE_REGEX.lastIndex = 0;
+  while ((match = TRIPLE_NEWLINE_REGEX.exec(storyText)) !== null) {
+    boundaries.push({
+      offset: match.index,
+      type: 'explicit-break',
+      confidence: 0.6,
+      source: 'heuristic',
+    });
+  }
+
   // Sort by offset
   boundaries.sort((a, b) => a.offset - b.offset);
 
@@ -87,6 +99,93 @@ function detectBoundariesHeuristic(storyText) {
   }
 
   return deduped;
+}
+
+async function discoverBoundariesLLM(storyText, existingBoundaries, generateTextFn) {
+  const MAX_CHUNK = 6000;
+  const discovered = [];
+
+  // Process in chunks if story is long
+  const chunks = [];
+  for (let i = 0; i < storyText.length; i += MAX_CHUNK) {
+    chunks.push({ start: i, text: storyText.slice(i, i + MAX_CHUNK) });
+  }
+
+  for (const chunk of chunks) {
+    const messages = [
+      {
+        role: 'system',
+        content: 'You are a scene boundary detector for fiction. Identify where scenes change — a scene changes when there is a significant shift in location, time, point of view, or dramatic situation (e.g., moving from a kitchen to a street, a time jump, a new character taking focus, or a dramatic tonal shift like system messages appearing in a LitRPG).',
+      },
+      {
+        role: 'user',
+        content: `Identify all scene boundaries in this text. For each boundary, provide the exact quote (first 8-12 words) of the line WHERE THE NEW SCENE BEGINS, and the type of change.
+
+Text:
+${chunk.text}
+
+Output JSON: {"boundaries": [{"quote": "exact first words of the new scene's first line", "type": "location-change|time-skip|pov-shift|dramatic-shift", "reason": "brief explanation"}]}
+
+Be thorough — look for location changes, time jumps, POV shifts, tonal shifts, and any transition to a significantly different situation. Do NOT mark every paragraph as a boundary — only genuine scene changes.`,
+      },
+    ];
+
+    try {
+      const result = await callLLM(generateTextFn, messages, { maxTokens: 600, label: 'S1.5-boundary-discovery' });
+      const parsed = recoverJSON(result.raw);
+      if (parsed?.boundaries && Array.isArray(parsed.boundaries)) {
+        for (const b of parsed.boundaries) {
+          if (!b.quote || typeof b.quote !== 'string') continue;
+          // Find the quote in the chunk text
+          const searchText = b.quote.trim().slice(0, 60);
+          const idx = chunk.text.indexOf(searchText);
+          if (idx === -1) {
+            // Try case-insensitive partial match
+            const lower = chunk.text.toLowerCase();
+            const searchLower = searchText.toLowerCase();
+            const idxLower = lower.indexOf(searchLower);
+            if (idxLower === -1) continue;
+            discovered.push({
+              offset: chunk.start + idxLower,
+              type: BOUNDARY_TYPES.includes(b.type) ? b.type : 'dramatic-shift',
+              confidence: 0.75,
+              source: 'llm-discovery',
+            });
+          } else {
+            discovered.push({
+              offset: chunk.start + idx,
+              type: BOUNDARY_TYPES.includes(b.type) ? b.type : 'dramatic-shift',
+              confidence: 0.8,
+              source: 'llm-discovery',
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[Timeline] S1.5 LLM boundary discovery error:', err.message);
+    }
+  }
+
+  return discovered;
+}
+
+function mergeBoundaries(heuristicBoundaries, llmBoundaries) {
+  const all = [...heuristicBoundaries, ...llmBoundaries];
+  all.sort((a, b) => a.offset - b.offset);
+
+  // Deduplicate within 200 chars — keep highest confidence
+  const merged = [];
+  for (const b of all) {
+    const prev = merged[merged.length - 1];
+    if (prev && b.offset - prev.offset < 200) {
+      if (b.confidence > prev.confidence) {
+        merged[merged.length - 1] = b;
+      }
+    } else {
+      merged.push(b);
+    }
+  }
+  return merged;
 }
 
 function segmentIntoScenes(storyText, boundaries) {
@@ -474,8 +573,19 @@ async function scanForScenes(storyText, lorebookEntries, generateTextFn, existin
   const userChapters = (state.chapters || []).filter(ch => ch.titleSource === 'user');
 
   // S1: Heuristic boundary detection
-  onProgress?.({ phase: 'heuristic-detection', current: 0, total: 5 });
-  const boundaries = detectBoundariesHeuristic(storyText);
+  onProgress?.({ phase: 'heuristic-detection', current: 0, total: 6 });
+  let boundaries = detectBoundariesHeuristic(storyText);
+
+  // S1.5: LLM boundary discovery (when heuristics find too few)
+  const expectedMinBoundaries = Math.max(1, Math.floor(storyText.length / 2000));
+  if (boundaries.length < expectedMinBoundaries && storyText.length >= 500) {
+    onProgress?.({ phase: 'llm-boundary-discovery', current: 0, total: 6 });
+    const llmBoundaries = await discoverBoundariesLLM(storyText, boundaries, generateTextFn);
+    if (llmBoundaries.length > 0) {
+      boundaries = mergeBoundaries(boundaries, llmBoundaries);
+    }
+  }
+
   let scenes = segmentIntoScenes(storyText, boundaries);
 
   // S2: LLM scene analysis

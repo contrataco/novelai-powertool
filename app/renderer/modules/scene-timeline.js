@@ -156,6 +156,10 @@ function buildSceneCard(scene, isCurrent) {
     avatarsHTML += '</div>';
   }
 
+  const thumbHTML = scene._imageData
+    ? `<img src="data:image/png;base64,${scene._imageData}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #3a3a5e;flex-shrink:0;" alt="">`
+    : '';
+
   card.innerHTML = `
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
       <div style="flex:1;min-width:0;">
@@ -164,6 +168,7 @@ function buildSceneCard(scene, isCurrent) {
         ${badgesHTML ? `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;">${badgesHTML}</div>` : ''}
         ${avatarsHTML}
       </div>
+      ${thumbHTML}
     </div>
   `;
 
@@ -178,6 +183,7 @@ function buildSceneCard(scene, isCurrent) {
 
 /** Currently open scene ID (for nav arrows) */
 let explorerSceneId = null;
+let pendingImageForSceneId = null; // scene ID awaiting image generation
 
 /**
  * Open the scene explorer overlay for a given scene ID.
@@ -245,8 +251,9 @@ export function openSceneExplorer(sceneId) {
   bodyHTML += `
     <div style="margin-bottom:16px;">
       <div style="background:#22223a;border:1px dashed #3a3a5e;border-radius:8px;padding:20px;text-align:center;color:#888;">
-        ${scene.imageId
-          ? `<img src="scene-image://${escapeHtml(scene.imageId)}" style="max-width:100%;border-radius:6px;" alt="Scene image">`
+        ${scene._imageData
+          ? `<img src="data:image/png;base64,${scene._imageData}" style="max-width:100%;border-radius:6px;" alt="Scene image">
+             <button class="action-btn scene-gen-image-btn" data-scene-id="${escapeHtml(sceneId)}" style="background:#333;color:#aaa;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;margin-top:8px;">Regenerate</button>`
           : `<div style="font-size:12px;margin-bottom:10px;">No image generated yet</div>
              <button class="action-btn scene-gen-image-btn" data-scene-id="${escapeHtml(sceneId)}" style="background:#e94560;color:white;border:none;padding:5px 12px;border-radius:5px;cursor:pointer;font-size:12px;">Generate Scene Image</button>`
         }
@@ -416,6 +423,7 @@ export function openSceneExplorer(sceneId) {
       state.prompt.raw = sceneText;
       state.prompt.edited = false;
       state.prompt.source = 'timeline';
+      pendingImageForSceneId = genImageBtn.dataset.sceneId;
       if (promptDisplay) promptDisplay.value = sceneText;
       closeSceneExplorer();
       switchPanelTab('scene');
@@ -658,5 +666,30 @@ export function init() {
   // Refresh timeline when settings are saved (provider or story settings may affect scan behavior)
   bus.on('settings:saved', () => {
     refreshTimelineUI();
+  });
+
+  // Link generated images to timeline scenes
+  bus.on('image:generated', ({ imageData }) => {
+    if (!pendingImageForSceneId || !state.timelineState?.scenes) return;
+    const scene = state.timelineState.scenes.find(s => s.id === pendingImageForSceneId);
+    if (!scene) {
+      pendingImageForSceneId = null;
+      return;
+    }
+
+    // Store image data on the scene (transient — not persisted to DB)
+    scene._imageData = imageData;
+    scene.imageId = 'generated-' + Date.now();
+    const sceneId = pendingImageForSceneId;
+    pendingImageForSceneId = null;
+
+    // Persist the imageId to timeline state
+    if (state.currentStoryId) {
+      window.powertool.timelineSetState?.(state.currentStoryId, state.timelineState).catch(() => {});
+    }
+
+    // Refresh UI
+    refreshTimelineUI();
+    console.log(`[Timeline] Linked generated image to scene "${scene.description?.slice(0, 40) || sceneId}"`);
   });
 }
