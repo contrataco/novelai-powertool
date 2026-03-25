@@ -24,10 +24,19 @@ CLAUDE.md
 CLAUDE.local.md
 .claude/
 
+# AI dev tooling
+.claude-dev-helper/
+.plugin-config/
+.superpowers/
+.junie/
+AGENTS.md
+docs/superpowers/
+
 # Logs
 *.log
 npm-debug.log*
 
 # Package lock (app has its own)
 package-lock.json
+/package.json
 .worktrees/
