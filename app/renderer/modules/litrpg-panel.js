@@ -2,6 +2,7 @@
 
 import { state, bus } from './state.js';
 import { saveLoreState, refreshLoreUI, loreCall } from './lore-creator.js';
+import { enqueue as enqueuePortraits } from './portrait-queue.js';
 import {
   rpgTab, rpgContent,
   rpgDetectionBanner, rpgEnableBtn, rpgDismissBtn,
@@ -29,6 +30,7 @@ import {
   rpgDetectedType,
   rpgAlbumLightbox, rpgAlbumLightboxImg, rpgAlbumPrev, rpgAlbumNext,
   rpgAlbumCounter, rpgAlbumSetActive, rpgAlbumDelete, rpgAlbumClose,
+  rpgGenerateAllPortraits,
   webview,
 } from './dom-refs.js';
 import { escapeHtml, showToast } from './utils.js';
@@ -2594,6 +2596,21 @@ export function init() {
       if (!state.litrpgState) state.litrpgState = {};
       state.litrpgState.autoSync = rpgAutoSync.checked;
       saveLitrpgState();
+    });
+  }
+
+  // Bulk portrait generation
+  if (rpgGenerateAllPortraits) {
+    rpgGenerateAllPortraits.addEventListener('click', (e) => {
+      const rpg = getRpgState();
+      if (!rpg?.characters) return;
+      const regenerate = e.shiftKey;
+      const chars = Object.entries(rpg.characters).map(([charId, char]) => ({
+        charId,
+        charName: char.name || char.loreEntryName || charId,
+        rpgData: char,
+      }));
+      enqueuePortraits(chars, { regenerate });
     });
   }
 
