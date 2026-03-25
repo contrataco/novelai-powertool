@@ -157,7 +157,7 @@ function buildSceneCard(scene, isCurrent) {
   }
 
   const thumbHTML = scene._imageData
-    ? `<img src="data:image/png;base64,${scene._imageData}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #3a3a5e;flex-shrink:0;" alt="">`
+    ? `<img src="${scene._imageData}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #3a3a5e;flex-shrink:0;" alt="">`
     : '';
 
   card.innerHTML = `
@@ -252,7 +252,7 @@ export function openSceneExplorer(sceneId) {
     <div style="margin-bottom:16px;">
       <div style="background:#22223a;border:1px dashed #3a3a5e;border-radius:8px;padding:20px;text-align:center;color:#888;">
         ${scene._imageData
-          ? `<img src="data:image/png;base64,${scene._imageData}" style="max-width:100%;border-radius:6px;" alt="Scene image">
+          ? `<img src="${scene._imageData}" style="max-width:100%;border-radius:6px;" alt="Scene image">
              <button class="action-btn scene-gen-image-btn" data-scene-id="${escapeHtml(sceneId)}" style="background:#333;color:#aaa;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;margin-top:8px;">Regenerate</button>`
           : `<div style="font-size:12px;margin-bottom:10px;">No image generated yet</div>
              <button class="action-btn scene-gen-image-btn" data-scene-id="${escapeHtml(sceneId)}" style="background:#e94560;color:white;border:none;padding:5px 12px;border-radius:5px;cursor:pointer;font-size:12px;">Generate Scene Image</button>`
@@ -683,9 +683,13 @@ export function init() {
     const sceneId = pendingImageForSceneId;
     pendingImageForSceneId = null;
 
-    // Persist the imageId to timeline state
+    // Persist the imageId to timeline state (strip transient _imageData before save)
     if (state.currentStoryId) {
-      window.powertool.timelineSetState?.(state.currentStoryId, state.timelineState).catch(() => {});
+      const savedImageData = scene._imageData;
+      delete scene._imageData;
+      window.powertool.timelineSetState?.(state.currentStoryId, state.timelineState)
+        .catch(() => {})
+        .finally(() => { scene._imageData = savedImageData; });
     }
 
     // Refresh UI

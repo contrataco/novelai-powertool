@@ -1350,6 +1350,14 @@ async function runLoreScan(scanType = 'all') {
     const scanOptions = {};
     if (scanType === 'full') {
       scanOptions.fullRescan = true;
+      // Build categoryMap for Pass 0c recategorize (reverse loreCategoryIds: uuid → name)
+      if (state.loreState?.loreCategoryIds) {
+        const categoryMap = {};
+        for (const [catName, catId] of Object.entries(state.loreState.loreCategoryIds)) {
+          if (catId) categoryMap[catId] = catName;
+        }
+        scanOptions.categoryMap = categoryMap;
+      }
     } else if (scanType === 'relationships') {
       scanOptions.relationshipsOnly = true;
     } else if (scanType !== 'all') {

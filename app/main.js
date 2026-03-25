@@ -1966,24 +1966,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
     const pendingCategoryMoves = result.state._pendingCategoryMoves || [];
     delete result.state._pendingCategoryMoves;
 
-    // Enable any new custom categories in loreSettings
-    if (result.state.customCategories && result.state.customCategories.length > 0) {
-      const settings = store.get('loreSettings') || loreCreator.DEFAULT_SETTINGS;
-      if (!settings.enabledCategories) settings.enabledCategories = {};
-      let added = 0;
-      for (const cc of result.state.customCategories) {
-        if (cc.id && settings.enabledCategories[cc.id] === undefined) {
-          settings.enabledCategories[cc.id] = true;
-          added++;
-        }
-      }
-      if (added > 0) {
-        store.set('loreSettings', settings);
-        console.log(`[Main] Enabled ${added} new custom categories in loreSettings`);
-      }
-    }
-
-    // Save updated state
+    // Save updated state (customCategories are per-story in lore_state, not global loreSettings)
     db.setLoreState(storyId, result.state);
 
     // Persona extraction (all stories with character entries)

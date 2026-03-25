@@ -2667,13 +2667,14 @@ async function scanForLore(storyText, settings, existingEntries, state, generate
   // Pass 1: Identify elements
   const pass1Result = await pass1_identifyElements(ctx);
   if (pass1Result.empty) {
-    // No elements identified at all — return original state (matches original behavior)
-    return { state, noResults: true };
+    // No elements identified — return updatedState if Pass 0/0b/0c added cleanups
+    const hasCleanups = (updatedState.pendingCleanups || []).length > (state.pendingCleanups || []).length;
+    return { state: hasCleanups ? updatedState : state, noResults: !hasCleanups };
   }
   if (pass1Result.allKnown) {
-    // All elements already known — return updatedState if Pass 0 added dedup cleanups
-    const hasDedup = (updatedState.pendingCleanups || []).length > (state.pendingCleanups || []).length;
-    return { state: hasDedup ? updatedState : state, noResults: !hasDedup };
+    // All elements already known — return updatedState if Pass 0/0b/0c added cleanups
+    const hasCleanups = (updatedState.pendingCleanups || []).length > (state.pendingCleanups || []).length;
+    return { state: hasCleanups ? updatedState : state, noResults: !hasCleanups };
   }
 
   const { newElements, existingElements, mergeElements } = pass1Result;
