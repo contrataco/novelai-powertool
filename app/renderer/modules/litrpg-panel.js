@@ -2002,6 +2002,14 @@ async function runRpgScan() {
       state.litrpgState = result.state;
       refreshRpgUI();
 
+      // Emit events for portrait queue (standalone scan path)
+      if (result.newCharacterIds?.length && result.state?.characters) {
+        bus.emit('litrpg:new-characters', {
+          newCharacterIds: result.newCharacterIds,
+          characters: result.state.characters,
+        });
+      }
+
       // Apply @role metadata updates to lorebook entries
       if (result.roleUpdates && result.roleUpdates.length > 0) {
         await applyRoleUpdatesToLorebook(result.roleUpdates);

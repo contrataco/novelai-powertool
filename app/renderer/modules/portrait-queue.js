@@ -115,6 +115,14 @@ export async function init(appState) {
     autoGenEnabled = true;
   }
 
+  // Cancel queue on story switch to avoid saving portraits to wrong story
+  bus.on('story:changed', () => {
+    if (isProcessing || queue.length > 0) {
+      cancel();
+      dismissToast();
+    }
+  });
+
   bus.on('settings:saved', async () => {
     try {
       const settings = await window.powertool.getSettings?.();
