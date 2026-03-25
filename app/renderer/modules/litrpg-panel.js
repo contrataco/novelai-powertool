@@ -2634,6 +2634,6 @@ export function init() {
   });
 
   // Refresh UI when portrait queue finishes or a portrait is generated
-  bus.on('portrait:queue-complete', () => refreshRpgUI());
+  bus.on('portrait:queue-complete', () => { saveLitrpgState(); refreshRpgUI(); });
   bus.on('portrait:generated', () => refreshRpgUI());
 }

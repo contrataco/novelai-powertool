@@ -2932,19 +2932,17 @@ ipcMain.handle('portrait:generate', async (event, { storyId, characterId, charac
 
     if (portraitProviderId === 'novelai' && preset) {
       const origSettings = store.get('imageSettings');
-      const origModel = store.get('selectedModel');
       try {
         store.set('imageSettings', {
           ...origSettings,
           width: preset.width,
           height: preset.height,
           steps: preset.steps,
+          model: preset.model,
         });
-        store.set('selectedModel', preset.model);
         imageData = await provider.generate(prompt, preset.negativePrompt, store);
       } finally {
         store.set('imageSettings', origSettings);
-        store.set('selectedModel', origModel);
       }
     } else {
       imageData = await provider.generate(prompt, '', store);
