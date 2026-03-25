@@ -123,7 +123,7 @@ async function loadTtsVoices() {
   ttsNarratorVoiceSelect.innerHTML = '<option disabled selected>Loading voices...</option>';
   ttsDialogueVoiceSelect.innerHTML = '<option disabled selected>Loading voices...</option>';
   try {
-    const voices = await window.sceneVisualizer.ttsGetVoices();
+    const voices = await window.powertool.ttsGetVoices();
     for (const sel of [ttsNarratorVoiceSelect, ttsDialogueVoiceSelect, ttsAddCharVoice]) {
       if (!sel) continue;
       const addCustom = sel === ttsNarratorVoiceSelect || sel === ttsDialogueVoiceSelect || sel === ttsAddCharVoice;
@@ -171,7 +171,7 @@ function renderSettingsVoiceList(voices) {
     }
     sel.addEventListener('change', async () => {
       if (state.currentStoryId) {
-        await window.sceneVisualizer.ttsSetCharacterVoice(state.currentStoryId, charName, sel.value);
+        await window.powertool.ttsSetCharacterVoice(state.currentStoryId, charName, sel.value);
         state.ttsState.characterVoices[charName] = sel.value;
       }
     });
@@ -181,7 +181,7 @@ function renderSettingsVoiceList(voices) {
     rmBtn.style.cssText = 'background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:0 2px;';
     rmBtn.addEventListener('click', async () => {
       if (state.currentStoryId) {
-        await window.sceneVisualizer.ttsRemoveCharacterVoice(state.currentStoryId, charName);
+        await window.powertool.ttsRemoveCharacterVoice(state.currentStoryId, charName);
         delete state.ttsState.characterVoices[charName];
         row.remove();
         if (ttsSettingsVoiceCount) ttsSettingsVoiceCount.textContent = `(${Object.keys(state.ttsState.characterVoices).length})`;
@@ -200,7 +200,7 @@ function renderSettingsVoiceList(voices) {
 
 export async function loadTtsSettings(storySettings) {
   try {
-    const ttsSettings = storySettings || await window.sceneVisualizer.ttsGetSettings();
+    const ttsSettings = storySettings || await window.powertool.ttsGetSettings();
     ttsProviderSelect.value = ttsSettings.ttsProvider || 'novelai';
     ttsVersionSelect.value = ttsSettings.ttsVersion || 'auto';
     ttsSpeedSlider.value = ttsSettings.ttsSpeed || 1.0;
@@ -245,7 +245,7 @@ export async function loadTtsSettings(storySettings) {
 export async function saveTtsSettings() {
   try {
     const curTtsVersion = ttsVersionSelect.value;
-    await window.sceneVisualizer.ttsSetSettings({
+    await window.powertool.ttsSetSettings({
       ttsProvider: ttsProviderSelect.value,
       ttsVersion: curTtsVersion,
       ttsNarratorVoice: buildVoiceValue(ttsNarratorVoiceSelect, ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence, curTtsVersion, ttsNarratorCustomSeed),
@@ -294,7 +294,7 @@ export function initTtsEvents() {
       if (!state.currentStoryId) return;
       if (!state.ttsState) state.ttsState = { characterVoices: {} };
       state.ttsState.characterVoices[name] = voice;
-      await window.sceneVisualizer.ttsSetCharacterVoice(state.currentStoryId, name, voice);
+      await window.powertool.ttsSetCharacterVoice(state.currentStoryId, name, voice);
       ttsAddCharName.value = '';
       const voices = await loadTtsVoices();
       renderSettingsVoiceList(voices);

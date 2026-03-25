@@ -33,7 +33,7 @@ export async function checkMemoryProxy() {
 async function loadMemoryState() {
   if (!state.currentStoryId) return;
   try {
-    state.memoryState = await window.sceneVisualizer.memoryGetState(state.currentStoryId);
+    state.memoryState = await window.powertool.memoryGetState(state.currentStoryId);
     renderMemoryUI();
   } catch (e) {
     console.log('[Memory] Load state error:', e);
@@ -83,7 +83,7 @@ export function renderMemoryUI() {
       `<div class="memory-event-card${e.compressed ? ' compressed' : ''}">${e.compressed ? '[C] ' : '> '}${e.text}</div>`
     ).join('');
   } else {
-    memoryEventList.innerHTML = '<div style="font-size:11px;color:#666;">No events tracked yet</div>';
+    memoryEventList.innerHTML = '<div class="empty-state-sm">No events tracked yet</div>';
   }
 
   // Character states
@@ -93,7 +93,7 @@ export function renderMemoryUI() {
       `<div class="memory-char-item"><span class="char-name">${name}</span>: ${data.state}</div>`
     ).join('');
   } else {
-    memoryCharList.innerHTML = '<div style="font-size:11px;color:#666;">No characters tracked</div>';
+    memoryCharList.innerHTML = '<div class="empty-state-sm">No characters tracked</div>';
   }
 }
 
@@ -121,7 +121,7 @@ async function runMemoryUpdate() {
     }
 
     memoryProgressText.textContent = 'Extracting events...';
-    const result = await window.sceneVisualizer.memoryProcess(storyText, state.currentStoryId);
+    const result = await window.powertool.memoryProcess(storyText, state.currentStoryId);
 
     if (result.success) {
       state.memoryState = result.state;
@@ -169,7 +169,7 @@ async function runMemoryRefresh() {
     }
 
     memoryProgressText.textContent = 'Analyzing full story...';
-    const result = await window.sceneVisualizer.memoryForceRefresh(storyText, state.currentStoryId);
+    const result = await window.powertool.memoryForceRefresh(storyText, state.currentStoryId);
 
     if (result.success) {
       state.memoryState = result.state;
@@ -220,7 +220,7 @@ async function runMemoryClear() {
   memoryClearBtn.style.background = '';
   memoryClearBtn.style.color = '';
 
-  await window.sceneVisualizer.memoryClear(state.currentStoryId);
+  await window.powertool.memoryClear(state.currentStoryId);
   state.memoryState = { events: [], characters: {}, currentSituation: '', lastProcessedLength: 0 };
   state.memoryLastStoryLength = 0;
   renderMemoryUI();
@@ -234,7 +234,7 @@ function saveMemorySettings() {
   if (state.memorySettingsSaveTimeout) clearTimeout(state.memorySettingsSaveTimeout);
   state.memorySettingsSaveTimeout = setTimeout(() => {
     if (!state.memorySettings) return;
-    window.sceneVisualizer.memorySetSettings(state.memorySettings);
+    window.powertool.memorySetSettings(state.memorySettings);
   }, 500);
 }
 
@@ -242,7 +242,7 @@ export function init() {
   // Initialize memory settings
   (async function initMemory() {
     try {
-      state.memorySettings = await window.sceneVisualizer.memoryGetSettings();
+      state.memorySettings = await window.powertool.memoryGetSettings();
       memoryAutoUpdate.checked = state.memorySettings.autoUpdate;
       memoryTokenLimit.value = state.memorySettings.tokenLimit;
       memoryTokenLimitValue.textContent = state.memorySettings.tokenLimit;
@@ -288,7 +288,7 @@ export function init() {
   });
 
   // Progress listener
-  window.sceneVisualizer.onMemoryProgress((data) => {
+  window.powertool.onMemoryProgress((data) => {
     if (data.phase === 'extracting') {
       memoryProgressText.textContent = `Extracting chunk ${data.chunk}/${data.totalChunks}...`;
     } else if (data.phase === 'compiling') {

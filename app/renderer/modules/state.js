@@ -42,7 +42,12 @@ export const state = {
   isGeneratingPrompt: false,
   lastKnownStoryLength: 0,
 
-  // Backward-compat accessors — use state.prompt.* directly in new code
+  // Headless Mode state
+  headlessMode: true, // Default to true for the new interface
+  isDashboardActive: false, // true if webview is on dashboard/story list
+  availableStories: [],    // list of stories found on dashboard
+
+  // Backward-compat accessors
   get currentPrompt() { return this.prompt.display; },
   set currentPrompt(v) { this.prompt.display = v; },
   get currentRawPrompt() { return this.prompt.raw; },
@@ -112,4 +117,7 @@ export const state = {
   // Scene Timeline state
   timelineState: null,
   llmBusy: false,
+
+  // Headless generation state
+  isWaitingForGeneration: false,
 };

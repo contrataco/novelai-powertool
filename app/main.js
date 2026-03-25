@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, globalShortcut, webContents } = require('electron');
+const { app, BrowserWindow, ipcMain, session, globalShortcut, webContents, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -225,6 +225,44 @@ function wrapHandler(name, fn) {
 
 // Token status query
 ipcMain.handle('get-token-status', () => ({ hasToken: !!store.get('apiToken') }));
+
+// Fetch stories via NovelAI API
+ipcMain.handle('novelai:fetch-stories', async () => {
+  const token = store.get('apiToken');
+  if (!token) return { success: false, error: 'No API token available' };
+
+  try {
+    const response = await net.fetch('https://api.novelai.net/user/objects/stories', {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      return { success: false, status: response.status, error: 'Failed to fetch stories from NovelAI API' };
+    }
+
+    const data = await response.json();
+    // NovelAI returns objects in a specific format: { objects: [...] }
+    const stories = (data.objects || []).map(obj => {
+      // Decode the object if it's a story
+      // Note: NovelAI stories are often encrypted, but metadata might be available
+      return {
+        id: obj.id,
+        title: obj.name || 'Untitled Story',
+        description: obj.description || '',
+        tags: obj.tags || [],
+        lastModified: obj.lastModified || Date.now()
+      };
+    });
+
+    return { success: true, stories };
+  } catch (e) {
+    console.error('[Main] NovelAI API fetch error:', e);
+    return { success: false, error: e.message };
+  }
+});
 
 // Open webview DevTools for DOM inspection
 ipcMain.handle('open-webview-devtools', () => {

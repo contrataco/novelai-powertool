@@ -3,8 +3,8 @@
 import {
   settingsModal, status, webview,
   providerSelect,
-  sceneEnableLitrpg,
-  settingsBtn, cancelBtn, saveBtn, reloadBtn,
+  sceneEnableLitrpg, interfaceShowWebview,
+  settingsBtn, toggleWebviewBtn, cancelBtn, saveBtn, reloadBtn,
 } from './dom-refs.js';
 import { state, bus } from './state.js';
 import { refreshRpgUI } from './litrpg-panel.js';
@@ -23,14 +23,14 @@ export function init() {
   settingsBtn.addEventListener('click', async () => {
     // Load per-story settings if a story is active (overrides globals for TTS/image/scene)
     const storySettings = state.currentStoryId
-      ? await window.sceneVisualizer.storySettingsGet(state.currentStoryId)
+      ? await window.powertool.storySettingsGet(state.currentStoryId)
       : null;
 
     const [settings, currentProvider, novelaiArtStyle, sceneSettingsData] = await Promise.all([
-      window.sceneVisualizer.getImageSettings(),
-      window.sceneVisualizer.getProvider(),
-      window.sceneVisualizer.getNovelaiArtStyle(),
-      window.sceneVisualizer.getSceneSettings(),
+      window.powertool.getImageSettings(),
+      window.powertool.getProvider(),
+      window.powertool.getNovelaiArtStyle(),
+      window.powertool.getSceneSettings(),
     ]);
 
     // Use per-story overrides when available
@@ -71,7 +71,7 @@ export function init() {
           state.litrpgState.dismissedDetection = false;
         }
         state.litrpgEnabled = wantEnabled;
-        await window.sceneVisualizer.litrpgSetState(state.currentStoryId, state.litrpgState);
+        await window.powertool.litrpgSetState(state.currentStoryId, state.litrpgState);
         refreshRpgUI();
       }
     }
@@ -84,13 +84,18 @@ export function init() {
         ...buildPerStoryTtsSettings(),
         ...buildPerStoryImageSettings(),
       };
-      await window.sceneVisualizer.storySettingsSet(state.currentStoryId, perStory);
+      await window.powertool.storySettingsSet(state.currentStoryId, perStory);
       state.storySettings = perStory;
     }
 
     settingsModal.classList.remove('active');
     status.textContent = 'Settings saved';
     status.className = 'status connected';
+    
+    // Update headless mode if it changed via checkbox
+    state.headlessMode = !interfaceShowWebview.checked;
+    updateWebviewModeUI();
+
     bus.emit('settings:saved');
     setTimeout(() => {
       status.textContent = 'Connected';
@@ -106,7 +111,7 @@ export function init() {
     status.textContent = 'Clearing cache...';
     status.className = 'status generating';
     try {
-      await window.sceneVisualizer.clearWebviewCache();
+      await window.powertool.clearWebviewCache();
       webview.reloadIgnoringCache();
       status.textContent = 'Cache cleared, reloading...';
       status.className = 'status connected';
@@ -125,7 +130,7 @@ export function init() {
   });
 
   // Listen for token status changes
-  window.sceneVisualizer.onTokenStatusChanged((data) => {
+  window.powertool.onTokenStatusChanged((data) => {
     console.log('[Renderer] Token status changed:', data);
     status.textContent = 'Token captured';
     status.className = 'status connected';
@@ -144,4 +149,41 @@ export function init() {
   document.getElementById('closePanelBtn').addEventListener('click', () => {
     document.getElementById('imagePanel').classList.add('hidden');
   });
+
+  // Toggle Webview Mode
+  toggleWebviewBtn.addEventListener('click', async () => {
+    state.headlessMode = !state.headlessMode;
+    updateWebviewModeUI();
+    
+    // Save to electron-store (persistent)
+    const sceneSettings = await window.powertool.getSceneSettings();
+    sceneSettings.headlessMode = state.headlessMode;
+    // Keep legacy showWebview in sync for settings modal checkbox
+    sceneSettings.showWebview = !state.headlessMode;
+    await window.powertool.setSceneSettings(sceneSettings);
+  });
+
+  // Initial UI state
+  window.powertool.getSceneSettings().then(settings => {
+    if (settings) {
+      // Prioritize headlessMode key, fallback to legacy showWebview
+      if (settings.headlessMode !== undefined) {
+        state.headlessMode = settings.headlessMode;
+      } else if (settings.showWebview !== undefined) {
+        state.headlessMode = !settings.showWebview;
+      }
+    }
+    updateWebviewModeUI();
+  });
+}
+
+function updateWebviewModeUI() {
+  const mainContainer = document.querySelector('.main-container');
+  if (state.headlessMode) {
+    mainContainer.classList.remove('webview-active');
+    toggleWebviewBtn.textContent = 'Show Webview';
+  } else {
+    mainContainer.classList.add('webview-active');
+    toggleWebviewBtn.textContent = 'Hide Webview';
+  }
 }

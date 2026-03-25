@@ -1,6 +1,7 @@
 // webview-polling.js — Story context detection, DOM relay, webview events, story change polling
 
 import { state, bus } from './state.js';
+import { updateVisibility as updateStorySelectorVisibility } from './story-selector.js';
 import {
   webview, status,
   storyIndicator, promptDisplay, negativePromptDisplay, commitSbName, commitStoryLabel,
@@ -10,6 +11,7 @@ import { renderSuggestions, updateBadge } from './suggestions.js';
 import { refreshLoreUI, renderComprehensionState, loadCategoryRegistry } from './lore-creator.js';
 import { renderMemoryUI } from './memory-manager.js';
 import { generateScenePromptFromEditor } from './image-gen.js';
+import { syncFromWebview } from './headless-sync.js';
 import { PollingCoordinator } from './polling.js';
 
 export const polling = new PollingCoordinator();
@@ -126,9 +128,17 @@ async function handleStoryContextChange(storyId, storyTitle) {
   state.currentStoryId = storyId;
   state.currentStoryTitle = storyTitle || null;
 
-  // Update toolbar indicator
-  storyIndicator.textContent = 'Story: ' + (storyTitle || storyId.slice(0, 12));
-  storyIndicator.style.display = '';
+  // Update native toolbar's story title
+  if (refs.editorStoryTitle) {
+    refs.editorStoryTitle.textContent = storyTitle || 'Untitled Story';
+    refs.editorStoryTitle.title = 'Edit Story Metadata';
+  }
+
+  // Update sidebar indicator
+  if (storyIndicator) {
+    storyIndicator.textContent = 'Story: ' + (storyTitle || storyId.slice(0, 12));
+    storyIndicator.style.display = '';
+  }
 
   bus.emit('story:changed', { storyId, storyTitle });
 
@@ -244,6 +254,7 @@ export function init() {
   // Track webview readiness for the story-context poll condition
   let webviewReady = false;
   let lastPolledStoryId = null;
+  let lastDashboardCheck = 0;
 
   webview.addEventListener('did-finish-load', async () => {
     status.textContent = 'Connected';
@@ -258,10 +269,50 @@ export function init() {
         if (hasToken) {
           console.log('[Renderer] Token found, navigating to stories dashboard');
           webview.loadURL('https://novelai.net/stories');
+    
+          // Periodically force dashboard navigation if we're on the landing page and have a token
+          const dashboardCheckInterval = setInterval(async () => {
+            if (state.currentStoryId) {
+              clearInterval(dashboardCheckInterval);
+              return;
+            }
+            const url = webview.getURL();
+            if (url === 'https://novelai.net/' || url === 'https://novelai.net') {
+              const { hasToken } = await window.powertool.getTokenStatus();
+              if (hasToken) {
+                console.log('[Renderer] Still on landing page, forcing dashboard navigation');
+                webview.loadURL('https://novelai.net/stories');
+              }
+            }
+          }, 5000);
         }
       }
     } catch (e) {
       console.error('[Renderer] Auto-navigate failed:', e);
+    }
+  });
+
+  // Listen for headless story selection
+  bus.on('headless:select-story', (storyId) => {
+    if (!storyId) {
+      console.log('[Renderer] Navigating to NovelAI stories dashboard...');
+      webview.loadURL('https://novelai.net/stories');
+      return;
+    }
+    console.log(`[Renderer] Navigating to story: ${storyId}`);
+    webview.loadURL(`https://novelai.net/stories?id=${storyId}`);
+  });
+
+  // Listen for force dashboard re-parse
+  bus.on('headless:force-dashboard-reparse', () => {
+    lastDashboardCheck = 0;
+  });
+
+  // Listen for force webview display
+  bus.on('headless:force-webview', (show) => {
+    if (show) {
+      window.powertool.setSceneSettings({ interfaceShowWebview: true });
+      bus.emit('settings:saved'); // Trigger UI refresh
     }
   });
 
@@ -286,6 +337,108 @@ export function init() {
   // 1. Story context poll (~3s) — extract story identity from NovelAI page
   polling.register('story-context', async () => {
     try {
+      const url = webview.getURL();
+      const isDashboard = url.includes('/stories') && !url.includes('?id=');
+      
+      // Auto-navigate to dashboard if in headless mode and no story is selected
+      if (state.headlessMode && !state.currentStoryId && !isDashboard && !url.includes('login')) {
+        const { hasToken } = await window.powertool.getTokenStatus();
+        if (hasToken) {
+          console.log('[Renderer] Headless mode active but no story selected, forcing dashboard navigation');
+          webview.loadURL('https://novelai.net/stories');
+          return; // Skip rest of poll for this tick
+        }
+      }
+
+      if (isDashboard !== state.isDashboardActive) {
+        state.isDashboardActive = isDashboard;
+        bus.emit('headless:dashboard-state-changed', isDashboard);
+        
+        // If we just entered the dashboard, trigger an immediate parse
+        if (isDashboard) {
+          lastDashboardCheck = 0; // Force immediate parse in next check
+        }
+      }
+
+      if (isDashboard) {
+        // Only parse story list every 10s to avoid heavy DOM polling,
+        // but parse immediately if lastDashboardCheck was reset to 0.
+        if (lastDashboardCheck === 0 || Date.now() - lastDashboardCheck > 10000) {
+          lastDashboardCheck = Date.now();
+          console.log('[Renderer] Dashboard active, parsing stories...');
+          const stories = await webview.executeJavaScript(`
+            (function() {
+              // Strategy 1: Look for elements with "StoryItem" in class name
+              var storyElements = document.querySelectorAll('div[class*="StoryList_StoryItem"]');
+              
+              // Strategy 2: Look for elements that contain both a title and an "Updated" text
+              if (storyElements.length === 0) {
+                storyElements = Array.from(document.querySelectorAll('div')).filter(el => {
+                  var h3 = el.querySelector('h3');
+                  var text = el.innerText || '';
+                  return h3 && (text.includes('Updated') || text.includes('ago') || text.includes('Modified'));
+                });
+              }
+              
+              // Strategy 3: Look for any list items that look like stories
+              if (storyElements.length === 0) {
+                storyElements = Array.from(document.querySelectorAll('li')).filter(el => {
+                  var h3 = el.querySelector('h3');
+                  return h3 && h3.innerText.length > 0;
+                });
+              }
+
+              console.log('[Dashboard] Found potential story elements:', storyElements.length);
+
+              return Array.from(storyElements).map(el => {
+                var titleEl = el.querySelector('h3') || el.querySelector('div[class*="title"]') || el.querySelector('span[class*="Title"]');
+                var title = titleEl ? titleEl.innerText : 'Untitled Story';
+                
+                // Try to find the link to extract the ID
+                var link = el.querySelector('a') || (el.tagName === 'A' ? el : null);
+                if (!link) {
+                  // Search parents or children for an <a> tag
+                  link = el.closest('a') || el.querySelector('a');
+                }
+                
+                var href = link ? (link.href || '') : '';
+                var id = '';
+                if (href.includes('id=')) {
+                  id = href.split('id=')[1].split('&')[0];
+                } else if (href.includes('/stories/')) {
+                  // Alternative URL format check
+                  id = href.split('/stories/')[1].split('?')[0];
+                }
+
+                var descriptionEl = el.querySelector('p') || el.querySelector('div[class*="description"]') || el.querySelector('span[class*="Description"]');
+                var description = descriptionEl ? descriptionEl.innerText : '';
+
+                var tags = Array.from(el.querySelectorAll('span[class*="Tag"]')).map(t => t.innerText);
+
+                return {
+                  id: id,
+                  title: title.trim(),
+                  description: description.trim(),
+                  tags: tags,
+                  lastModified: Date.now()
+                };
+              }).filter(s => s.id && s.title !== 'Untitled Story');
+            })()
+          `);
+          
+          if (stories && stories.length > 0) {
+            console.log(`[Renderer] Found ${stories.length} stories on dashboard`);
+            bus.emit('headless:stories-updated', stories);
+          } else {
+            console.log('[Renderer] No stories found on dashboard, retrying in 10s...');
+            // If we're on the dashboard but no stories are found, 
+            // maybe it's still loading or the user has no stories.
+            bus.emit('headless:stories-updated', []);
+          }
+        }
+        return;
+      }
+
       const ctx = await webview.executeJavaScript(`
         (function() {
           // Extract story ID from NovelAI URL query param (/stories?id=uuid)
@@ -308,6 +461,9 @@ export function init() {
         lastPolledStoryId = ctx.storyId;
         console.log('[Renderer] Story context from webview poll:', ctx.storyId, ctx.storyTitle);
         handleStoryContextChange(ctx.storyId, ctx.storyTitle);
+        
+        // Ensure story selector is hidden when we have a story
+        updateStorySelectorVisibility();
       }
     } catch (e) {
       // Webview not ready or navigating
@@ -327,6 +483,10 @@ export function init() {
       const text = await readStoryTextFromDOM();
       if (text && Math.abs(text.length - state.lastKnownStoryLength) > minChange) {
         state.lastKnownStoryLength = text.length;
+        // Sync the change from webview to native editor (e.g. AI generation)
+        if (state.headlessMode) {
+          await syncFromWebview();
+        }
         await generateScenePromptFromEditor();
       }
     } catch (e) {
@@ -414,6 +574,14 @@ export function init() {
       `);
       if (ts && ts !== lastGenEndedTimestamp) {
         console.log('[PowerTool] Generation ended signal detected, triggering prompt generation');
+        // Clear headless generation waiting state
+        if (state.isWaitingForGeneration) {
+          state.isWaitingForGeneration = false;
+          bus.emit('headless:generation-complete');
+        }
+        if (state.headlessMode) {
+          await syncFromWebview();
+        }
         await generateScenePromptFromEditor();
         // Only consume timestamp after successful prompt generation
         lastGenEndedTimestamp = ts;
@@ -423,6 +591,24 @@ export function init() {
     }
   }, 2000, {
     condition: () => !!state.currentStoryId
+  });
+
+  // 7. Generation streaming poll (~500ms) — headless mode only
+  // Polls for text changes during active generation to stream output into native editor.
+  let lastStreamedText = '';
+  polling.register('gen-stream', async () => {
+    if (!state.isWaitingForGeneration) return;
+    try {
+      const text = await readStoryTextFromDOM();
+      if (text && text !== lastStreamedText) {
+        lastStreamedText = text;
+        bus.emit('headless:text-updated', text);
+      }
+    } catch (_) {
+      // Silent — webview may not be ready
+    }
+  }, 500, {
+    condition: () => state.headlessMode && state.isWaitingForGeneration
   });
 
   // Start the coordinator

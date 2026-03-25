@@ -1,7 +1,7 @@
 /**
  * Lore Creator Proxy
  *
- * Thin proxy script for the Scene Visualizer's Electron-side Lore Creator.
+ * Thin proxy script for the PowerTool's Electron-side Lore Creator.
  * Exposes lorebook CRUD operations via globalThis.__loreCreator so the
  * Electron renderer can call them through webview.executeJavaScript().
  *

@@ -38,10 +38,10 @@ function updateVeniceBalanceDisplay(balance) {
 
 async function refreshVeniceBalanceVisibility() {
   try {
-    const provider = await window.sceneVisualizer.getProvider();
+    const provider = await window.powertool.getProvider();
     if (provider === 'venice' && veniceBalance) {
       veniceBalance.style.display = '';
-      const balance = await window.sceneVisualizer.veniceGetBalance();
+      const balance = await window.powertool.veniceGetBalance();
       if (balance) updateVeniceBalanceDisplay(balance);
     } else if (veniceBalance) {
       veniceBalance.style.display = 'none';
@@ -66,7 +66,7 @@ async function handleGenerateVideo() {
     videoBtn.disabled = true;
     videoBtn.textContent = 'Quoting...';
 
-    const quote = await window.sceneVisualizer.veniceQuoteVideo(state.currentPrompt);
+    const quote = await window.powertool.veniceQuoteVideo(state.currentPrompt);
     const cost = quote.quote;
 
     // Confirm with user
@@ -81,7 +81,7 @@ async function handleGenerateVideo() {
     videoBtn.textContent = 'Queuing...';
     videoBtn.classList.add('generating');
 
-    const queueResult = await window.sceneVisualizer.veniceQueueVideo(
+    const queueResult = await window.powertool.veniceQueueVideo(
       state.currentPrompt, null,
       { negative_prompt: state.currentNegativePrompt || '' }
     );
@@ -127,7 +127,7 @@ async function handleGenerateVideo() {
           return;
         }
 
-        const result = await window.sceneVisualizer.veniceRetrieveVideo(queueId, model);
+        const result = await window.powertool.veniceRetrieveVideo(queueId, model);
         console.log(`[Video] Poll #${pollCount}: status=${result.status}`);
 
         if (result.status === 'completed') {
@@ -216,7 +216,7 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
 
   let wasError = false;
   try {
-    const result = await window.sceneVisualizer.generateImage(
+    const result = await window.powertool.generateImage(
       prompt, negativePrompt || state.currentNegativePrompt || '',
       {
         ...(opts.rawPrompt ? { rawPrompt: true } : {}),
@@ -336,7 +336,7 @@ export async function generateScenePromptFromEditor() {
     status.textContent = 'Analyzing scene...';
     status.className = 'status generating';
 
-    const result = await window.sceneVisualizer.generateScenePrompt({
+    const result = await window.powertool.generateScenePrompt({
       storyText: storyText.slice(-3000),
       entries,
       artStyle: artStyle === 'no-style' ? 'anime style, detailed, high quality' : artStyle,
@@ -357,8 +357,8 @@ export async function generateScenePromptFromEditor() {
       let negSuffix = '';
       try {
         const [pData, nData] = await Promise.all([
-          window.sceneVisualizer.getPromptSuffix(),
-          window.sceneVisualizer.getNegativePromptSuffix(),
+          window.powertool.getPromptSuffix(),
+          window.powertool.getNegativePromptSuffix(),
         ]);
         promptSuffix = pData.combined || '';
         negSuffix = nData.combined || '';
@@ -392,7 +392,7 @@ export async function generateScenePromptFromEditor() {
 
       // Persist state for this story
       if (state.currentStoryId) {
-        window.sceneVisualizer.sceneSetState(state.currentStoryId, {
+        window.powertool.sceneSetState(state.currentStoryId, {
           lastPrompt: state.currentPrompt,
           lastNegativePrompt: state.currentNegativePrompt,
           lastStoryLength: storyText.length,
@@ -544,14 +544,14 @@ export function init() {
   });
 
   // Portrait auto-save failure — show toast
-  if (window.sceneVisualizer.onPortraitAutoSaveFailed) {
-    window.sceneVisualizer.onPortraitAutoSaveFailed(({ error }) => {
+  if (window.powertool.onPortraitAutoSaveFailed) {
+    window.powertool.onPortraitAutoSaveFailed(({ error }) => {
       showToast(`Portrait auto-save failed: ${error}`, null, 'warn');
     });
   }
 
   // Venice balance — listen for updates from main process
-  window.sceneVisualizer.onVeniceBalanceUpdate((balance) => {
+  window.powertool.onVeniceBalanceUpdate((balance) => {
     updateVeniceBalanceDisplay(balance);
     if (balance.usd !== null && balance.usd < LOW_BALANCE_THRESHOLD) {
       showToast(`Venice credits low: $${balance.usd.toFixed(2)} remaining`, 4000, 'warn');
@@ -567,7 +567,7 @@ export function init() {
     // Refresh positive prompt suffix
     if (!promptWasEdited && state.currentRawPrompt) {
       try {
-        const pData = await window.sceneVisualizer.getPromptSuffix();
+        const pData = await window.powertool.getPromptSuffix();
         const fullPrompt = state.currentRawPrompt + (pData.combined || '');
         state.currentPrompt = fullPrompt;
         promptDisplay.value = fullPrompt;
@@ -576,7 +576,7 @@ export function init() {
     // Refresh negative prompt suffix
     if (!negPromptWasEdited && negativePromptDisplay) {
       try {
-        const nData = await window.sceneVisualizer.getNegativePromptSuffix();
+        const nData = await window.powertool.getNegativePromptSuffix();
         state.currentNegativePrompt = nData.combined || '';
         negativePromptDisplay.value = state.currentNegativePrompt;
       } catch { /* ignore */ }

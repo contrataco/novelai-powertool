@@ -26,7 +26,7 @@ async function autoSaveImage(imageData, meta) {
       width: meta?.width || 0,
       height: meta?.height || 0,
     };
-    await window.sceneVisualizer.mediaSaveImage(state.currentStoryId, imageData, metadata);
+    await window.powertool.mediaSaveImage(state.currentStoryId, imageData, metadata);
     // Refresh grid if media tab is visible
     if (mediaContent && mediaContent.classList.contains('active')) {
       refreshGallery();
@@ -44,7 +44,7 @@ async function autoSaveVideo(videoDataUrl, meta) {
       provider: meta?.provider || '',
       model: meta?.model || '',
     };
-    await window.sceneVisualizer.mediaSaveVideo(state.currentStoryId, videoDataUrl, metadata);
+    await window.powertool.mediaSaveVideo(state.currentStoryId, videoDataUrl, metadata);
     if (mediaContent && mediaContent.classList.contains('active')) {
       refreshGallery();
     }
@@ -61,7 +61,7 @@ async function refreshGallery() {
   if (!state.currentStoryId) return;
   try {
     const opts = currentFilter !== 'all' ? { type: currentFilter } : {};
-    galleryItems = await window.sceneVisualizer.mediaList(state.currentStoryId, opts);
+    galleryItems = await window.powertool.mediaList(state.currentStoryId, opts);
     renderGrid(galleryItems);
     updateCount();
   } catch (e) {
@@ -72,7 +72,7 @@ async function refreshGallery() {
 async function updateCount() {
   if (!state.currentStoryId || !mediaCount) return;
   try {
-    const counts = await window.sceneVisualizer.mediaGetCount(state.currentStoryId);
+    const counts = await window.powertool.mediaGetCount(state.currentStoryId);
     const total = counts.images + counts.videos;
     mediaCount.textContent = `(${total})`;
   } catch { /* ignore */ }
@@ -123,12 +123,12 @@ function renderGrid(items) {
 
 async function loadThumbnail(item, imgEl) {
   try {
-    const thumbDataUrl = await window.sceneVisualizer.mediaGetThumbnail(state.currentStoryId, item.id);
+    const thumbDataUrl = await window.powertool.mediaGetThumbnail(state.currentStoryId, item.id);
     if (thumbDataUrl) {
       imgEl.src = thumbDataUrl;
     } else {
       // Fallback: load full image
-      const fullDataUrl = await window.sceneVisualizer.mediaGetFull(state.currentStoryId, item.id);
+      const fullDataUrl = await window.powertool.mediaGetFull(state.currentStoryId, item.id);
       if (fullDataUrl) imgEl.src = fullDataUrl;
     }
   } catch { /* ignore */ }
@@ -147,12 +147,12 @@ async function openLightbox(item) {
   try {
     let mediaHtml = '';
     if (item.type === 'video') {
-      const videoDataUrl = await window.sceneVisualizer.mediaGetVideo(state.currentStoryId, item.id);
+      const videoDataUrl = await window.powertool.mediaGetVideo(state.currentStoryId, item.id);
       if (videoDataUrl) {
         mediaHtml = `<div class="media-lightbox-media"><video controls autoplay muted style="max-width:100%;max-height:50vh;border-radius:6px;display:block;margin:0 auto 12px;"><source src="${videoDataUrl}" type="video/mp4"></video></div>`;
       }
     } else {
-      const fullDataUrl = await window.sceneVisualizer.mediaGetFull(state.currentStoryId, item.id);
+      const fullDataUrl = await window.powertool.mediaGetFull(state.currentStoryId, item.id);
       if (fullDataUrl) {
         mediaHtml = `<div class="media-lightbox-media"><img src="${fullDataUrl}" alt="Full image"></div>`;
       }
@@ -218,9 +218,9 @@ async function openLightbox(item) {
         try {
           let dataUrl;
           if (item.type === 'video') {
-            dataUrl = await window.sceneVisualizer.mediaGetVideo(state.currentStoryId, item.id);
+            dataUrl = await window.powertool.mediaGetVideo(state.currentStoryId, item.id);
           } else {
-            dataUrl = await window.sceneVisualizer.mediaGetFull(state.currentStoryId, item.id);
+            dataUrl = await window.powertool.mediaGetFull(state.currentStoryId, item.id);
           }
           if (dataUrl) {
             const a = document.createElement('a');
@@ -240,7 +240,7 @@ async function openLightbox(item) {
       deleteBtn.addEventListener('click', async () => {
         if (!confirm('Delete this item from gallery?')) return;
         try {
-          await window.sceneVisualizer.mediaDelete(state.currentStoryId, item.id);
+          await window.powertool.mediaDelete(state.currentStoryId, item.id);
           closeLightbox();
           // Remove from cached items and re-render
           galleryItems = galleryItems.filter(g => g.id !== item.id);

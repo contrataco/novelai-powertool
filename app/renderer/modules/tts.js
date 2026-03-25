@@ -18,7 +18,7 @@ let cachedVoices = null;
 
 async function getVoices() {
   if (!cachedVoices) {
-    cachedVoices = await window.sceneVisualizer.ttsGetVoices();
+    cachedVoices = await window.powertool.ttsGetVoices();
   }
   return cachedVoices;
 }
@@ -101,7 +101,7 @@ function renderVoiceRow(container, charName, voiceId, voices, onVoiceChange, onR
     try {
       const currentVoice = sel.value;
       const sample = `Hello, my name is ${charName}.`;
-      const result = await window.sceneVisualizer.ttsGenerateSpeech(sample, currentVoice, state.currentStoryId);
+      const result = await window.powertool.ttsGenerateSpeech(sample, currentVoice, state.currentStoryId);
       if (result && result.audioData) {
         if (!audioEl) audioEl = document.createElement('audio');
         audioEl.src = result.audioData;
@@ -168,11 +168,11 @@ export async function refreshVoiceMapUI() {
 
   const makeCallbacks = () => ({
     onChange: async (name, newVoice) => {
-      await window.sceneVisualizer.ttsSetCharacterVoice(state.currentStoryId, name, newVoice);
+      await window.powertool.ttsSetCharacterVoice(state.currentStoryId, name, newVoice);
       state.ttsState.characterVoices[name] = newVoice;
     },
     onRemove: async (name, row) => {
-      await window.sceneVisualizer.ttsRemoveCharacterVoice(state.currentStoryId, name);
+      await window.powertool.ttsRemoveCharacterVoice(state.currentStoryId, name);
       delete state.ttsState.characterVoices[name];
       row.remove();
       ttsVoiceCount.textContent = `(${Object.keys(state.ttsState.characterVoices).length})`;
@@ -322,7 +322,7 @@ async function autoAssignFromLore() {
 
     ttsState.characterVoices = existing;
     state.ttsState = ttsState;
-    await window.sceneVisualizer.ttsSetState(state.currentStoryId, ttsState);
+    await window.powertool.ttsSetState(state.currentStoryId, ttsState);
     await refreshVoiceMapUI();
     showToast(`Assigned voices to ${assigned} character${assigned !== 1 ? 's' : ''}`, 3000);
   } catch (e) {
@@ -353,7 +353,7 @@ async function narrateScene() {
     } catch { /* lorebook may not be available */ }
 
     ttsProgress.textContent = 'Generating audio...';
-    const segments = await window.sceneVisualizer.ttsNarrateScene(
+    const segments = await window.powertool.ttsNarrateScene(
       storyText.slice(-3000),
       state.currentStoryId,
       protagonistName
@@ -421,7 +421,7 @@ async function addCharacterInline() {
   const voice = firstFree ? firstFree.id : (voices[0]?.id || '');
   ttsState.characterVoices[name] = voice;
   state.ttsState = ttsState;
-  await window.sceneVisualizer.ttsSetCharacterVoice(state.currentStoryId, name, voice);
+  await window.powertool.ttsSetCharacterVoice(state.currentStoryId, name, voice);
   ttsPanelAddName.value = '';
   await refreshVoiceMapUI();
   showToast(`Added ${name}`, 2000);

@@ -6,7 +6,7 @@ createdAt: 1772092800000
 updatedAt: 1772092800000
 version: 2.4.0
 author: Contrataco
-description: Proxy for Scene Visualizer Electron memory manager integration
+description: Proxy for PowerTool Electron memory manager integration
 memoryLimit: 16
 ---*/
 

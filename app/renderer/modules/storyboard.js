@@ -13,7 +13,7 @@ import { showToast } from './utils.js';
 // Init storyboard state on load
 async function initStoryboard() {
   try {
-    const data = await window.sceneVisualizer.storyboardList();
+    const data = await window.powertool.storyboardList();
 
     // If we know the current story, find its associated board
     if (state.currentStoryId) {
@@ -43,7 +43,7 @@ async function openStoryboardViewer() {
 }
 
 export async function refreshStoryboardSelect() {
-  const data = await window.sceneVisualizer.storyboardList();
+  const data = await window.powertool.storyboardList();
   storyboardSelect.innerHTML = '';
 
   if (data.storyboards.length === 0) {
@@ -139,7 +139,7 @@ async function renderSceneList() {
     return;
   }
 
-  const scenes = await window.sceneVisualizer.storyboardGetScenes(state.activeStoryboardId);
+  const scenes = await window.powertool.storyboardGetScenes(state.activeStoryboardId);
   if (!scenes || scenes.length === 0) {
     sceneList.innerHTML = '<div class="scene-empty">No scenes yet. Generate an image and click "Commit to Storyboard".</div>';
     return;
@@ -160,7 +160,7 @@ async function renderSceneList() {
 
     // Lazy load image (capture storyboardId to avoid race condition)
     (async (td, sid, sbId) => {
-      const imgData = await window.sceneVisualizer.storyboardGetSceneImage(sbId, sid);
+      const imgData = await window.powertool.storyboardGetSceneImage(sbId, sid);
       if (imgData) {
         td.innerHTML = `<img src="${imgData}" alt="Scene">`;
       } else {
@@ -228,7 +228,7 @@ async function renderSceneList() {
     editNoteBtn.addEventListener('click', async () => {
       const note = prompt('Scene note:', scene.note || '');
       if (note === null) return;
-      await window.sceneVisualizer.storyboardUpdateSceneNote(state.activeStoryboardId, scene.id, note);
+      await window.powertool.storyboardUpdateSceneNote(state.activeStoryboardId, scene.id, note);
       await renderSceneList();
     });
     actions.appendChild(editNoteBtn);
@@ -251,7 +251,7 @@ async function renderSceneList() {
       upBtn.addEventListener('click', async () => {
         const ids = scenes.map(s => s.id);
         [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
-        await window.sceneVisualizer.storyboardReorderScenes(state.activeStoryboardId, ids);
+        await window.powertool.storyboardReorderScenes(state.activeStoryboardId, ids);
         await renderSceneList();
       });
       actions.appendChild(upBtn);
@@ -263,7 +263,7 @@ async function renderSceneList() {
       downBtn.addEventListener('click', async () => {
         const ids = scenes.map(s => s.id);
         [ids[i], ids[i + 1]] = [ids[i + 1], ids[i]];
-        await window.sceneVisualizer.storyboardReorderScenes(state.activeStoryboardId, ids);
+        await window.powertool.storyboardReorderScenes(state.activeStoryboardId, ids);
         await renderSceneList();
       });
       actions.appendChild(downBtn);
@@ -274,7 +274,7 @@ async function renderSceneList() {
     delBtn.textContent = 'Delete';
     delBtn.addEventListener('click', async () => {
       if (!confirm('Delete this scene?')) return;
-      await window.sceneVisualizer.storyboardDeleteScene(state.activeStoryboardId, scene.id);
+      await window.powertool.storyboardDeleteScene(state.activeStoryboardId, scene.id);
       await renderSceneList();
       await refreshStoryboardSelect();
     });
@@ -325,7 +325,7 @@ export function init() {
         note: commitNoteInput.value.trim(),
       };
 
-      const result = await window.sceneVisualizer.storyboardCommitScene(state.activeStoryboardId, sceneData);
+      const result = await window.powertool.storyboardCommitScene(state.activeStoryboardId, sceneData);
 
       if (result.success) {
         // Update active storyboard ID if it was auto-created
@@ -357,10 +357,10 @@ export function init() {
   storyboardSelect.addEventListener('change', async () => {
     const id = storyboardSelect.value;
     if (id) {
-      await window.sceneVisualizer.storyboardSetActive(id);
+      await window.powertool.storyboardSetActive(id);
       state.activeStoryboardId = id;
       // Look up name from data, not display text
-      const data = await window.sceneVisualizer.storyboardList();
+      const data = await window.powertool.storyboardList();
       const found = data.storyboards.find(sb => sb.id === id);
       state.activeStoryboardName = found ? found.name : '';
       commitSbName.textContent = state.activeStoryboardName;
@@ -373,12 +373,12 @@ export function init() {
     const defaultName = state.currentStoryTitle || '';
     const name = prompt('Storyboard name:', defaultName);
     if (!name || !name.trim()) return;
-    const result = await window.sceneVisualizer.storyboardCreate(name.trim());
+    const result = await window.powertool.storyboardCreate(name.trim());
     // Pre-link to current story if detected
     if (state.currentStoryId) {
-      await window.sceneVisualizer.storyboardAssociateWithStory(result.id, state.currentStoryId, state.currentStoryTitle || '');
+      await window.powertool.storyboardAssociateWithStory(result.id, state.currentStoryId, state.currentStoryTitle || '');
     }
-    await window.sceneVisualizer.storyboardSetActive(result.id);
+    await window.powertool.storyboardSetActive(result.id);
     state.activeStoryboardId = result.id;
     state.activeStoryboardName = result.name;
     commitSbName.textContent = state.activeStoryboardName;
@@ -389,7 +389,7 @@ export function init() {
   sbDeleteBtn.addEventListener('click', async () => {
     if (!state.activeStoryboardId) return;
     if (!confirm(`Delete storyboard "${state.activeStoryboardName}" and all its scenes?`)) return;
-    const result = await window.sceneVisualizer.storyboardDelete(state.activeStoryboardId);
+    const result = await window.powertool.storyboardDelete(state.activeStoryboardId);
     state.activeStoryboardId = result.activeStoryboardId;
     await refreshStoryboardSelect();
     await renderSceneList();
@@ -399,7 +399,7 @@ export function init() {
     if (!state.activeStoryboardId) return;
     const name = prompt('New name:', state.activeStoryboardName);
     if (!name || !name.trim()) return;
-    await window.sceneVisualizer.storyboardRename(state.activeStoryboardId, name.trim());
+    await window.powertool.storyboardRename(state.activeStoryboardId, name.trim());
     state.activeStoryboardName = name.trim();
     commitSbName.textContent = state.activeStoryboardName;
     await refreshStoryboardSelect();
@@ -407,16 +407,16 @@ export function init() {
 
   sbLinkBtn.addEventListener('click', async () => {
     if (!state.activeStoryboardId || !state.currentStoryId) return;
-    const data = await window.sceneVisualizer.storyboardList();
+    const data = await window.powertool.storyboardList();
     const active = data.storyboards.find(sb => sb.id === state.activeStoryboardId);
 
     if (active && active.storyId) {
       // Unlink
-      await window.sceneVisualizer.storyboardDissociateFromStory(state.activeStoryboardId);
+      await window.powertool.storyboardDissociateFromStory(state.activeStoryboardId);
       showToast('Storyboard unlinked from story');
     } else {
       // Link
-      await window.sceneVisualizer.storyboardAssociateWithStory(state.activeStoryboardId, state.currentStoryId, state.currentStoryTitle || '');
+      await window.powertool.storyboardAssociateWithStory(state.activeStoryboardId, state.currentStoryId, state.currentStoryTitle || '');
       showToast('Storyboard linked to: ' + (state.currentStoryTitle || state.currentStoryId.slice(0, 12)));
     }
     await refreshStoryboardSelect();

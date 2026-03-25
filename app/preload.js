@@ -107,6 +107,9 @@ contextBridge.exposeInMainWorld('powertool', {
   storyLoadAll: (storyId, storyTitle) =>
     ipcRenderer.invoke('story:load-all', { storyId, storyTitle }),
 
+  // NovelAI API access
+  novelaiFetchStories: () => ipcRenderer.invoke('novelai:fetch-stories'),
+
   // Per-story settings
   storySettingsGet: (storyId) => ipcRenderer.invoke('story-settings:get', storyId),
   storySettingsSet: (storyId, settings) => ipcRenderer.invoke('story-settings:set', { storyId, settings }),

@@ -46,7 +46,7 @@ export function updateProviderSections() {
 async function loadVeniceModels() {
   veniceModelSelect.innerHTML = '<option disabled selected>Loading models...</option>';
   try {
-    const models = await window.sceneVisualizer.getVeniceModels();
+    const models = await window.powertool.getVeniceModels();
     veniceModelSelect.innerHTML = '';
     if (models.length === 0) {
       const opt = document.createElement('option');
@@ -71,7 +71,7 @@ async function loadVeniceModels() {
 async function loadVeniceVideoModels() {
   veniceVideoModelSelect.innerHTML = '<option disabled selected>Loading models...</option>';
   try {
-    const models = await window.sceneVisualizer.veniceGetVideoModels();
+    const models = await window.powertool.veniceGetVideoModels();
     veniceVideoModelSelect.innerHTML = '<option value="">Select a model</option>';
     for (const model of models) {
       const opt = document.createElement('option');
@@ -92,7 +92,7 @@ async function showVeniceSettingsBalance() {
     veniceSettingsBalance.style.display = '';
   }
   try {
-    const balance = await window.sceneVisualizer.veniceGetBalance();
+    const balance = await window.powertool.veniceGetBalance();
     if (balance && balance.usd !== null && veniceSettingsBalance && veniceSettingsBalanceText) {
       let text = `Balance: $${balance.usd.toFixed(2)}`;
       if (balance.remainingRequests !== null) {
@@ -108,7 +108,7 @@ async function showVeniceSettingsBalance() {
 
 async function loadVeniceStyles() {
   try {
-    const styles = await window.sceneVisualizer.getVeniceStyles();
+    const styles = await window.powertool.getVeniceStyles();
     veniceStylePresetSelect.innerHTML = '<option value="">None</option>';
     for (const style of styles) {
       const opt = document.createElement('option');
@@ -126,7 +126,7 @@ async function loadVeniceStyles() {
 async function loadPuterModels() {
   puterModelSelect.innerHTML = '<option disabled selected>Loading models...</option>';
   try {
-    const models = await window.sceneVisualizer.getPuterModels();
+    const models = await window.powertool.getPuterModels();
     puterModelSelect.innerHTML = '';
     // Group models by their group property
     const groups = {};
@@ -178,11 +178,11 @@ export function updatePuterQualityVisibility() {
 
 export async function loadProviderSettings(effectiveProvider) {
   const [keyStatus, perchanceSettings, veniceSettings, veniceKeyStatus, puterSettings] = await Promise.all([
-    window.sceneVisualizer.getPerchanceKeyStatus(),
-    window.sceneVisualizer.getPerchanceSettings(),
-    window.sceneVisualizer.getVeniceSettings(),
-    window.sceneVisualizer.getVeniceApiKeyStatus(),
-    window.sceneVisualizer.getPuterSettings(),
+    window.powertool.getPerchanceKeyStatus(),
+    window.powertool.getPerchanceSettings(),
+    window.powertool.getVeniceSettings(),
+    window.powertool.getVeniceApiKeyStatus(),
+    window.powertool.getPuterSettings(),
   ]);
 
   // Provider
@@ -234,7 +234,7 @@ export async function loadProviderSettings(effectiveProvider) {
   updatePuterQualityVisibility();
 
   // NovelAI token status
-  const tokenStatus = await window.sceneVisualizer.getTokenStatus();
+  const tokenStatus = await window.powertool.getTokenStatus();
   if (tokenStatus.hasToken) {
     novelaiTokenDot.className = 'dot active';
     novelaiTokenText.textContent = 'Token active (auto-captured from login)';
@@ -244,7 +244,7 @@ export async function loadProviderSettings(effectiveProvider) {
   }
 
   // NovelAI credentials
-  const creds = await window.sceneVisualizer.getNovelaiCredentials();
+  const creds = await window.powertool.getNovelaiCredentials();
   novelaiEmailInput.value = '';
   novelaiPasswordInput.value = '';
   if (creds.hasCredentials) {
@@ -256,7 +256,7 @@ export async function loadProviderSettings(effectiveProvider) {
   }
 
   // API Token
-  const token = await window.sceneVisualizer.getApiToken();
+  const token = await window.powertool.getApiToken();
   document.getElementById('apiToken').value = '';
   document.getElementById('apiToken').placeholder = token ? 'Token configured (enter new to replace)' : 'Enter your persistent API token';
 }
@@ -265,13 +265,13 @@ export async function loadProviderSettings(effectiveProvider) {
 
 export async function saveProviderSettings() {
   // Provider
-  await window.sceneVisualizer.setProvider(providerSelect.value);
+  await window.powertool.setProvider(providerSelect.value);
 
   // NovelAI credentials
   const email = novelaiEmailInput.value.trim();
   const password = novelaiPasswordInput.value;
   if (email || password) {
-    await window.sceneVisualizer.setNovelaiCredentials({
+    await window.powertool.setNovelaiCredentials({
       ...(email && { email }),
       ...(password && { password }),
     });
@@ -280,17 +280,17 @@ export async function saveProviderSettings() {
   // NovelAI token
   const token = document.getElementById('apiToken').value;
   if (token) {
-    await window.sceneVisualizer.setApiToken(token);
+    await window.powertool.setApiToken(token);
   }
 
   // Perchance settings
-  await window.sceneVisualizer.setPerchanceSettings({
+  await window.powertool.setPerchanceSettings({
     artStyle: perchanceArtStyleSelect.value,
     guidanceScale: parseFloat(perchanceGuidanceSlider.value),
   });
 
   // Venice AI settings
-  await window.sceneVisualizer.setVeniceSettings({
+  await window.powertool.setVeniceSettings({
     model: veniceModelSelect.value,
     steps: parseInt(veniceStepsInput.value),
     cfgScale: parseFloat(veniceCfgScaleInput.value),
@@ -305,12 +305,12 @@ export async function saveProviderSettings() {
   // Venice API key (only if entered)
   const veniceKey = veniceApiKeyInput.value.trim();
   if (veniceKey) {
-    await window.sceneVisualizer.setVeniceApiKey(veniceKey);
+    await window.powertool.setVeniceApiKey(veniceKey);
     veniceApiKeyInput.value = '';
   }
 
   // Puter.js settings
-  await window.sceneVisualizer.setPuterSettings({
+  await window.powertool.setPuterSettings({
     model: puterModelSelect.value,
     quality: puterQualitySelect.value,
   });
@@ -333,7 +333,7 @@ export function initProviderEvents() {
     extractKeyBtn.textContent = 'Extracting...';
     perchanceKeyText.textContent = 'Extracting key (a browser window may appear)...';
     try {
-      const result = await window.sceneVisualizer.extractPerchanceKey();
+      const result = await window.powertool.extractPerchanceKey();
       if (result.success) {
         perchanceKeyDot.className = 'dot active';
         perchanceKeyText.textContent = 'Key extracted successfully';
@@ -359,7 +359,7 @@ export function initProviderEvents() {
       return;
     }
     try {
-      const result = await window.sceneVisualizer.setPerchanceKey(key);
+      const result = await window.powertool.setPerchanceKey(key);
       if (result.success) {
         perchanceKeyDot.className = 'dot active';
         perchanceKeyText.textContent = 'Key saved: ' + key.substring(0, 10) + '...';
@@ -379,7 +379,7 @@ export function initProviderEvents() {
       return;
     }
     try {
-      const result = await window.sceneVisualizer.setVeniceApiKey(key);
+      const result = await window.powertool.setVeniceApiKey(key);
       if (result.success) {
         veniceKeyDot.className = 'dot active';
         veniceKeyText.textContent = 'API key saved';
@@ -395,7 +395,7 @@ export function initProviderEvents() {
   // Populate NovelAI art styles on load
   (async function loadNovelaiArtStyles() {
     try {
-      const styles = await window.sceneVisualizer.getNovelaiArtStyles();
+      const styles = await window.powertool.getNovelaiArtStyles();
       const novelaiArtStyleSelect = document.getElementById('novelaiArtStyle');
       novelaiArtStyleSelect.innerHTML = '';
       for (const style of styles) {
@@ -412,7 +412,7 @@ export function initProviderEvents() {
   // Populate Perchance art styles on load
   (async function loadArtStyles() {
     try {
-      const styles = await window.sceneVisualizer.getPerchanceArtStyles();
+      const styles = await window.powertool.getPerchanceArtStyles();
       perchanceArtStyleSelect.innerHTML = '';
       for (const style of styles) {
         const opt = document.createElement('option');

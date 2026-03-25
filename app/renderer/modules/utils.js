@@ -180,13 +180,13 @@ export function memoizeClear(key) {
 // Structured error banner for inline error display
 export function showError(container, message, detail = '') {
   container.innerHTML = `
-    <div style="display:flex;align-items:flex-start;gap:8px;background:var(--error-bg-subtle);border:1px solid var(--error-border);border-radius:6px;padding:8px 12px;font-size:11px;color:var(--error-light);">
-      <span style="font-size:14px;flex-shrink:0;">\u26A0</span>
-      <div style="flex:1;">
+    <div class="error-banner">
+      <span class="error-banner-icon">\u26A0</span>
+      <div class="error-banner-body">
         <div>${escapeHtml(message)}</div>
-        ${detail ? `<div style="color:var(--error-soft);font-size:10px;margin-top:2px;">${escapeHtml(detail)}</div>` : ''}
+        ${detail ? `<div class="error-banner-detail">${escapeHtml(detail)}</div>` : ''}
       </div>
-      <button onclick="this.parentElement.parentElement.style.display='none'" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;padding:0;">\u00D7</button>
+      <button onclick="this.parentElement.parentElement.style.display='none'" class="error-banner-close">\u00D7</button>
     </div>
   `;
   container.style.display = '';
