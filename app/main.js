@@ -1985,11 +1985,13 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
               }
             },
           };
-          await personaExtractor.runPersonaExtraction(personaCtx);
-          db.setLitrpgState(storyId, personaCtx.state);
-          hydratePortraits(personaCtx.state, storyId);
+          const personaResult = await personaExtractor.runPersonaExtraction(personaCtx);
+          const personaState = personaResult?.state || personaCtx.state;
+          const visualProfileUpdatedIds = personaResult?.visualProfileUpdatedIds || [];
+          db.setLitrpgState(storyId, personaState);
+          hydratePortraits(personaState, storyId);
           if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('litrpg:state-updated', { state: personaCtx.state });
+            mainWindow.webContents.send('litrpg:state-updated', { state: personaState, visualProfileUpdatedIds });
           }
         } catch (err) {
           console.error('[Persona] Extraction failed:', err);
@@ -2029,6 +2031,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
               roleUpdates,
               pendingLoreEntries,
               report: rpgResult.report,
+              newCharacterIds: rpgResult.newCharacterIds || [],
             });
           }
         } catch (rpgErr) {
@@ -2711,7 +2714,7 @@ ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, f
     db.setLitrpgState(storyId, result.state);
     // Hydrate portrait data before sending to renderer (filesystem → base64)
     hydratePortraits(result.state, storyId);
-    return { success: true, state: result.state, roleUpdates, pendingLoreEntries, r4Skipped, report: result.report };
+    return { success: true, state: result.state, roleUpdates, pendingLoreEntries, r4Skipped, report: result.report, newCharacterIds: result.newCharacterIds || [] };
   } catch (e) {
     console.error('[Main] LitRPG scan failed:', e.message);
     return { success: false, error: e.message };
@@ -2880,10 +2883,15 @@ ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntri
       state: litrpgState, comprehensionCtx,
       onProgress: (p) => event.sender.send('persona:scan-progress', p),
     };
-    await personaExtractor.runPersonaExtraction(ctx);
-    db.setLitrpgState(storyId, ctx.state);
-    hydratePortraits(ctx.state, storyId);
-    return { success: true, state: ctx.state };
+    const personaResult = await personaExtractor.runPersonaExtraction(ctx);
+    const personaState = personaResult?.state || ctx.state;
+    const visualProfileUpdatedIds = personaResult?.visualProfileUpdatedIds || [];
+    db.setLitrpgState(storyId, personaState);
+    hydratePortraits(personaState, storyId);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('litrpg:state-updated', { state: personaState, visualProfileUpdatedIds });
+    }
+    return { success: true, state: personaState };
   } catch (err) {
     console.error('[Persona] Scan failed:', err);
     return { success: false, error: err.message };

@@ -2236,6 +2236,7 @@ async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, 
   const state = { ...LITRPG_STATE_DEFAULTS, ...rpgState };
   migrateLitrpgState(state);
   const systemType = state.systemType || 'generic';
+  const preR1CharIds = new Set(Object.keys(state.characters || {}));
 
   // --- Scan Report (Phase 6.1) ---
   const report = {
@@ -2256,7 +2257,7 @@ async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, 
     report.completedAt = Date.now();
     report.duration = report.completedAt - report.startedAt;
     report.summary = `Scan skipped — only ${newTextLength} new chars`;
-    return { state, report };
+    return { state, report, newCharacterIds: [] };
   }
 
   // Dynamic context: overlap for continuity + new text
@@ -2294,6 +2295,7 @@ async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, 
 
   // --- R1: Character RPG Extraction ---
   await r1_extractCharacterRPG(ctx);
+  const newCharacterIds = Object.keys(state.characters || {}).filter(id => !preR1CharIds.has(id));
   await delay(INTER_CALL_DELAY);
 
   // --- R2: Quest Extraction ---
@@ -2336,7 +2338,7 @@ async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, 
   if (onProgress) onProgress({ phase: 'complete' });
   console.log(`${LOG_PREFIX} ${report.summary}`);
 
-  return { state, report };
+  return { state, report, newCharacterIds };
 }
 
 // ============================================================================
