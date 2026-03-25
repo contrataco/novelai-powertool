@@ -37,6 +37,9 @@ export async function loadImageSettings(effectiveSettings, effectiveArtStyle, ef
 
   // Scene settings
   sceneAutoGenerate.checked = effectiveSceneSettings.autoGeneratePrompts !== false;
+  interfaceShowWebview.checked = effectiveSceneSettings.headlessMode !== undefined 
+    ? !effectiveSceneSettings.headlessMode 
+    : !!effectiveSceneSettings.showWebview;
   sceneUseCharacterLore.checked = effectiveSceneSettings.useCharacterLore !== false;
   sceneArtStyleTags.value = effectiveSceneSettings.artStyleTags || '';
   sceneMinTextChange.value = effectiveSceneSettings.minTextChange || 50;
@@ -154,6 +157,8 @@ export async function saveImageSettings() {
   // Scene settings
   await window.powertool.setSceneSettings({
     autoGeneratePrompts: sceneAutoGenerate.checked,
+    showWebview: interfaceShowWebview.checked,
+    headlessMode: !interfaceShowWebview.checked,
     useCharacterLore: sceneUseCharacterLore.checked,
     artStyleTags: sceneArtStyleTags.value.trim(),
     minTextChange: parseInt(sceneMinTextChange.value),

@@ -2,6 +2,8 @@
 
 // Main elements
 export const webview = document.getElementById('novelai');
+export const storyEditor = document.getElementById('storyEditor');
+export const editorContainer = document.getElementById('editorContainer');
 export const status = document.getElementById('status');
 export const settingsModal = document.getElementById('settingsModal');
 export const imagePanel = document.getElementById('imagePanel');
@@ -15,10 +17,150 @@ export const generateBtn = document.getElementById('generateBtn');
 export const sidebarGenerateBtn = document.getElementById('sidebarGenerateBtn');
 export const togglePanelBtn = document.getElementById('togglePanelBtn');
 export const settingsBtn = document.getElementById('settingsBtn');
+export const toggleWebviewBtn = document.getElementById('toggleWebviewBtn');
 export const reloadBtn = document.getElementById('reloadBtn');
 export const closePanelBtn = document.getElementById('closePanelBtn');
 export const cancelBtn = document.getElementById('cancelBtn');
 export const saveBtn = document.getElementById('saveBtn');
+export const goToNovelaiDashboard = document.getElementById('goToNovelaiDashboard');
+
+// Story selection
+export const storySelectionOverlay = document.getElementById('storySelectionOverlay');
+export const storySelectionLoading = document.getElementById('storySelectionLoading');
+export const storyList = document.getElementById('storyList');
+export const storySelectionEmpty = document.getElementById('storySelectionEmpty');
+export const storySelectionEmptyText = document.getElementById('storySelectionEmptyText');
+export const refreshStoriesBtn = document.getElementById('refreshStoriesBtn');
+export const toggleStoryListViewBtn = document.getElementById('toggleStoryListViewBtn');
+
+// Editor Toolbar
+export const editorToolbar = document.querySelector('.editor-toolbar');
+export const editorBackBtn = document.getElementById('editorBackBtn');
+export const editorStoryTitle = document.getElementById('editorStoryTitle');
+export const editorGenerateBtn = document.getElementById('editorGenerateBtn');
+export const editorUndoBtn = document.getElementById('editorUndoBtn');
+export const editorRedoBtn = document.getElementById('editorRedoBtn');
+export const editorHistoryBtn = document.getElementById('editorHistoryBtn');
+export const editorLockBtn = document.getElementById('editorLockBtn');
+export const editorBoldBtn = document.getElementById('editorBoldBtn');
+export const editorItalicBtn = document.getElementById('editorItalicBtn');
+export const editorUnderlineBtn = document.getElementById('editorUnderlineBtn');
+export const editorMemoryBtn = document.getElementById('editorMemoryBtn');
+export const editorNoteBtn = document.getElementById('editorNoteBtn');
+export const editorSettingsBtn = document.getElementById('editorSettingsBtn');
+export const editorLoreBtn = document.getElementById('editorLoreBtn');
+export const editorContextBtn = document.getElementById('editorContextBtn');
+
+// Headless Panels
+export const headlessLorePanel = document.getElementById('headlessLorePanel');
+export const headlessLoreList = document.getElementById('headlessLoreList');
+export const headlessLoreSearch = document.getElementById('headlessLoreSearch');
+export const headlessLoreEditor = document.getElementById('headlessLoreEditor');
+export const headlessLoreEmpty = document.getElementById('headlessLoreEmpty');
+export const headlessLoreNameInput = document.getElementById('headlessLoreNameInput');
+export const headlessLoreKeysInput = document.getElementById('headlessLoreKeysInput');
+export const headlessLoreTextInput = document.getElementById('headlessLoreTextInput');
+export const headlessLoreCreateBtn = document.getElementById('headlessLoreCreateBtn');
+export const headlessLoreDeleteBtn = document.getElementById('headlessLoreDeleteBtn');
+export const headlessLoreSaveBtn = document.getElementById('headlessLoreSaveBtn');
+
+export const headlessMemoryPanel = document.getElementById('headlessMemoryPanel');
+export const headlessMemoryInput = document.getElementById('headlessMemoryInput');
+export const headlessMemorySaveBtn = document.getElementById('headlessMemorySaveBtn');
+export const headlessNotePanel = document.getElementById('headlessNotePanel');
+export const headlessNoteInput = document.getElementById('headlessNoteInput');
+export const headlessNoteSaveBtn = document.getElementById('headlessNoteSaveBtn');
+
+// Dashboard Search
+export const headlessStorySearch = document.getElementById('headlessStorySearch');
+
+export const headlessAiSettingsPanel = document.getElementById('headlessAiSettingsPanel');
+export const headlessModelSelect = document.getElementById('headlessModelSelect');
+export const headlessPresetSelect = document.getElementById('headlessPresetSelect');
+export const headlessTempSlider = document.getElementById('headlessTempSlider');
+export const headlessTempValue = document.getElementById('headlessTempValue');
+export const headlessLengthSlider = document.getElementById('headlessLengthSlider');
+export const headlessLengthValue = document.getElementById('headlessLengthValue');
+export const headlessRepSlider = document.getElementById('headlessRepSlider');
+export const headlessRepValue = document.getElementById('headlessRepValue');
+export const headlessRepRangeSlider = document.getElementById('headlessRepRangeSlider');
+export const headlessRepRangeValue = document.getElementById('headlessRepRangeValue');
+export const headlessPreambleInput = document.getElementById('headlessPreambleInput');
+export const headlessStopInput = document.getElementById('headlessStopInput');
+export const headlessAiSaveBtn = document.getElementById('headlessAiSaveBtn');
+export const headlessAiFlattenBtn = document.getElementById('headlessAiFlattenBtn');
+
+// Editor Customization
+export const headlessFontSizeSlider = document.getElementById('headlessFontSizeSlider');
+export const headlessFontSizeValue = document.getElementById('headlessFontSizeValue');
+export const headlessLineHeightSlider = document.getElementById('headlessLineHeightSlider');
+export const headlessLineHeightValue = document.getElementById('headlessLineHeightValue');
+export const headlessWidthSlider = document.getElementById('headlessWidthSlider');
+export const headlessWidthValue = document.getElementById('headlessWidthValue');
+
+// Headless Context Panel
+export const headlessContextPanel = document.getElementById('headlessContextPanel');
+export const headlessContextDisplay = document.getElementById('headlessContextDisplay');
+export const headlessContextLoading = document.getElementById('headlessContextLoading');
+export const headlessContextRefreshBtn = document.getElementById('headlessContextRefreshBtn');
+export const headlessContextCopyBtn = document.getElementById('headlessContextCopyBtn');
+export const headlessContextTokens = document.getElementById('headlessContextTokens');
+export const headlessContextChars = document.getElementById('headlessContextChars');
+
+// Headless Active Lore Panel
+export const headlessActiveLorePanel = document.getElementById('headlessActiveLorePanel');
+export const headlessActiveLoreList = document.getElementById('headlessActiveLoreList');
+export const headlessActiveLoreRefreshBtn = document.getElementById('headlessActiveLoreRefreshBtn');
+export const editorActiveLoreBtn = document.getElementById('editorActiveLoreBtn');
+export const editorActiveLoreCount = document.getElementById('editorActiveLoreCount');
+
+// Headless Metadata Panel
+export const headlessMetadataPanel = document.getElementById('headlessMetadataPanel');
+export const headlessStoryTitleInput = document.getElementById('headlessStoryTitleInput');
+export const headlessStoryDescriptionInput = document.getElementById('headlessStoryDescriptionInput');
+export const headlessStoryTagsInput = document.getElementById('headlessStoryTagsInput');
+export const headlessMetadataSaveBtn = document.getElementById('headlessMetadataSaveBtn');
+
+// Headless History Panel
+export const headlessHistoryPanel = document.getElementById('headlessHistoryPanel');
+export const headlessHistoryList = document.getElementById('headlessHistoryList');
+export const headlessHistoryLoading = document.getElementById('headlessHistoryLoading');
+export const headlessHistoryRefreshBtn = document.getElementById('headlessHistoryRefreshBtn');
+export const headlessHistoryBacktrackBtn = document.getElementById('headlessHistoryBacktrackBtn');
+
+// Status Bar
+export const editorWordCount = document.getElementById('editorWordCount');
+export const editorCharCount = document.getElementById('editorCharCount');
+export const editorSyncStatus = document.getElementById('editorSyncStatus');
+export const editorSyncIndicator = document.getElementById('editorSyncIndicator');
+export const editorAiStatus = document.getElementById('editorAiStatus');
+export const editorAiIndicator = document.getElementById('editorAiIndicator');
+export const editorFocusModeBtn = document.getElementById('editorFocusModeBtn');
+export const editorTokensEstimate = document.getElementById('editorTokensEstimate');
+export const editorReadingTime = document.getElementById('editorReadingTime');
+export const selViewLoreBtn = document.getElementById('selViewLoreBtn');
+export const selLoreSeparator = document.getElementById('selLoreSeparator');
+export const selectionToolbar = document.getElementById('selectionToolbar');
+export const selAiGenerateBtn = document.getElementById('selAiGenerateBtn');
+export const selAiRewriteBtn = document.getElementById('selAiRewriteBtn');
+export const selAiExpandBtn = document.getElementById('selAiExpandBtn');
+export const selAiShortenBtn = document.getElementById('selAiShortenBtn');
+export const selAiSummarizeBtn = document.getElementById('selAiSummarizeBtn');
+export const selFlattenBtn = document.getElementById('selFlattenBtn');
+export const selCopyBtn = document.getElementById('selCopyBtn');
+
+// Command Palette
+export const editorCommandPalette = document.getElementById('editorCommandPalette');
+export const editorCommandInput = document.getElementById('editorCommandInput');
+export const editorCommandList = document.getElementById('editorCommandList');
+
+// Search Bar
+export const editorSearchBar = document.getElementById('editorSearchBar');
+export const editorSearchInput = document.getElementById('editorSearchInput');
+export const editorReplaceInput = document.getElementById('editorReplaceInput');
+export const editorReplaceBtn = document.getElementById('editorReplaceBtn');
+export const editorReplaceAllBtn = document.getElementById('editorReplaceAllBtn');
+export const editorSearchCloseBtn = document.getElementById('editorSearchCloseBtn');
 
 // Settings elements -- Provider
 export const providerSelect = document.getElementById('provider');
@@ -86,6 +228,7 @@ export const sceneSuggestionStyle = document.getElementById('sceneSuggestionStyl
 export const sceneSuggestionTemperature = document.getElementById('sceneSuggestionTemperature');
 export const sceneSuggestionTemperatureValue = document.getElementById('sceneSuggestionTemperatureValue');
 export const sceneEnableLitrpg = document.getElementById('sceneEnableLitrpg');
+export const interfaceShowWebview = document.getElementById('interfaceShowWebview');
 
 // Text LLM / Pipeline settings elements
 export const scenePipelineVersion = document.getElementById('scenePipelineVersion');

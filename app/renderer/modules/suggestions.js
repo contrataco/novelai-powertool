@@ -1,8 +1,9 @@
 // suggestions.js — Suggestions popover, type filters, insertion, badge
 
 import { state } from './state.js';
+import { syncToWebview } from './headless-sync.js';
 import {
-  webview,
+  webview, storyEditor,
   suggestionsBtn, suggestionsBadge, suggestionsPopover,
   popoverCloseBtn, popoverRegenBtn, popoverSettingsBtn, popoverSettings,
   popoverSuggestionsContainer, popoverLoading, popoverStatus,
@@ -112,6 +113,34 @@ export function updateBadge(count) {
 async function insertSuggestionIntoEditor(suggestion) {
   try {
     const text = suggestion.text;
+
+    // Strategy 0: Insert into native editor (headless mode only)
+    if (state.headlessMode && storyEditor) {
+      console.log('[Suggestions] Inserting into native editor');
+      storyEditor.focus();
+      const sel = window.getSelection();
+      if (sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (storyEditor.contains(range.commonAncestorContainer)) {
+          range.deleteContents();
+          const node = document.createTextNode(text);
+          range.insertNode(node);
+          range.setStartAfter(node);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } else {
+          storyEditor.innerText += (storyEditor.innerText.endsWith('\n') ? '' : '\n') + text;
+        }
+      } else {
+        storyEditor.innerText += (storyEditor.innerText.endsWith('\n') ? '' : '\n') + text;
+      }
+      // Trigger sync to webview
+      await syncToWebview();
+      showSuggestionStatus('Suggestion inserted', 'success');
+      return;
+    }
+
     const result = await webview.executeJavaScript(`
       (async function() {
         // Strategy 1: Use companion script's API (most reliable -- updates NovelAI's document model)
@@ -120,7 +149,7 @@ async function insertSuggestionIntoEditor(suggestion) {
             const ok = await window.__sceneVisInsert(${JSON.stringify(text)});
             if (ok) return { success: true, method: 'document-append' };
           } catch (e) {
-            console.warn('[SceneVis] __sceneVisInsert threw:', e);
+            console.warn('[PowerTool] __sceneVisInsert threw:', e);
           }
         }
 
@@ -151,7 +180,7 @@ async function insertSuggestionIntoEditor(suggestion) {
             }
           }
         } catch (e) {
-          console.warn('[SceneVis] ProseMirror transaction error:', e);
+          console.warn('[PowerTool] ProseMirror transaction error:', e);
         }
 
         // Strategy 3: execCommand fallback
@@ -209,7 +238,7 @@ export async function generateSuggestionsFromEditor() {
     popoverLoading.style.display = 'flex';
     popoverSuggestionsContainer.innerHTML = '';
 
-    const result = await window.sceneVisualizer.generateSuggestionsDirect({
+    const result = await window.powertool.generateSuggestionsDirect({
       storyText: contextText,
       storyId: state.currentStoryId,
     });
@@ -222,9 +251,9 @@ export async function generateSuggestionsFromEditor() {
       // Persist suggestions for this story
       if (state.currentStoryId) {
         try {
-          const sceneState = await window.sceneVisualizer.sceneGetState(state.currentStoryId);
+          const sceneState = await window.powertool.sceneGetState(state.currentStoryId);
           sceneState.suggestions = result.suggestions;
-          await window.sceneVisualizer.sceneSetState(state.currentStoryId, sceneState);
+          await window.powertool.sceneSetState(state.currentStoryId, sceneState);
         } catch (e) { /* non-fatal */ }
       }
 

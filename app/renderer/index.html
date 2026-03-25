@@ -199,11 +199,926 @@
       flex: 1;
       display: flex;
       overflow: hidden;
+      background: var(--bg-base);
+    }
+
+    .editor-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-base);
+      padding: 0; /* Changed to 0 to accommodate toolbar */
+      overflow: hidden; /* Changed from overflow-y: auto */
+      border-right: 1px solid var(--border-default);
+      position: relative;
+    }
+
+    .editor-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-default);
+      gap: 12px;
+    }
+
+    .editor-toolbar-left, .editor-toolbar-center, .editor-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .editor-toolbar-center {
+      background: var(--bg-base);
+      padding: 4px 12px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-default);
+    }
+
+    .editor-story-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      max-width: 200px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .story-editor {
+      flex: 1;
+      font-family: 'Georgia', serif;
+      font-size: 19px;
+      line-height: 1.8;
+      color: var(--text-primary);
+      background: transparent;
+      border: none;
+      outline: none;
+      resize: none;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      padding: 60px 80px;
+      overflow-y: auto;
+      min-height: 100%;
+      max-width: 850px;
+      margin: 0 auto;
+      width: 100%;
+      position: relative;
+      caret-color: var(--accent);
+    }
+
+    /* Selection styling */
+    .story-editor ::selection {
+      background: rgba(233, 69, 96, 0.3);
+      color: #fff;
+    }
+
+    .editor-search-bar {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      border-top: none;
+      border-radius: 0 0 var(--radius-md) var(--radius-md);
+      padding: 8px 12px;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      z-index: 100;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
+    .editor-search-bar.active { display: flex; }
+    .editor-search-bar input {
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+
+    .story-editor b, .story-editor strong { font-weight: bold; }
+    .story-editor i, .story-editor em { font-style: italic; }
+    .story-editor u { text-decoration: underline; }
+
+    .editor-status-bar {
+      padding: 4px 16px;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border-default);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .editor-status-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .editor-status-bar .focus-btn {
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      transition: all 0.2s;
+    }
+
+    .editor-status-bar .focus-btn:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+    }
+
+    .main-container.focus-mode .editor-toolbar,
+    .main-container.focus-mode .editor-status-bar .editor-status-item:not(.focus-toggle-container),
+    .main-container.focus-mode .editor-status-bar span:not(.focus-btn) {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+
+    .editor-status-bar span, .editor-status-item {
+      transition: opacity 0.3s ease;
+    }
+
+    /* Floating Selection Toolbar */
+    .selection-toolbar {
+      position: fixed;
+      z-index: 10001;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+      display: none;
+      padding: 5px;
+      gap: 4px;
+      backdrop-filter: blur(12px);
+      animation: selectionToolbarFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      align-items: center;
+    }
+
+    @keyframes selectionToolbarFadeIn {
+      from { opacity: 0; transform: translateY(8px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .selection-toolbar button {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s ease;
+    }
+
+    .selection-toolbar button:hover {
+      background: var(--accent);
+      color: #fff;
+      transform: translateY(-1px);
+    }
+
+    .selection-toolbar button i {
+      font-style: normal;
+      font-size: 15px;
+    }
+
+    .selection-toolbar .separator {
+      width: 1px;
+      height: 18px;
+      background: var(--border-default);
+      margin: 0 4px;
+      opacity: 0.5;
+    }
+
+    .main-container.focus-mode .editor-status-bar {
+      border-top: none;
+      background: transparent;
+    }
+
+    .main-container.focus-mode .editor-status-bar .focus-btn {
+      opacity: 0.2;
+    }
+
+    /* Typewriter Mode Guide Line */
+    .editor-container.typewriter-mode::after {
+      content: '';
+      position: absolute;
+      top: 40%;
+      left: 10%;
+      right: 10%;
+      height: 1px;
+      background: linear-gradient(to right, transparent, rgba(233, 69, 96, 0.1), transparent);
+      pointer-events: none;
+      z-index: 10;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .editor-container.typewriter-mode.scrolling::after {
+      opacity: 1;
+    }
+
+    /* Pulse animation for busy indicators */
+    @keyframes indicatorPulse {
+      0% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0.4); }
+      70% { box-shadow: 0 0 0 6px rgba(233, 69, 96, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0); }
+    }
+    .status-indicator.busy {
+      background: var(--accent);
+      animation: indicatorPulse 1.5s infinite;
+    }
+    .status-indicator.active {
+      background: var(--success);
+    }
+
+    .main-container.focus-mode .story-editor {
+      padding-top: 100px;
+      transition: padding-top 0.4s ease;
+    }
+
+    .story-editor {
+      transition: padding-top 0.4s ease;
+    }
+
+    .status-btn {
+      cursor: pointer;
+      color: var(--text-dim);
+    }
+    .status-btn:hover {
+      color: var(--accent);
+    }
+
+    .active-lore-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .active-lore-item {
+      background: var(--bg-elevated);
+      padding: 10px;
+      border-radius: var(--radius-md);
+      border-left: 3px solid var(--accent);
+    }
+    .active-lore-item h4 {
+      font-size: 13px;
+      margin-bottom: 4px;
+      color: var(--text-primary);
+    }
+    .active-lore-item p {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+
+    /* Headless Modal/Panel for AI Settings, Memory, Note */
+    .headless-panel {
+      position: absolute;
+      top: 50px; /* Below toolbar */
+      right: 16px;
+      width: 450px;
+      max-height: calc(100% - 120px);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      z-index: 1000;
+      display: none;
+      flex-direction: column;
+      animation: slideInRight 0.2s ease;
+    }
+
+    .editor-context-menu {
+      position: fixed;
+      z-index: 1000;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      box-shadow: 0 5px 15px rgba(0,0,0,0.4);
+      padding: 4px 0;
+      min-width: 180px;
+      backdrop-filter: blur(8px);
+      animation: contextMenuPop 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    @keyframes contextMenuPop {
+      from { opacity: 0; transform: scale(0.95) translateY(-5px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .editor-context-menu .menu-item {
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      color: var(--text-primary);
+      font-size: 13px;
+      transition: background 0.1s;
+      gap: 12px;
+    }
+
+    .editor-context-menu .menu-item:hover {
+      background: var(--bg-elevated);
+      color: var(--accent);
+    }
+
+    .editor-context-menu .menu-item-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .editor-context-menu .menu-item-right {
+      color: var(--text-ghost);
+      font-size: 11px;
+    }
+
+    .editor-context-menu .menu-icon {
+      width: 16px;
+      text-align: center;
+      opacity: 0.8;
+    }
+
+    .editor-context-menu .menu-divider {
+      height: 1px;
+      background: var(--border-muted);
+      margin: 4px 0;
+    }
+
+    .headless-panel.wide {
+      width: 700px;
+      right: calc(50% - 350px);
+    }
+
+    .headless-panel.active { display: flex; }
+
+    .headless-panel-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-default);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .headless-panel-header h3 {
+      font-size: 16px;
+      color: var(--accent);
+      margin: 0;
+    }
+
+    .headless-panel-header .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .headless-panel-header .close-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      font-size: 24px;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0;
+    }
+    .headless-panel-header .close-btn:hover { color: var(--text-primary); }
+
+    .headless-panel-body {
+      padding: 20px;
+      overflow-y: auto;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .headless-panel-footer {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border-default);
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .headless-panel textarea {
+      width: 100%;
+      min-height: 200px;
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      resize: vertical;
+      outline: none;
+    }
+    .headless-panel textarea:focus { border-color: var(--accent); }
+
+    .headless-panel .form-group {
+      margin-bottom: 16px;
+    }
+
+    .lore-entry-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .lore-entry-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .lore-entry-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: var(--accent);
+    }
+
+    .lore-entry-item.active {
+      border-color: var(--accent);
+      background: rgba(233, 69, 96, 0.05);
+    }
+
+    .lore-entry-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .lore-entry-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .lore-entry-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .lore-editor-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      height: 100%;
+    }
+
+    .lore-sidebar {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border-default);
+      padding-right: 16px;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .lore-main-editor {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .lore-search-box {
+      margin-bottom: 12px;
+      position: sticky;
+      top: 0;
+      background: var(--bg-elevated);
+      z-index: 10;
+      padding-bottom: 8px;
+    }
+
+    .lore-search-box input {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+      color: var(--text-primary);
+      font-size: 12px;
+    }
+
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-ghost);
+    }
+
+    .status-indicator.active {
+      background: var(--success);
+      box-shadow: 0 0 5px var(--success);
+    }
+
+    .status-indicator.busy {
+      background: var(--warning);
+      box-shadow: 0 0 5px var(--warning);
     }
 
     .webview-container {
       flex: 1;
+      display: none;
+      background: var(--bg-base);
+    }
+
+    /* Command Palette */
+    .command-palette {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 400px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      z-index: 2000;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+      animation: fadeSlideIn 0.2s ease-out;
+    }
+
+    .command-palette-input {
+      width: 100%;
+      padding: 12px 16px;
+      background: var(--bg-input);
+      border: none;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      font-size: 14px;
+      outline: none;
+    }
+
+    .command-palette-list {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .command-item {
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+
+    .command-item:last-child {
+      border-bottom: none;
+    }
+
+    .command-item:hover, .command-item.selected {
+      background: var(--bg-elevated);
+    }
+
+    .command-item.selected {
+      border-left: 3px solid var(--accent);
+    }
+
+    .command-name {
+      font-size: 13px;
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .command-shortcut {
+      font-size: 10px;
+      color: var(--text-dim);
+      background: var(--bg-base);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border-default);
+    }
+
+    .command-type-badge {
+      font-size: 9px;
+      text-transform: uppercase;
+      padding: 2px 5px;
+      border-radius: 3px;
+      background: var(--bg-elevated);
+      color: var(--accent);
+      margin-left: 8px;
+    }
+
+    .command-item.type-story .command-name { color: #4d96ff; }
+    .command-item.type-lore .command-name { color: #ffd93d; }
+
+    .editor-autocomplete-box {
+      position: fixed;
+      z-index: 10000;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      min-width: 240px;
+      display: none;
+      overflow: hidden;
+      animation: autocompleteFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      backdrop-filter: blur(10px);
+    }
+
+    @keyframes autocompleteFadeIn {
+      from { opacity: 0; transform: translateY(10px) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .autocomplete-item {
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border-muted);
+      transition: background 0.15s ease;
+    }
+
+    .autocomplete-item.selected {
+      background: var(--accent);
+      border-bottom-color: transparent;
+    }
+
+    .autocomplete-icon {
+      font-size: 18px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-elevated);
+      border-radius: 6px;
+      transition: background 0.15s ease;
+    }
+
+    .autocomplete-item.selected .autocomplete-icon {
+      background: rgba(255,255,255,0.2);
+    }
+
+    .autocomplete-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .autocomplete-name {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .autocomplete-item.selected .autocomplete-name { color: #fff; }
+
+    .autocomplete-key {
+      font-size: 10px;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.8;
+    }
+
+    .autocomplete-item.selected .autocomplete-key { color: rgba(255,255,255,0.9); }
+
+    .autocomplete-category {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: var(--bg-elevated);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    
+    .autocomplete-item.selected .autocomplete-category {
+      background: rgba(255,255,255,0.3);
+      color: #fff;
+    }
+
+    /* Typewriter Mode Centering Indicator */
+    .editor-container.typewriter-mode::after {
+      content: '';
+      position: absolute;
+      left: 50px;
+      right: 50px;
+      top: 40%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(233, 69, 96, 0.1), transparent);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .command-description {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    /* Typewriter Mode */
+    .editor-container.typewriter-mode #storyEditor {
+      padding-top: 40vh;
+      padding-bottom: 50vh;
+    }
+
+    .main-container.webview-active .editor-container,
+    .main-container.showing-story-selector .editor-container {
+      display: none;
+    }
+
+    .main-container.webview-active .webview-container {
+      display: block;
+    }
+
+    /* Headless Story Selection */
+    .story-selection-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--bg-base);
+      z-index: 100;
+      display: none;
+      flex-direction: column;
+      padding: 40px;
+      overflow-y: auto;
+      animation: fadeIn 0.4s ease;
+    }
+
+    .main-container.showing-story-selector .story-selection-overlay {
+      display: flex;
+    }
+
+    .story-selection-header {
+      margin-bottom: 32px;
+      text-align: center;
+    }
+
+    .story-selection-header h2 {
+      font-size: 28px;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+
+    .story-selection-header p {
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+
+    .story-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .story-list.list-view {
+      grid-template-columns: 1fr;
+      max-width: 800px;
+    }
+
+    .story-list.list-view .story-card {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 20px;
+    }
+
+    .story-list.list-view .story-description {
+      display: none;
+    }
+
+    .story-list.list-view .story-meta {
+      margin-top: 0;
+      margin-left: auto;
+      flex-direction: row;
+      gap: 12px;
+    }
+
+    .story-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      cursor: pointer;
+      transition: transform var(--transition-default), border-color var(--transition-default), background var(--transition-default);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
       position: relative;
+      overflow: hidden;
+      animation: slideInDown 0.4s ease backwards;
+    }
+
+    .story-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--accent);
+      background: var(--bg-elevated);
+    }
+
+    .story-card .story-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .story-card .story-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .story-card .story-description {
+      font-size: 13px;
+      color: var(--text-secondary);
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.5;
+      min-height: 4.5em;
+    }
+
+    .story-card .story-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: auto;
+    }
+
+    .story-tag {
+      font-size: 10px;
+      background: rgba(233, 69, 96, 0.1);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .story-selection-empty {
+      text-align: center;
+      padding: 60px;
+      color: var(--text-dim);
+      display: none;
+    }
+
+    .story-selection-loading {
+      text-align: center;
+      padding: 60px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(233, 69, 96, 0.1);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
 
     webview {
@@ -292,6 +1207,16 @@
     .lore-panel-content.active {
       display: block;
       animation: fadeIn var(--transition-fast) ease;
+    }
+
+    @keyframes slideInRight {
+      from { transform: translateX(30px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    @keyframes slideInDown {
+      from { transform: translateY(-20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
     }
 
     @keyframes fadeIn {
@@ -2164,8 +3089,32 @@
     .section-summary { font-size: 11px; color: var(--text-muted); cursor: pointer; }
     .cultivation-tag { font-size: 11px; color: #d4a574; margin-top: 4px; }
 
-    .btn-xs { font-size: 10px; padding: 2px 8px; }
-    .btn-sm { font-size: 11px; padding: 4px 12px; }
+    .btn-xs { font-size: 10px; padding: 2px 8px; cursor: pointer; border-radius: var(--radius-sm); border: none; transition: all 0.2s ease; }
+    .btn-sm { font-size: 11px; padding: 4px 12px; cursor: pointer; border-radius: var(--radius-sm); border: none; transition: all 0.2s ease; }
+
+    .btn-sm.tertiary {
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid transparent;
+    }
+    .btn-sm.tertiary:hover {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border-color: var(--border-default);
+    }
+    .btn-sm.tertiary.active {
+      background: var(--bg-base);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .btn-sm.primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-sm.primary:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 0 10px rgba(233, 69, 96, 0.3);
+    }
 
     .meta-badge {
       font-size: 9px;
@@ -4009,6 +4958,52 @@
       padding: 40px 20px;
       font-size: 13px;
     }
+      .history-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+    
+      .history-item {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-sm);
+        padding: 10px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+    
+      .history-item:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: var(--accent-primary);
+      }
+    
+      .history-item-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+    
+      .history-item-time {
+        font-size: 11px;
+        color: var(--text-dim);
+        margin-top: 4px;
+      }
+      .ai-typing-indicator {
+        display: inline-block;
+        color: var(--accent-primary);
+        font-weight: bold;
+        animation: blink 1s infinite;
+        margin-left: 4px;
+        user-select: none;
+        pointer-events: none;
+      }
+    
+      @keyframes blink {
+        0% { opacity: 0.2; }
+        50% { opacity: 1; }
+        100% { opacity: 0.2; }
+      }
   </style>
   <style id="dynamic-categories">/* Populated by JS from category registry */</style>
 </head>
@@ -4023,6 +5018,7 @@
       <span class="suggestions-badge hidden" id="suggestionsBadge">0</span>
     </span>
     <button id="settingsBtn">Settings</button>
+    <button id="toggleWebviewBtn" title="Switch between native editor and NovelAI webview">Show Webview</button>
     <button id="reloadBtn">Reload</button>
     <button id="hardReloadBtn" title="Clear cache and reload">Hard Reload</button>
     <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#aaa;cursor:pointer;user-select:none;">
@@ -4072,6 +5068,350 @@
   </div>
 
   <div class="main-container">
+    <div class="editor-container" id="editorContainer">
+      <!-- Command Palette -->
+      <div class="command-palette" id="editorCommandPalette">
+        <input type="text" class="command-palette-input" id="editorCommandInput" placeholder="Type a command (e.g. /expand)..." autocomplete="off">
+        <div class="command-palette-list" id="editorCommandList">
+          <!-- Command items will be injected here -->
+        </div>
+      </div>
+
+      <div class="editor-toolbar">
+        <div class="editor-toolbar-left">
+          <button id="editorBackBtn" class="btn-sm tertiary" title="Back to Stories Dashboard">Dashboard</button>
+          <span id="editorStoryTitle" class="editor-story-title" style="cursor: pointer;" title="Edit Story Metadata">No Story Loaded</span>
+        </div>
+        <div class="editor-toolbar-center">
+          <button id="editorBoldBtn" class="btn-sm tertiary" title="Bold (Ctrl+B)"><b>B</b></button>
+          <button id="editorItalicBtn" class="btn-sm tertiary" title="Italic (Ctrl+I)"><i>I</i></button>
+          <button id="editorUnderlineBtn" class="btn-sm tertiary" title="Underline (Ctrl+U)"><u>U</u></button>
+          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
+          <button id="editorLoreBtn" class="btn-sm tertiary" title="Edit Lorebook">Lore</button>
+          <button id="editorMemoryBtn" class="btn-sm tertiary" title="Edit Memory">Memory</button>
+          <button id="editorNoteBtn" class="btn-sm tertiary" title="Edit Author's Note">Note</button>
+        </div>
+        <div class="editor-toolbar-right">
+          <button id="editorContextBtn" class="btn-sm tertiary" title="View AI Context">Context</button>
+          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
+          <button id="editorSettingsBtn" class="btn-sm tertiary" title="AI Generation Settings">AI Settings</button>
+          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
+          <button id="editorGenerateBtn" class="btn-sm primary" title="Generate next text (Ctrl+Enter)">Generate</button>
+          <button id="editorUndoBtn" class="btn-sm tertiary" title="Undo (Ctrl+Z)">Undo</button>
+          <button id="editorRedoBtn" class="btn-sm tertiary" title="Redo (Ctrl+Shift+Z)">Redo</button>
+          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
+          <button id="editorHistoryBtn" class="btn-sm tertiary" title="Story History">History</button>
+          <button id="editorLockBtn" class="btn-sm tertiary" title="Toggle Read-Only Mode">Lock</button>
+        </div>
+      </div>
+      <div id="storyEditor" class="story-editor" contenteditable="true" spellcheck="true" placeholder="Start writing your story here..."></div>
+      
+      <div id="editorSearchBar" class="editor-search-bar">
+        <input type="text" id="editorSearchInput" placeholder="Find...">
+        <input type="text" id="editorReplaceInput" placeholder="Replace with...">
+        <button id="editorReplaceBtn" class="btn-sm tertiary">Replace</button>
+        <button id="editorReplaceAllBtn" class="btn-sm tertiary">All</button>
+        <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
+        <button id="editorSearchCloseBtn" class="btn-sm tertiary">&times;</button>
+      </div>
+      
+      <!-- Headless Panels -->
+      <div id="headlessLorePanel" class="headless-panel wide">
+        <div class="headless-panel-header">
+          <h3>Lorebook Entries</h3>
+          <div class="header-actions">
+            <button id="headlessLoreCreateBtn" class="btn-sm primary">+ New Entry</button>
+            <button class="close-btn">&times;</button>
+          </div>
+        </div>
+        <div class="headless-panel-body">
+          <div class="lore-editor-grid">
+            <div class="lore-sidebar">
+              <div class="lore-search-box">
+                <input type="text" id="headlessLoreSearch" placeholder="Search entries...">
+              </div>
+              <div id="headlessLoreList" class="lore-entry-list">
+                <!-- Entries populated here -->
+                <p class="text-xs color-dim" style="text-align: center; padding: 20px;">Loading entries...</p>
+              </div>
+            </div>
+            <div id="headlessLoreEditor" class="lore-main-editor" style="display: none;">
+              <div class="form-group">
+                <label>Display Name</label>
+                <input type="text" id="headlessLoreNameInput" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
+              </div>
+              <div class="form-group">
+                <label>Keys (comma-separated)</label>
+                <input type="text" id="headlessLoreKeysInput" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
+              </div>
+              <div class="form-group" style="flex: 1; display: flex; flex-direction: column;">
+                <label>Entry Text</label>
+                <textarea id="headlessLoreTextInput" style="flex: 1; min-height: 150px; font-size: 12px;"></textarea>
+              </div>
+              <div class="form-group">
+                <button id="headlessLoreDeleteBtn" class="btn-sm tertiary" style="color: var(--error);">Delete Entry</button>
+              </div>
+            </div>
+            <div id="headlessLoreEmpty" class="color-dim" style="display: flex; align-items: center; justify-content: center; text-align: center; padding: 40px;">
+              Select an entry to edit or create a new one.
+            </div>
+          </div>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="headlessLoreSaveBtn" class="btn primary" disabled>Save Entry</button>
+        </div>
+      </div>
+
+      <div id="headlessMemoryPanel" class="headless-panel">
+        <div class="headless-panel-header">
+          <h3>Story Memory</h3>
+          <button class="close-btn">&times;</button>
+        </div>
+        <div class="headless-panel-body">
+          <p class="text-xs color-dim">Context that is always sent to the AI (e.g., core premise, important rules).</p>
+          <textarea id="headlessMemoryInput" placeholder="Enter memory text..."></textarea>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="headlessMemorySaveBtn" class="btn primary">Save Memory</button>
+        </div>
+      </div>
+
+      <div id="headlessNotePanel" class="headless-panel">
+        <div class="headless-panel-header">
+          <h3>Author's Note</h3>
+          <button class="close-btn">&times;</button>
+        </div>
+        <div class="headless-panel-body">
+          <p class="text-xs color-dim">Instructions inserted near the end of the context to influence the AI's immediate direction.</p>
+          <textarea id="headlessNoteInput" placeholder="Enter author's note..."></textarea>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="headlessNoteSaveBtn" class="btn primary">Save Note</button>
+        </div>
+      </div>
+
+      <div id="headlessAiSettingsPanel" class="headless-panel">
+        <div class="headless-panel-header">
+          <h3>AI Generation Settings</h3>
+          <button class="close-btn">&times;</button>
+        </div>
+        <div class="headless-panel-body">
+          <div class="form-group">
+            <label>Model</label>
+            <select id="headlessModelSelect">
+              <option value="kayra">Kayra (Euterpe V2)</option>
+              <option value="clio">Clio</option>
+              <option value="euterpe">Euterpe</option>
+              <option value="krake">Krake</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Preset</label>
+            <select id="headlessPresetSelect">
+              <option value="default">Default</option>
+              <option value="prose-augmenter">Prose Augmenter (Kayra)</option>
+              <option value="coherent-creativity">Coherent Creativity</option>
+              <option value="fresh-start">Fresh Start</option>
+              <option value="writer-assistant">Writer's Assistant</option>
+              <option value="carefree">Carefree</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Randomness (Temperature): <span id="headlessTempValue">1.0</span></label>
+            <input type="range" id="headlessTempSlider" min="0.1" max="2.0" step="0.05" value="1.0">
+          </div>
+          <div class="form-group">
+            <label>Max Output Length: <span id="headlessLengthValue">160</span></label>
+            <input type="range" id="headlessLengthSlider" min="4" max="600" step="4" value="160">
+          </div>
+          <div class="form-group">
+            <label>Repetition Penalty: <span id="headlessRepValue">1.0</span></label>
+            <input type="range" id="headlessRepSlider" min="1.0" max="3.0" step="0.01" value="1.0">
+          </div>
+          <div class="form-group">
+            <label>Repetition Penalty Range: <span id="headlessRepRangeValue">1024</span></label>
+            <input type="range" id="headlessRepRangeSlider" min="0" max="8192" step="32" value="1024">
+          </div>
+          <div class="form-group">
+            <label>Preamble / AI Instructions</label>
+            <textarea id="headlessPreambleInput" placeholder="Enter high-priority instructions..." style="min-height: 80px; font-size: 12px;"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Stop Sequences (comma-separated)</label>
+            <input type="text" id="headlessStopInput" placeholder="e.g. ---, ***, END" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
+          </div>
+          
+          <hr style="border: 0; border-top: 1px solid var(--border-default); margin: 16px 0;">
+          <h4 style="margin-bottom: 12px; color: var(--text-secondary); font-size: 13px;">Editor Customization</h4>
+          <div class="form-group">
+            <label>Font Size: <span id="headlessFontSizeValue">16px</span></label>
+            <input type="range" id="headlessFontSizeSlider" min="10" max="32" step="1" value="16">
+          </div>
+          <div class="form-group">
+            <label>Line Height: <span id="headlessLineHeightValue">1.8</span></label>
+            <input type="range" id="headlessLineHeightSlider" min="1.0" max="3.0" step="0.1" value="1.8">
+          </div>
+          <div class="form-group">
+            <label>Editor Max-Width: <span id="headlessWidthValue">850px</span></label>
+            <input type="range" id="headlessWidthSlider" min="400" max="1600" step="50" value="850">
+          </div>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="headlessAiSaveBtn" class="btn primary">Apply Settings</button>
+          <button id="headlessAiFlattenBtn" class="btn secondary" title="Remove all formatting and flatten text in the editor">Flatten Text</button>
+        </div>
+      </div>
+
+      <div id="headlessContextPanel" class="headless-panel">
+        <div class="headless-panel-header">
+          <h3>AI Context Viewer</h3>
+          <button class="close-btn">&times;</button>
+        </div>
+        <div class="headless-panel-body" style="gap: 8px;">
+          <p class="text-xs color-dim">The raw text exactly as it is sent to the AI, including Memory, Lorebook, and Author's Note.</p>
+          <div id="headlessContextLoading" class="loading" style="display: none; padding: 20px;">
+            <div class="spinner"></div>
+            <span>Fetching context...</span>
+          </div>
+          <textarea id="headlessContextDisplay" readonly placeholder="Context will appear here..." style="flex: 1; font-family: 'Courier New', monospace; font-size: 13px; min-height: 400px;"></textarea>
+          <div id="headlessContextStats" class="text-xs color-dim" style="display: flex; justify-content: space-between;">
+            <span>Tokens: <span id="headlessContextTokens">0</span> / 8192</span>
+            <span>Characters: <span id="headlessContextChars">0</span></span>
+          </div>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="headlessContextRefreshBtn" class="btn secondary">Refresh</button>
+          <button id="headlessContextCopyBtn" class="btn secondary">Copy</button>
+        </div>
+      </div>
+
+      <div id="headlessActiveLorePanel" class="headless-panel">
+        <div class="headless-panel-header">
+          <h3>Active Lorebook Entries</h3>
+          <button class="close-btn">&times;</button>
+        </div>
+        <div class="headless-panel-body">
+          <p class="text-xs color-dim">Lorebook entries that are currently triggered by your story text and being sent to the AI.</p>
+          <div id="headlessActiveLoreList" class="active-lore-list">
+            <p class="color-dim" style="text-align: center; padding: 20px;">No lore entries active.</p>
+          </div>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="headlessActiveLoreRefreshBtn" class="btn secondary">Refresh</button>
+        </div>
+      </div>
+
+      <div id="headlessMetadataPanel" class="headless-panel">
+        <div class="headless-panel-header">
+          <h3>Story Metadata</h3>
+          <button class="close-btn">&times;</button>
+        </div>
+        <div class="headless-panel-body">
+          <div class="form-group">
+            <label>Title</label>
+            <input type="text" id="headlessStoryTitleInput" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <textarea id="headlessStoryDescriptionInput" placeholder="Enter story description..." style="min-height: 80px; font-size: 12px;"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Tags (comma-separated)</label>
+            <input type="text" id="headlessStoryTagsInput" placeholder="fantasy, adventure, action" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
+          </div>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="headlessMetadataSaveBtn" class="btn primary">Save Metadata</button>
+        </div>
+      </div>
+
+      <div id="headlessHistoryPanel" class="headless-panel">
+        <div class="headless-panel-header">
+          <h3>Story History</h3>
+          <button class="close-btn">&times;</button>
+        </div>
+        <div class="headless-panel-body">
+          <p class="text-xs color-dim">Restore your story to a previous state using NovelAI's backtrack system.</p>
+          <div id="headlessHistoryLoading" class="loading" style="display: none; padding: 20px;">
+            <div class="spinner"></div>
+            <span>Loading history...</span>
+          </div>
+          <div id="headlessHistoryList" class="history-list">
+            <!-- Snapshots will be listed here -->
+            <p class="color-dim" style="text-align: center; padding: 20px;">No history available.</p>
+          </div>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="headlessHistoryBacktrackBtn" class="btn primary">Backtrack (Ctrl+Z)</button>
+          <button id="headlessHistoryRefreshBtn" class="btn secondary">Refresh</button>
+        </div>
+      </div>
+      
+      <div class="editor-status-bar">
+        <!-- Floating Selection Toolbar -->
+        <div id="selectionToolbar" class="selection-toolbar">
+          <button id="selViewLoreBtn" title="View lore entry for selection" style="display:none;"><i>&#x1f4d6;</i> Lore</button>
+          <div id="selLoreSeparator" class="separator" style="display:none;"></div>
+          <button id="selAiGenerateBtn" title="Generate from selection"><i>&#x2728;</i> Generate</button>
+          <div class="separator"></div>
+          <button id="selAiRewriteBtn" title="Rewrite selection"><i>&#x21bb;</i> Rewrite</button>
+          <button id="selAiExpandBtn" title="Expand selection"><i>&#x2194;</i> Expand</button>
+          <button id="selAiShortenBtn" title="Shorten selection"><i>&#x2304;</i> Shorten</button>
+          <button id="selAiSummarizeBtn" title="Summarize selection"><i>&#x1f4dd;</i> Summarize</button>
+          <div class="separator"></div>
+          <button id="selFlattenBtn" title="Remove formatting"><i>&#x1f4da;</i> Flatten</button>
+          <button id="selCopyBtn" title="Copy selection"><i>&#x1f4cb;</i> Copy</button>
+        </div>
+
+        <div class="editor-status-item">
+          <span id="editorActiveLoreBtn" class="status-btn" title="View active lorebook entries">Lore: <span id="editorActiveLoreCount">0</span></span>
+          <span style="margin: 0 8px;">|</span>
+          <span id="editorWordCount">0 words</span>
+          <span style="margin: 0 8px;">|</span>
+          <span id="editorCharCount">0 chars</span>
+          <span style="margin: 0 8px;">|</span>
+          <span id="editorTokensEstimate" title="Estimated Context Tokens (Characters / 4)">0 tokens</span>
+          <span style="margin: 0 8px;">|</span>
+          <span id="editorReadingTime" title="Estimated reading time (200 wpm)">0 min read</span>
+        </div>
+        <div class="editor-status-item">
+          <span id="editorSyncStatus">In Sync</span>
+          <div id="editorSyncIndicator" class="status-indicator active"></div>
+          <span style="margin: 0 8px;">|</span>
+          <span id="editorAiStatus">Ready</span>
+          <div id="editorAiIndicator" class="status-indicator"></div>
+          <div class="focus-toggle-container" style="margin-left: 12px;">
+            <span id="editorFocusModeBtn" class="focus-btn" title="Toggle Focus Mode (Ctrl+Shift+F)">Focus Mode</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Headless Story Selection Overlay -->
+      <div id="storySelectionOverlay" class="story-selection-overlay">
+        <div class="story-selection-header">
+          <h2>Your Stories</h2>
+          <p>Select a story to continue or create a new one in the NovelAI dashboard.</p>
+          <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: center; align-items: center;">
+            <input type="text" id="headlessStorySearch" placeholder="Search stories..." class="btn-sm" style="background: var(--bg-input); border: 1px solid var(--border-subtle); color: var(--text-primary); padding: 5px 10px; width: 250px;">
+            <button id="refreshStoriesBtn" class="btn-sm tertiary" title="Re-fetch stories from API and DOM">Refresh</button>
+            <button id="toggleStoryListViewBtn" class="btn-sm tertiary" title="Toggle Grid/List View">&#9776;</button>
+          </div>
+        </div>
+        
+        <div id="storySelectionLoading" class="story-selection-loading">
+          <div class="spinner"></div>
+          <p>Loading your stories from NovelAI...</p>
+        </div>
+        
+        <div id="storyList" class="story-list"></div>
+        
+        <div id="storySelectionEmpty" class="story-selection-empty">
+          <p id="storySelectionEmptyText">No stories found. Make sure you are logged in to NovelAI.</p>
+          <button id="goToNovelaiDashboard" class="btn primary" style="margin-top: 16px;">Go to NovelAI Dashboard</button>
+        </div>
+      </div>
+    </div>
+
     <div class="webview-container">
       <webview
         id="novelai"
@@ -4736,6 +6076,13 @@
           <input type="checkbox" id="sceneEnableLitrpg">
           <label for="sceneEnableLitrpg">Enable LitRPG tracking</label>
         </div>
+        <hr style="border-color:var(--border-default);margin:12px 0;">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">Interface Settings</div>
+        <div class="form-group checkbox">
+          <input type="checkbox" id="interfaceShowWebview">
+          <label for="interfaceShowWebview">Show NovelAI webview (Headless Mode OFF)</label>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">Disabling headless mode shows the original NovelAI interface instead of the native editor. Use for initial login or debugging.</div>
       </details>
 
       <!-- Text LLM & Pipeline Settings -->
@@ -5190,8 +6537,10 @@
     import { init as initWebview } from './modules/webview-polling.js';
     import { init as initTts } from './modules/tts.js';
     import { init as initMediaGallery } from './modules/media-gallery.js';
+    import { init as initHeadlessSync } from './modules/headless-sync.js';
     import { init as initTimeline } from './modules/scene-timeline.js';
     import { init as initPortraitQueue } from './modules/portrait-queue.js';
+    import { init as initStorySelector } from './modules/story-selector.js';
 
     // Boot sequence
     initSettings();
@@ -5202,9 +6551,11 @@
     initMemory();
     initLitrpg();
     initPortraitQueue();
+    initStorySelector();
     initWebview();
     initTts();
     initMediaGallery();
+    initHeadlessSync();
     initTimeline();
   </script>
 

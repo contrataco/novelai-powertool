@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e94560"/>
+      <stop offset="100%" stop-color="#c23152"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#e94560" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#e94560" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="rounded">
+      <rect width="1024" height="1024" rx="220" ry="220"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <g clip-path="url(#rounded)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+
+    <!-- Subtle glow behind eye -->
+    <circle cx="512" cy="512" r="320" fill="url(#glow)"/>
+
+    <!-- Eye shape - outer -->
+    <path d="M512 280 C680 280, 820 400, 820 512 C820 624, 680 744, 512 744 C344 744, 204 624, 204 512 C204 400, 344 280, 512 280 Z"
+          fill="none" stroke="url(#accent)" stroke-width="36" stroke-linecap="round"/>
+
+    <!-- Iris ring -->
+    <circle cx="512" cy="512" r="130" fill="none" stroke="#e94560" stroke-width="30"/>
+
+    <!-- Pupil -->
+    <circle cx="512" cy="512" r="55" fill="#e94560"/>
+
+    <!-- Highlight -->
+    <circle cx="475" cy="478" r="22" fill="#ffffff" opacity="0.85"/>
+
+    <!-- Viewfinder corners - top left -->
+    <path d="M180 340 L180 240 L280 240" fill="none" stroke="#ffffff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+    <!-- Viewfinder corners - top right -->
+    <path d="M744 240 L844 240 L844 340" fill="none" stroke="#ffffff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+    <!-- Viewfinder corners - bottom left -->
+    <path d="M180 684 L180 784 L280 784" fill="none" stroke="#ffffff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+    <!-- Viewfinder corners - bottom right -->
+    <path d="M744 784 L844 784 L844 684" fill="none" stroke="#ffffff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+
+    <!-- Crosshair lines -->
+    <line x1="512" y1="200" x2="512" y2="260" stroke="#ffffff" stroke-width="6" opacity="0.4"/>
+    <line x1="512" y1="764" x2="512" y2="824" stroke="#ffffff" stroke-width="6" opacity="0.4"/>
+    <line x1="160" y1="512" x2="220" y2="512" stroke="#ffffff" stroke-width="6" opacity="0.4"/>
+    <line x1="804" y1="512" x2="864" y2="512" stroke="#ffffff" stroke-width="6" opacity="0.4"/>
+  </g>
+</svg>

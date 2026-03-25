@@ -1,6 +1,6 @@
-# Scene Visualizer
+# NovelAI PowerTool
 
-An Electron desktop application that displays AI-generated scene images alongside NovelAI stories using NovelAI's image generation API.
+An Electron companion app for NovelAI — image generation, lore management, LitRPG tracking, TTS narration, and more.
 
 ## Table of Contents
 
@@ -20,7 +20,7 @@ An Electron desktop application that displays AI-generated scene images alongsid
 
 ## Overview
 
-Scene Visualizer is an Electron app that:
+PowerTool is an Electron app that:
 
 - **Embeds NovelAI** in a native desktop window
 - **Generates images** from story content using NovelAI's image API
@@ -29,7 +29,7 @@ Scene Visualizer is an Electron app that:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Scene Visualizer                              [─] [□] [×]  │
+│  PowerTool                              [─] [□] [×]  │
 ├─────────────────────────────────────────────────────────────┤
 │ [Generate] [Toggle Panel] [Settings] [Reload]    Connected  │
 ├─────────────────────────────────────────┬───────────────────┤
@@ -54,13 +54,13 @@ Scene Visualizer is an Electron app that:
 
 ### Option 1: Download Pre-built Release (Recommended)
 
-Download the latest release for your platform from the [Releases page](https://github.com/contrataco/novelai-scene-visualizer/releases):
+Download the latest release for your platform from the [Releases page](https://github.com/contrataco/novelai-powertool/releases):
 
 | Platform | Download |
 |----------|----------|
 | **Windows** | `Scene-Visualizer-Setup-x.x.x.exe` (installer) or `Scene-Visualizer-x.x.x-portable.exe` |
 | **macOS** | `Scene-Visualizer-x.x.x.dmg` or `Scene-Visualizer-x.x.x-mac.zip` |
-| **Linux** | `Scene-Visualizer-x.x.x.AppImage` or `scene-visualizer_x.x.x_amd64.deb` |
+| **Linux** | `Scene-Visualizer-x.x.x.AppImage` or `novelai-powertool_x.x.x_amd64.deb` |
 
 **macOS note**: On first launch, right-click the app and select "Open" to bypass Gatekeeper.
 
@@ -76,8 +76,8 @@ Download the latest release for your platform from the [Releases page](https://g
 
 ```bash
 # Clone the repository
-git clone https://github.com/contrataco/novelai-scene-visualizer.git
-cd novelai-scene-visualizer/app
+git clone https://github.com/contrataco/novelai-powertool.git
+cd novelai-powertool/app
 
 # Install dependencies
 npm install
@@ -113,7 +113,7 @@ The app requires your NovelAI API token to generate images.
 
 ### Step 4: Enter Token in App
 
-1. Open Scene Visualizer
+1. Open PowerTool
 2. Click the **Settings** button (gear icon)
 3. Paste your token in the **"NovelAI API Token"** field
 4. The token is encrypted and stored locally
@@ -283,10 +283,10 @@ For automatic image generation based on your story:
 
 ### Step 1: Install the Script
 
-1. Inside Scene Visualizer, NovelAI loads in the webview
+1. Inside PowerTool, NovelAI loads in the webview
 2. Go to **Settings → Advanced → Scripts**
-3. Create a new script named "Scene Visualizer"
-4. Copy contents of [`scripts/scene-visualizer-script/scene-visualizer.ts`](../../scripts/scene-visualizer-script/scene-visualizer.ts)
+3. Create a new script named "PowerTool"
+4. Copy contents of [`scripts/novelai-powertool-script/novelai-powertool.ts`](../../scripts/novelai-powertool-script/novelai-powertool.ts)
 5. Enable the script
 
 ### Step 2: Configure the Script
@@ -340,7 +340,7 @@ Without the script, you can:
 │  │  ┌───────────────────────────────────────────────┐  ││
 │  │  │  webview-preload.js                           │  ││
 │  │  │  - Bridge for script communication            │  ││
-│  │  │  - Exposes __sceneVisualizerBridge            │  ││
+│  │  │  - Exposes __powertoolBridge            │  ││
 │  │  └───────────────────────────────────────────────┘  ││
 │  └─────────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────────┘
@@ -394,7 +394,7 @@ Without the script, you can:
 1. Re-check your token in NovelAI Account Settings
 2. Generate a new token if needed
 3. Make sure you copied the entire token
-4. Re-enter the token in Scene Visualizer settings
+4. Re-enter the token in PowerTool settings
 
 ### Images Not Generating
 

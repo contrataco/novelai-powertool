@@ -1184,9 +1184,14 @@ async function saveEdit(charId) {
         if (updates.narrative.storyFunction) extras['narrative-role'] = updates.narrative.storyFunction;
         if (updates.narrative.arcType) extras['arc'] = updates.narrative.arcType;
         console.log('[Cast] Narrative metadata to sync:', extras, 'for', charName);
-        // TODO: Full lorebook metadata sync via webview proxy (proxyCall pattern from lore-creator.js).
-        // The @narrative-role and @arc values will be written to the lorebook entry on the next lore scan
-        // (Pass 2/3 generate/update flow reads these fields from character state and stamps metadata).
+        
+        // Synchronize narrative metadata directly to NovelAI lorebook entry
+        try {
+          await loreCall('setMetadata', charName, { extras });
+          console.log(`[Cast] Successfully synchronized narrative metadata for "${charName}"`);
+        } catch (err) {
+          console.warn(`[Cast] Failed to synchronize narrative metadata for "${charName}":`, err.message);
+        }
       }
 
       refreshRpgUI();

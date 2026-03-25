@@ -1,6 +1,6 @@
-# Scene Visualizer Script
+# NovelAI PowerTool Script
 
-A NovelAI user script that bridges the NovelAI web interface with the Scene Visualizer Electron app, automatically generating image prompts from your story content.
+A NovelAI user script that bridges the NovelAI web interface with the PowerTool Electron app, automatically generating image prompts from your story content.
 
 ## Table of Contents
 
@@ -18,14 +18,14 @@ A NovelAI user script that bridges the NovelAI web interface with the Scene Visu
 
 ## Overview
 
-This script is the **companion component** to the [Scene Visualizer Electron App](../app/). While the app handles image generation and display, this script:
+This script is the **companion component** to the [PowerTool Electron App](../app/). While the app handles image generation and display, this script:
 
 - Analyzes your story content to generate image prompts
 - Extracts character appearances from your lorebook
 - Sends prompts to the Electron app for image generation
 - Provides a UI panel for prompt preview and settings
 
-**Important**: This script requires the Scene Visualizer app to be running. Without the app, prompts will be generated but no images will be created.
+**Important**: This script requires the PowerTool app to be running. Without the app, prompts will be generated but no images will be created.
 
 ---
 
@@ -33,21 +33,21 @@ This script is the **companion component** to the [Scene Visualizer Electron App
 
 ### Prerequisites
 
-1. **Scene Visualizer App** must be installed and running
+1. **PowerTool App** must be installed and running
 2. Access to NovelAI's **Script API** feature
 
 ### Steps
 
-1. **Open NovelAI** within the Scene Visualizer app's webview
+1. **Open NovelAI** within the PowerTool app's webview
 
 2. Navigate to **Settings → Advanced → Scripts**
 
 3. **Create a new script**:
    - Click "Add Script"
-   - Name it "Scene Visualizer"
+   - Name it "PowerTool"
 
 4. **Copy the script**:
-   - Open [`scene-visualizer.ts`](scene-visualizer.ts)
+   - Open [`novelai-powertool.ts`](novelai-powertool.ts)
    - Copy the entire file contents
 
 5. **Paste and save**:
@@ -318,7 +318,7 @@ The script communicates with the Electron app through a DOM bridge:
 **Symptoms**: Prompts appear but no images are created.
 
 **Solutions**:
-1. Ensure **Scene Visualizer app** is running
+1. Ensure **PowerTool app** is running
 2. Check API token is configured in the app
 3. Verify you have Anlas/image generation access
 4. Check app's status indicator (should show "Connected")
@@ -339,7 +339,7 @@ The script communicates with the Electron app through a DOM bridge:
 
 **Solutions**:
 1. Disable and re-enable the script
-2. Check you're running the script inside the Scene Visualizer app
+2. Check you're running the script inside the PowerTool app
 3. Refresh the NovelAI page within the app
 4. Clear script storage and restart
 
@@ -347,7 +347,7 @@ The script communicates with the Electron app through a DOM bridge:
 
 ## Requirements
 
-### Scene Visualizer App
+### PowerTool App
 - **Required**: This script only works with the companion Electron app
 - The app provides the webview that hosts NovelAI
 

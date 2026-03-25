@@ -7,7 +7,7 @@ import {
   promptDisplay,
 } from './dom-refs.js';
 import { escapeHtml, showToast, friendlyApiError } from './utils.js';
-import { switchPanelTab } from './lore-creator.js';
+import { switchPanelTab, loreCall } from './lore-creator.js';
 import { readStoryTextFromDOM } from './webview-polling.js';
 
 // =========================================================================
@@ -498,11 +498,35 @@ export function openSceneExplorer(sceneId) {
     });
   }
 
-  // Action: Add Note (stub — keeps button visible for future)
+  // Action: Add Note
   const noteBtn = sceneExplorerBody.querySelector('.scene-note-btn');
   if (noteBtn) {
-    noteBtn.addEventListener('click', () => {
-      showToast('Notes coming soon', 2000, 'warn');
+    noteBtn.addEventListener('click', async () => {
+      const existingNote = scene.note || '';
+      const newNote = window.prompt('Add a note for this scene:', existingNote);
+      if (newNote === null) return; // User cancelled
+
+      scene.note = newNote.trim();
+      
+      // Persist update
+      try {
+        await window.powertool.timelineSetState(state.currentStoryId, state.timelineState);
+        showToast('Scene note updated');
+        
+        // Re-render timeline to show the note if needed
+        renderTimeline(state.timelineState);
+        
+        // Update the explorer view to show the new note
+        const noteArea = sceneExplorerBody.querySelector('.scene-note-text');
+        if (noteArea) {
+          noteArea.textContent = scene.note;
+          const noteSection = noteArea.closest('.explorer-section');
+          if (noteSection) noteSection.style.display = scene.note ? 'block' : 'none';
+        }
+      } catch (err) {
+        console.error('[Timeline] Failed to save scene note:', err);
+        showToast('Failed to save note');
+      }
     });
   }
 
@@ -582,7 +606,7 @@ async function startTimelineScan() {
   state.llmBusy = true;
   try {
     const storyText = await readStoryTextFromDOM() || '';
-    const entries = []; // Lorebook entries — stub until webview proxy integration
+    const entries = await loreCall('getEntriesExpanded') || [];
     const result = await window.powertool.timelineScan(storyId, storyText, entries);
 
     // Stale check — story may have switched during async scan

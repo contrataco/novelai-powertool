@@ -1,6 +1,8 @@
-# NovelAI Scene Visualizer
+# NovelAI PowerTool
 
-Generate AI images alongside your NovelAI stories. This project includes both an Electron desktop application and a companion NovelAI script that work together to automatically visualize scenes from your stories.
+> Formerly "Scene Visualizer" — now a full-featured companion app for NovelAI.
+
+A companion Electron app for NovelAI — image generation, lore management, LitRPG tracking, TTS narration, and more. Includes a companion NovelAI script for automatic scene prompt generation.
 
 ## Components
 
@@ -27,22 +29,22 @@ A NovelAI user script that:
 
 **Option A: Download Pre-built Release**
 
-Download from the [Releases page](https://github.com/contrataco/novelai-scene-visualizer/releases):
+Download from the [Releases page](https://github.com/contrataco/novelai-powertool/releases):
 - Windows: `.exe` installer or portable
 - macOS: `.dmg` or `.zip`
 - Linux: `.AppImage` or `.deb`
 
 **Option B: Build from Source**
 ```bash
-git clone https://github.com/contrataco/novelai-scene-visualizer.git
-cd novelai-scene-visualizer/app
+git clone https://github.com/contrataco/novelai-powertool.git
+cd novelai-powertool/app
 npm install
 npm start
 ```
 
 ### 2. Configure the App
 
-1. Launch Scene Visualizer
+1. Launch PowerTool
 2. Click **Settings** (gear icon)
 3. Enter your NovelAI API token
 4. Select your preferred image model and settings
@@ -51,17 +53,17 @@ npm start
 
 For automatic prompt generation:
 
-1. Open NovelAI **within the Scene Visualizer app**
+1. Open NovelAI **within the PowerTool app**
 2. Go to **Settings → Advanced → Scripts**
-3. Create new script named "Scene Visualizer"
-4. Copy contents from [`script/scene-visualizer.ts`](script/scene-visualizer.ts)
+3. Create new script named "NovelAI PowerTool"
+4. Copy contents from [`script/novelai-powertool.ts`](script/novelai-powertool.ts)
 5. Enable the script
 
 ## How It Works
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  Scene Visualizer App                                          │
+│  PowerTool App                                          │
 ├────────────────────────────────────────────────────────────────┤
 │                                                                │
 │  ┌──────────────────────────────┐  ┌────────────────────────┐  │
@@ -111,10 +113,10 @@ For automatic prompt generation:
 
 ```bash
 # Clone repository
-git clone https://github.com/contrataco/novelai-scene-visualizer.git
+git clone https://github.com/contrataco/novelai-powertool.git
 
 # Install app dependencies
-cd novelai-scene-visualizer/app
+cd novelai-powertool/app
 npm install
 
 # Run in development mode
