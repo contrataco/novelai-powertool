@@ -270,21 +270,28 @@ export function init() {
           console.log('[Renderer] Token found, navigating to stories dashboard');
           webview.loadURL('https://novelai.net/stories');
     
-          // Periodically force dashboard navigation if we're on the landing page and have a token
-          const dashboardCheckInterval = setInterval(async () => {
-            if (state.currentStoryId) {
-              clearInterval(dashboardCheckInterval);
-              return;
-            }
-            const url = webview.getURL();
-            if (url === 'https://novelai.net/' || url === 'https://novelai.net') {
-              const { hasToken } = await window.powertool.getTokenStatus();
-              if (hasToken) {
-                console.log('[Renderer] Still on landing page, forcing dashboard navigation');
-                webview.loadURL('https://novelai.net/stories');
+          // Retry dashboard navigation a limited number of times to avoid stacking
+          // intervals on repeated did-finish-load events.
+          if (!window._dashboardRetryActive) {
+            window._dashboardRetryActive = true;
+            let attempts = 0;
+            const maxAttempts = 6; // 30s total
+            const dashboardCheckInterval = setInterval(async () => {
+              if (state.currentStoryId || ++attempts > maxAttempts) {
+                clearInterval(dashboardCheckInterval);
+                window._dashboardRetryActive = false;
+                return;
               }
-            }
-          }, 5000);
+              const retryUrl = webview.getURL();
+              if (retryUrl === 'https://novelai.net/' || retryUrl === 'https://novelai.net') {
+                const tokenStatus = await window.powertool.getTokenStatus();
+                if (tokenStatus.hasToken) {
+                  console.log('[Renderer] Still on landing page, forcing dashboard navigation');
+                  webview.loadURL('https://novelai.net/stories');
+                }
+              }
+            }, 5000);
+          }
         }
       }
     } catch (e) {
@@ -308,11 +315,18 @@ export function init() {
     lastDashboardCheck = 0;
   });
 
-  // Listen for force webview display
+  // Listen for force webview display (e.g., "Create New Story" or "Go to NovelAI Dashboard")
   bus.on('headless:force-webview', (show) => {
     if (show) {
-      window.powertool.setSceneSettings({ interfaceShowWebview: true });
-      bus.emit('settings:saved'); // Trigger UI refresh
+      state.headlessMode = false;
+      window.powertool.setSceneSettings({ interfaceShowWebview: true, headlessMode: false });
+      // Toggle webview visibility CSS
+      const mainContainer = document.querySelector('.main-container');
+      if (mainContainer) {
+        mainContainer.classList.remove('headless-mode');
+        mainContainer.classList.add('webview-mode');
+      }
+      bus.emit('settings:saved');
     }
   });
 

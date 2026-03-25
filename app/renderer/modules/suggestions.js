@@ -114,8 +114,8 @@ async function insertSuggestionIntoEditor(suggestion) {
   try {
     const text = suggestion.text;
 
-    // Strategy 0: Insert into native editor (Primary)
-    if (storyEditor) {
+    // Strategy 0: Insert into native editor (headless mode only)
+    if (state.headlessMode && storyEditor) {
       console.log('[Suggestions] Inserting into native editor');
       storyEditor.focus();
       const sel = window.getSelection();

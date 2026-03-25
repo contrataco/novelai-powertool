@@ -35,10 +35,11 @@ function initSelectionToolbar() {
     if (loreMatch && refs.selViewLoreBtn) {
       refs.selViewLoreBtn.style.display = 'flex';
       if (refs.selLoreSeparator) refs.selLoreSeparator.style.display = 'block';
-      const newBtn = refs.selViewLoreBtn.cloneNode(true);
-      refs.selViewLoreBtn.parentNode.replaceChild(newBtn, refs.selViewLoreBtn);
-      refs.selViewLoreBtn = newBtn;
-      refs.selViewLoreBtn.addEventListener('click', () => {
+      // Replace element in DOM to clear old listeners (can't reassign module namespace)
+      const oldBtn = refs.selViewLoreBtn;
+      const newBtn = oldBtn.cloneNode(true);
+      oldBtn.parentNode.replaceChild(newBtn, oldBtn);
+      newBtn.addEventListener('click', () => {
         togglePanel(refs.headlessLorePanel);
         selectLoreEntry(loreMatch.id);
         hideToolbar();

@@ -54,7 +54,11 @@ export async function triggerGeneration() {
     }
   }, 60000);
 
-  const clearGenTimeout = () => { clearTimeout(genTimeout); };
+  // Use self-removing listener to avoid accumulating stale listeners
+  const clearGenTimeout = () => {
+    clearTimeout(genTimeout);
+    bus.off('headless:generation-complete', clearGenTimeout);
+  };
   bus.on('headless:generation-complete', clearGenTimeout);
 
   try {
@@ -169,7 +173,8 @@ export async function triggerAiAction(type) {
   try {
     if (_syncToWebview) await _syncToWebview();
 
-    const commandText = `\n[ ${type === 'rewrite' ? 'Rewrite' : type === 'summarize' ? 'Summarize' : 'Shorten'} the following: ${selectedText} ]\n`;
+    const label = type === 'rewrite' ? 'Rewrite' : type === 'summarize' ? 'Summarize' : type === 'expand' ? 'Expand' : 'Shorten';
+    const commandText = `\n[ ${label} the following: ${selectedText} ]\n`;
 
     await webview.executeJavaScript(`
       (function() {

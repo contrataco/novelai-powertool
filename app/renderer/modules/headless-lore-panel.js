@@ -63,9 +63,9 @@ export function selectLoreEntry(id) {
   const entry = currentLoreEntries.find(e => e.id === id);
   if (!entry) return;
 
-  if (refs.headlessLoreEditName) refs.headlessLoreEditName.value = entry.displayName || '';
-  if (refs.headlessLoreEditKeys) refs.headlessLoreEditKeys.value = entry.keys || '';
-  if (refs.headlessLoreEditText) refs.headlessLoreEditText.value = entry.text || '';
+  if (refs.headlessLoreNameInput) refs.headlessLoreNameInput.value = entry.displayName || '';
+  if (refs.headlessLoreKeysInput) refs.headlessLoreKeysInput.value = entry.keys || '';
+  if (refs.headlessLoreTextInput) refs.headlessLoreTextInput.value = entry.text || '';
 
   if (refs.headlessLoreEditor) refs.headlessLoreEditor.style.display = 'block';
   renderLoreList();
@@ -73,16 +73,16 @@ export function selectLoreEntry(id) {
 
 function createNewLoreEntry() {
   selectedLoreEntryId = null;
-  if (refs.headlessLoreEditName) refs.headlessLoreEditName.value = '';
-  if (refs.headlessLoreEditKeys) refs.headlessLoreEditKeys.value = '';
-  if (refs.headlessLoreEditText) refs.headlessLoreEditText.value = '';
+  if (refs.headlessLoreNameInput) refs.headlessLoreNameInput.value = '';
+  if (refs.headlessLoreKeysInput) refs.headlessLoreKeysInput.value = '';
+  if (refs.headlessLoreTextInput) refs.headlessLoreTextInput.value = '';
   if (refs.headlessLoreEditor) refs.headlessLoreEditor.style.display = 'block';
 }
 
 async function saveLoreEntryFromPanel() {
-  const name = refs.headlessLoreEditName?.value;
-  const keys = refs.headlessLoreEditKeys?.value;
-  const text = refs.headlessLoreEditText?.value;
+  const name = refs.headlessLoreNameInput?.value;
+  const keys = refs.headlessLoreKeysInput?.value;
+  const text = refs.headlessLoreTextInput?.value;
 
   if (!name) {
     showToast('Entry name is required');
@@ -118,7 +118,7 @@ async function deleteLoreEntryFromPanel() {
   if (!confirm('Delete this lorebook entry?')) return;
 
   try {
-    await loreCall('deleteEntry', selectedLoreEntryId);
+    await loreCall('removeEntry', selectedLoreEntryId);
     showToast('Entry deleted');
     selectedLoreEntryId = null;
     if (refs.headlessLoreEditor) refs.headlessLoreEditor.style.display = 'none';
