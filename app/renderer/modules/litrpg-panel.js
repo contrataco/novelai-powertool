@@ -2444,6 +2444,21 @@ function setupIPCListeners() {
     state.litrpgEnabled = newState.enabled;
     refreshRpgUI();
 
+    // Emit events for portrait queue
+    const updatedChars = getRpgState()?.characters;
+    if (data.newCharacterIds?.length && updatedChars) {
+      bus.emit('litrpg:new-characters', {
+        newCharacterIds: data.newCharacterIds,
+        characters: updatedChars,
+      });
+    }
+    if (data.visualProfileUpdatedIds?.length && updatedChars) {
+      bus.emit('litrpg:visual-profiles-updated', {
+        visualProfileUpdatedIds: data.visualProfileUpdatedIds,
+        characters: updatedChars,
+      });
+    }
+
     // Process transient fields from chained RPG scan
     if (data.roleUpdates && data.roleUpdates.length > 0) {
       await applyRoleUpdatesToLorebook(data.roleUpdates);
@@ -2592,4 +2607,8 @@ export function init() {
   bus.on('timeline:scanned', () => {
     refreshRpgUI();
   });
+
+  // Refresh UI when portrait queue finishes or a portrait is generated
+  bus.on('portrait:queue-complete', () => refreshRpgUI());
+  bus.on('portrait:generated', () => refreshRpgUI());
 }

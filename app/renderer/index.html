@@ -5171,6 +5171,7 @@
     import { init as initTts } from './modules/tts.js';
     import { init as initMediaGallery } from './modules/media-gallery.js';
     import { init as initTimeline } from './modules/scene-timeline.js';
+    import { init as initPortraitQueue } from './modules/portrait-queue.js';
 
     // Boot sequence
     initSettings();
@@ -5180,6 +5181,7 @@
     initLore();
     initMemory();
     initLitrpg();
+    initPortraitQueue(state);
     initWebview();
     initTts();
     initMediaGallery();
