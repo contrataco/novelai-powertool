@@ -397,6 +397,12 @@ export const loreAddCategoryConfirm = document.getElementById('loreAddCategoryCo
 export const loreAddCategoryCancel = document.getElementById('loreAddCategoryCancel');
 export const dynamicCategoriesStyle = document.getElementById('dynamic-categories');
 
+// Portrait settings elements
+export const rpgGenerateAllPortraits = document.getElementById('rpgGenerateAllPortraits');
+export const autoGeneratePortraitsCheckbox = document.getElementById('autoGeneratePortraits');
+export const portraitProviderSelect = document.getElementById('portraitProvider');
+export const portraitProviderCostWarning = document.getElementById('portraitProviderCostWarning');
+
 // Scene sub-tab elements
 export const storyboardSubTab = document.getElementById('storyboardSubTab');
 export const timelineSubTab = document.getElementById('timelineSubTab');

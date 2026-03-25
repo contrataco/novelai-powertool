@@ -4495,6 +4495,9 @@
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
             Sync from Lorebook
           </button>
+          <button id="rpgGenerateAllPortraits" class="rpg-action-btn" title="Generate portraits for characters without one. Shift+click to regenerate all.">
+            Generate Portraits
+          </button>
         </div>
         <label class="rpg-option-label"><input type="checkbox" id="rpgForceReEnrich"> Re-enrich all descriptions</label>
 
@@ -5057,6 +5060,23 @@
           <input type="checkbox" id="qualityTags" checked>
           <label for="qualityTags">Add Quality Tags to Prompt</label>
         </div>
+        <!-- Portrait Generation Settings -->
+        <div class="form-group checkbox">
+          <input type="checkbox" id="autoGeneratePortraits" checked>
+          <label for="autoGeneratePortraits">Auto-generate portraits for new characters</label>
+        </div>
+        <div class="form-group">
+          <label for="portraitProvider">Portrait provider</label>
+          <select id="portraitProvider">
+            <option value="novelai">NovelAI (recommended — no per-image cost)</option>
+            <option value="venice">Venice (per-image cost)</option>
+            <option value="perchance">Perchance</option>
+            <option value="puter">Puter.js</option>
+          </select>
+          <span id="portraitProviderCostWarning" style="display:none;color:#e94560;font-size:0.85em;">
+            This provider charges per image. Bulk/auto generation may incur costs.
+          </span>
+        </div>
       </div>
 
       <!-- Text-to-Speech -->
@@ -5171,6 +5191,7 @@
     import { init as initTts } from './modules/tts.js';
     import { init as initMediaGallery } from './modules/media-gallery.js';
     import { init as initTimeline } from './modules/scene-timeline.js';
+    import { init as initPortraitQueue } from './modules/portrait-queue.js';
 
     // Boot sequence
     initSettings();
@@ -5180,6 +5201,7 @@
     initLore();
     initMemory();
     initLitrpg();
+    initPortraitQueue(state);
     initWebview();
     initTts();
     initMediaGallery();

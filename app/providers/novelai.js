@@ -72,6 +72,15 @@ const MODEL_CONFIG = {
   'nai-diffusion-4-5-full': { isV4: true, name: 'NAI Diffusion V4.5 Full' },
 };
 
+// Portrait generation preset (portrait aspect ratio, moderate steps, dedicated model)
+const PORTRAIT_PRESET = {
+  width: 512,
+  height: 768,
+  steps: 20,
+  model: 'nai-diffusion-4-5-curated',
+  negativePrompt: 'multiple people, full body, landscape, background clutter, text, watermark',
+};
+
 // Quality presets per model
 const QUALITY_PRESETS = {
   'nai-diffusion-3': ', best quality, amazing quality, very aesthetic, absurdres',
@@ -117,6 +126,7 @@ const UC_PRESETS = {
 };
 
 module.exports = {
+  PORTRAIT_PRESET,
   id: 'novelai',
   name: 'NovelAI',
 

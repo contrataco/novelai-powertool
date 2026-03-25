@@ -2,6 +2,7 @@
 
 import { state, bus } from './state.js';
 import { saveLoreState, refreshLoreUI, loreCall } from './lore-creator.js';
+import { enqueue as enqueuePortraits } from './portrait-queue.js';
 import {
   rpgTab, rpgContent,
   rpgDetectionBanner, rpgEnableBtn, rpgDismissBtn,
@@ -29,6 +30,7 @@ import {
   rpgDetectedType,
   rpgAlbumLightbox, rpgAlbumLightboxImg, rpgAlbumPrev, rpgAlbumNext,
   rpgAlbumCounter, rpgAlbumSetActive, rpgAlbumDelete, rpgAlbumClose,
+  rpgGenerateAllPortraits,
   webview,
 } from './dom-refs.js';
 import { escapeHtml, showToast } from './utils.js';
@@ -2000,6 +2002,14 @@ async function runRpgScan() {
       state.litrpgState = result.state;
       refreshRpgUI();
 
+      // Emit events for portrait queue (standalone scan path)
+      if (result.newCharacterIds?.length && result.state?.characters) {
+        bus.emit('litrpg:new-characters', {
+          newCharacterIds: result.newCharacterIds,
+          characters: result.state.characters,
+        });
+      }
+
       // Apply @role metadata updates to lorebook entries
       if (result.roleUpdates && result.roleUpdates.length > 0) {
         await applyRoleUpdatesToLorebook(result.roleUpdates);
@@ -2444,6 +2454,21 @@ function setupIPCListeners() {
     state.litrpgEnabled = newState.enabled;
     refreshRpgUI();
 
+    // Emit events for portrait queue
+    const updatedChars = getRpgState()?.characters;
+    if (data.newCharacterIds?.length && updatedChars) {
+      bus.emit('litrpg:new-characters', {
+        newCharacterIds: data.newCharacterIds,
+        characters: updatedChars,
+      });
+    }
+    if (data.visualProfileUpdatedIds?.length && updatedChars) {
+      bus.emit('litrpg:visual-profiles-updated', {
+        visualProfileUpdatedIds: data.visualProfileUpdatedIds,
+        characters: updatedChars,
+      });
+    }
+
     // Process transient fields from chained RPG scan
     if (data.roleUpdates && data.roleUpdates.length > 0) {
       await applyRoleUpdatesToLorebook(data.roleUpdates);
@@ -2582,6 +2607,21 @@ export function init() {
     });
   }
 
+  // Bulk portrait generation
+  if (rpgGenerateAllPortraits) {
+    rpgGenerateAllPortraits.addEventListener('click', (e) => {
+      const rpg = getRpgState();
+      if (!rpg?.characters) return;
+      const regenerate = e.shiftKey;
+      const chars = Object.entries(rpg.characters).map(([charId, char]) => ({
+        charId,
+        charName: char.name || char.loreEntryName || charId,
+        rpgData: char,
+      }));
+      enqueuePortraits(chars, { regenerate });
+    });
+  }
+
   // IPC listeners
   setupIPCListeners();
 
@@ -2592,4 +2632,8 @@ export function init() {
   bus.on('timeline:scanned', () => {
     refreshRpgUI();
   });
+
+  // Refresh UI when portrait queue finishes or a portrait is generated
+  bus.on('portrait:queue-complete', () => { saveLitrpgState(); refreshRpgUI(); });
+  bus.on('portrait:generated', () => refreshRpgUI());
 }

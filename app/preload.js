@@ -315,6 +315,10 @@ contextBridge.exposeInMainWorld('powertool', {
     ipcRenderer.on('portrait:auto-save-failed', (_, data) => callback(data));
   },
 
+  // App settings (global, non-per-story)
+  getSettings: () => ipcRenderer.invoke('get-app-settings'),
+  setSetting: (key, value) => ipcRenderer.invoke('set-app-setting', { key, value }),
+
   // Scene Timeline
   timelineGetState: (storyId) => ipcRenderer.invoke('timeline:get-state', storyId),
   timelineSetState: (storyId, state) => ipcRenderer.invoke('timeline:set-state', { storyId, state }),

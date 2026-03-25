@@ -14,6 +14,7 @@ import {
   scenePipelineVersion, sceneSecondaryLlm,
   textLlmOpenaiKey, textLlmOpenaiModel, textLlmAnthropicKey, textLlmAnthropicModel,
   textLlmOllamaModelSelect,
+  autoGeneratePortraitsCheckbox, portraitProviderSelect, portraitProviderCostWarning,
   RESOLUTION_PRESETS, V4_MODELS,
 } from './dom-refs.js';
 import { state } from './state.js';
@@ -49,7 +50,7 @@ export async function loadImageSettings(effectiveSettings, effectiveArtStyle, ef
 
   // Text LLM / Pipeline settings (wrapped — must not abort settings open on failure)
   try {
-    const textLlmSettings = await window.sceneVisualizer.textLlmGetSettings();
+    const textLlmSettings = await window.powertool.textLlmGetSettings();
     scenePipelineVersion.value = String(textLlmSettings.pipelineVersion || 1);
     sceneSecondaryLlm.value = textLlmSettings.secondaryLlm || 'none';
     textLlmOpenaiKey.value = '';
@@ -59,7 +60,7 @@ export async function loadImageSettings(effectiveSettings, effectiveArtStyle, ef
     textLlmAnthropicKey.placeholder = textLlmSettings.anthropicApiKey ? 'Key configured (enter new to replace)' : 'sk-ant-...';
     textLlmAnthropicModel.value = textLlmSettings.anthropicModel || 'claude-sonnet-4-20250514';
     // Load Ollama models
-    const ollamaResult = await window.sceneVisualizer.textLlmListOllamaModels();
+    const ollamaResult = await window.powertool.textLlmListOllamaModels();
     textLlmOllamaModelSelect.innerHTML = '';
     if (ollamaResult.success && ollamaResult.models.length > 0) {
       for (const m of ollamaResult.models) {
@@ -69,7 +70,7 @@ export async function loadImageSettings(effectiveSettings, effectiveArtStyle, ef
         textLlmOllamaModelSelect.appendChild(opt);
       }
       // Select current model from lore LLM provider settings (authoritative source)
-      const loreLlm = await window.sceneVisualizer.loreGetLlmProvider();
+      const loreLlm = await window.powertool.loreGetLlmProvider();
       if (loreLlm.ollamaModel) textLlmOllamaModelSelect.value = loreLlm.ollamaModel;
     } else {
       const opt = document.createElement('option');
@@ -108,6 +109,22 @@ export async function loadImageSettings(effectiveSettings, effectiveArtStyle, ef
 
   // Update V3 options visibility
   updateV3Options();
+
+  // Portrait settings
+  try {
+    const portraitSettings = await window.powertool.getSettings?.() || {};
+    if (autoGeneratePortraitsCheckbox) {
+      autoGeneratePortraitsCheckbox.checked = portraitSettings.autoGeneratePortraits !== false;
+    }
+    if (portraitProviderSelect) {
+      portraitProviderSelect.value = portraitSettings.portraitProvider || 'novelai';
+      if (portraitProviderCostWarning) {
+        portraitProviderCostWarning.style.display = portraitProviderSelect.value !== 'novelai' ? '' : 'none';
+      }
+    }
+  } catch (e) {
+    console.error('[Settings] Portrait settings load error:', e);
+  }
 }
 
 // --- Save image/scene settings from the modal ---
@@ -125,17 +142,17 @@ export async function saveImageSettings() {
     if (openaiKey) textLlmPayload.openaiApiKey = openaiKey;
     const anthropicKey = textLlmAnthropicKey.value.trim();
     if (anthropicKey) textLlmPayload.anthropicApiKey = anthropicKey;
-    await window.sceneVisualizer.textLlmSetSettings(textLlmPayload);
+    await window.powertool.textLlmSetSettings(textLlmPayload);
     // Update Ollama model via lore LLM provider (authoritative store key)
     if (textLlmOllamaModelSelect.value) {
-      await window.sceneVisualizer.loreSetLlmProvider({ ollamaModel: textLlmOllamaModelSelect.value });
+      await window.powertool.loreSetLlmProvider({ ollamaModel: textLlmOllamaModelSelect.value });
     }
   } catch (e) {
     console.error('[Settings] Text LLM save error:', e);
   }
 
   // Scene settings
-  await window.sceneVisualizer.setSceneSettings({
+  await window.powertool.setSceneSettings({
     autoGeneratePrompts: sceneAutoGenerate.checked,
     useCharacterLore: sceneUseCharacterLore.checked,
     artStyleTags: sceneArtStyleTags.value.trim(),
@@ -146,10 +163,10 @@ export async function saveImageSettings() {
   });
 
   // NovelAI art style
-  await window.sceneVisualizer.setNovelaiArtStyle(novelaiArtStyleSelect.value);
+  await window.powertool.setNovelaiArtStyle(novelaiArtStyleSelect.value);
 
   // Image settings
-  await window.sceneVisualizer.setImageSettings({
+  await window.powertool.setImageSettings({
     model: modelSelect.value,
     width: parseInt(imgWidth.value),
     height: parseInt(imgHeight.value),
@@ -163,6 +180,14 @@ export async function saveImageSettings() {
     ucPreset: 'heavy',
     qualityTags: qualityTagsCheckbox.checked
   });
+
+  // Portrait settings
+  if (autoGeneratePortraitsCheckbox) {
+    await window.powertool.setSetting?.('autoGeneratePortraits', autoGeneratePortraitsCheckbox.checked);
+  }
+  if (portraitProviderSelect) {
+    await window.powertool.setSetting?.('portraitProvider', portraitProviderSelect.value);
+  }
 }
 
 // --- Build per-story image/scene settings object ---
@@ -237,4 +262,11 @@ export function initImageEvents() {
 
   // Handle model change
   modelSelect.addEventListener('change', updateV3Options);
+
+  // Portrait provider cost warning
+  if (portraitProviderSelect && portraitProviderCostWarning) {
+    portraitProviderSelect.addEventListener('change', () => {
+      portraitProviderCostWarning.style.display = portraitProviderSelect.value !== 'novelai' ? '' : 'none';
+    });
+  }
 }

@@ -1269,6 +1269,20 @@ ipcMain.handle('set-scene-settings', (event, settings) => {
   return { success: true };
 });
 
+ipcMain.handle('get-app-settings', () => {
+  return {
+    autoGeneratePortraits: store.get('autoGeneratePortraits', true),
+    portraitProvider: store.get('portraitProvider', 'novelai'),
+  };
+});
+
+ipcMain.handle('set-app-setting', (_, { key, value }) => {
+  const allowed = ['autoGeneratePortraits', 'portraitProvider'];
+  if (!allowed.includes(key)) return { success: false, error: 'Unknown setting' };
+  store.set(key, value);
+  return { success: true };
+});
+
 // IPC Handler — Electron-side suggestion generation (parallel with script's image prompt)
 ipcMain.handle('generate-suggestions-direct', async (event, data) => {
   try {
@@ -1971,11 +1985,13 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
               }
             },
           };
-          await personaExtractor.runPersonaExtraction(personaCtx);
-          db.setLitrpgState(storyId, personaCtx.state);
-          hydratePortraits(personaCtx.state, storyId);
+          const personaResult = await personaExtractor.runPersonaExtraction(personaCtx);
+          const personaState = personaResult?.state || personaCtx.state;
+          const visualProfileUpdatedIds = personaResult?.visualProfileUpdatedIds || [];
+          db.setLitrpgState(storyId, personaState);
+          hydratePortraits(personaState, storyId);
           if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('litrpg:state-updated', { state: personaCtx.state });
+            mainWindow.webContents.send('litrpg:state-updated', { state: personaState, visualProfileUpdatedIds });
           }
         } catch (err) {
           console.error('[Persona] Extraction failed:', err);
@@ -2015,6 +2031,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
               roleUpdates,
               pendingLoreEntries,
               report: rpgResult.report,
+              newCharacterIds: rpgResult.newCharacterIds || [],
             });
           }
         } catch (rpgErr) {
@@ -2697,7 +2714,7 @@ ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, f
     db.setLitrpgState(storyId, result.state);
     // Hydrate portrait data before sending to renderer (filesystem → base64)
     hydratePortraits(result.state, storyId);
-    return { success: true, state: result.state, roleUpdates, pendingLoreEntries, r4Skipped, report: result.report };
+    return { success: true, state: result.state, roleUpdates, pendingLoreEntries, r4Skipped, report: result.report, newCharacterIds: result.newCharacterIds || [] };
   } catch (e) {
     console.error('[Main] LitRPG scan failed:', e.message);
     return { success: false, error: e.message };
@@ -2866,10 +2883,15 @@ ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntri
       state: litrpgState, comprehensionCtx,
       onProgress: (p) => event.sender.send('persona:scan-progress', p),
     };
-    await personaExtractor.runPersonaExtraction(ctx);
-    db.setLitrpgState(storyId, ctx.state);
-    hydratePortraits(ctx.state, storyId);
-    return { success: true, state: ctx.state };
+    const personaResult = await personaExtractor.runPersonaExtraction(ctx);
+    const personaState = personaResult?.state || ctx.state;
+    const visualProfileUpdatedIds = personaResult?.visualProfileUpdatedIds || [];
+    db.setLitrpgState(storyId, personaState);
+    hydratePortraits(personaState, storyId);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('litrpg:state-updated', { state: personaState, visualProfileUpdatedIds });
+    }
+    return { success: true, state: personaState };
   } catch (err) {
     console.error('[Persona] Scan failed:', err);
     return { success: false, error: err.message };
@@ -2878,23 +2900,54 @@ ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntri
 
 // IPC Handlers — Portraits
 
-ipcMain.handle('portrait:generate', async (event, { storyId, characterId, characterEntry, rpgData }) => {
+ipcMain.handle('portrait:generate', async (event, { storyId, characterId, characterEntry: charName, rpgData }) => {
   try {
-    // Generate prompt from character data
     const generateTextFn = makeLoreGenerateTextFn();
-    const prompt = await litrpgTracker.generatePortraitPrompt(
-      typeof characterEntry === 'string' ? characterEntry : (characterEntry || ''),
-      rpgData || {},
-      generateTextFn
-    );
+
+    // Build prompt — deterministic if visual data sufficient, LLM fallback otherwise
+    let prompt = litrpgTracker.assemblePortraitPrompt(rpgData || {});
+    if (!prompt) {
+      // Fetch lorebook entry text as LLM context (charName is just a display name)
+      let entryText = typeof charName === 'string' ? charName : '';
+      const loreState = db.getLoreState(storyId);
+      if (loreState?.entries) {
+        const match = loreState.entries.find(e =>
+          e.displayName && loreCreator.fuzzyNameScore(e.displayName, charName) >= 0.7
+        );
+        if (match?.text) entryText = match.text;
+      }
+      prompt = await litrpgTracker.generatePortraitPrompt(entryText, rpgData || {}, generateTextFn);
+    }
     if (!prompt) return { success: false, error: 'Failed to generate portrait prompt' };
 
-    // Generate image via active provider
-    const providerId = store.get('provider') || 'novelai';
-    const provider = PROVIDERS[providerId];
-    if (!provider) return { success: false, error: 'No active image provider' };
+    // Provider selection — default NovelAI for portraits
+    const portraitProviderId = store.get('portraitProvider') || 'novelai';
+    const provider = PROVIDERS[portraitProviderId];
+    if (!provider) return { success: false, error: `Portrait provider "${portraitProviderId}" not available` };
 
-    const imageData = await provider.generate(prompt, '', store);
+    // Apply portrait preset via temporary store override (same pattern as per-story settings)
+    const novelaiProvider = require('./providers/novelai');
+    const preset = novelaiProvider.PORTRAIT_PRESET;
+    let imageData;
+
+    if (portraitProviderId === 'novelai' && preset) {
+      const origSettings = store.get('imageSettings');
+      try {
+        store.set('imageSettings', {
+          ...origSettings,
+          width: preset.width,
+          height: preset.height,
+          steps: preset.steps,
+          model: preset.model,
+        });
+        imageData = await provider.generate(prompt, preset.negativePrompt, store);
+      } finally {
+        store.set('imageSettings', origSettings);
+      }
+    } else {
+      imageData = await provider.generate(prompt, '', store);
+    }
+
     const base64 = imageData.replace(/^data:image\/[^;]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
 

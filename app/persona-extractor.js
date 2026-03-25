@@ -394,8 +394,14 @@ async function runPersonaExtraction(ctx) {
 
   if (!characterEntries?.length || !storyText || !generateTextFn) {
     console.log(`${LOG_PREFIX} Skipping — missing required inputs`);
-    return state;
+    return { state, visualProfileUpdatedIds: [] };
   }
+
+  const preVisualIds = new Set(
+    Object.entries(state.characters || {})
+      .filter(([, c]) => c.visual && Object.values(c.visual).some(Boolean))
+      .map(([id]) => id)
+  );
 
   const characters = state.characters || {};
 
@@ -505,7 +511,12 @@ async function runPersonaExtraction(ctx) {
 
   console.log(`${LOG_PREFIX} Pipeline complete — P1: ${p1Results.length}, P2: ${p2Results.length}, P3: ${p3Results.length} results`);
 
-  return { ...state, characters };
+  const finalState = { ...state, characters };
+  const visualProfileUpdatedIds = Object.entries(finalState.characters || {})
+    .filter(([id, c]) => !preVisualIds.has(id) && c.visual && Object.values(c.visual).some(Boolean))
+    .map(([id]) => id);
+
+  return { state: finalState, visualProfileUpdatedIds };
 }
 
 // ============================================================================
