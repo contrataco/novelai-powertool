@@ -3,7 +3,7 @@
 import { state, bus } from './state.js';
 import {
   webview,
-  sceneTab, loreTab, memoryTab, rpgTab, mediaTab, sceneContent, loreContent, memoryContent, rpgContent, mediaContent,
+  sceneTab, loreTab, memoryTab, rpgTab, mediaTab, scriptsTab, sceneContent, loreContent, memoryContent, rpgContent, mediaContent, scriptsContent,
   loreScanBtn, loreOrganizeBtn, loreAcceptAllBtn, loreClearBtn,
   loreCleanupSection, loreCleanupList, loreCleanupCount, loreCleanupApplyAllBtn,
   loreScanStatus, loreScanPhase, loreScanProgressFill, loreError,
@@ -2406,6 +2406,7 @@ export function switchPanelTab(tab) {
   memoryTab.classList.remove('active');
   if (rpgTab) rpgTab.classList.remove('active');
   if (mediaTab) mediaTab.classList.remove('active');
+  if (scriptsTab) scriptsTab.classList.remove('active');
   sceneContent.classList.remove('active');
   sceneContent.style.display = 'none';
   loreContent.classList.remove('active');
@@ -2414,6 +2415,7 @@ export function switchPanelTab(tab) {
   memoryContent.style.display = 'none';
   if (rpgContent) { rpgContent.classList.remove('active'); rpgContent.style.display = 'none'; }
   if (mediaContent) { mediaContent.classList.remove('active'); mediaContent.style.display = 'none'; }
+  if (scriptsContent) { scriptsContent.classList.remove('active'); scriptsContent.style.display = 'none'; }
 
   if (tab === 'scene') {
     sceneTab.classList.add('active');
@@ -2438,6 +2440,10 @@ export function switchPanelTab(tab) {
     if (mediaTab) mediaTab.classList.add('active');
     if (mediaContent) { mediaContent.classList.add('active'); mediaContent.style.display = ''; }
     bus.emit('media:tab-activated');
+  } else if (tab === 'scripts') {
+    if (scriptsTab) scriptsTab.classList.add('active');
+    if (scriptsContent) { scriptsContent.classList.add('active'); scriptsContent.style.display = ''; }
+    bus.emit('panel:scripts-activated');
   }
 }
 
@@ -2448,6 +2454,7 @@ export function init() {
   memoryTab.addEventListener('click', () => switchPanelTab('memory'));
   if (rpgTab) rpgTab.addEventListener('click', () => switchPanelTab('rpg'));
   if (mediaTab) mediaTab.addEventListener('click', () => switchPanelTab('media'));
+  if (scriptsTab) scriptsTab.addEventListener('click', () => switchPanelTab('scripts'));
 
   // Scene sub-tab switching (Storyboard / Timeline)
   storyboardSubTab?.addEventListener('click', () => {

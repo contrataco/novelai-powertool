@@ -518,6 +518,25 @@
       font-size: 10px;
     }
 
+    .script-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+    .script-card.powertool { border-left: 3px solid var(--accent, #e94560); }
+    .script-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+    .script-card-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+    .script-card-version { font-size: 11px; color: var(--text-dim); }
+    .script-card-status { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+    .script-card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .script-card-dot.active { background: #27ae60; }
+    .script-card-dot.inactive { background: #7f8c8d; }
+    .script-card-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .script-card-actions button { font-size: 11px; padding: 3px 8px; }
+    .script-update-badge { background: var(--accent, #e94560); color: white; font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-left: 6px; }
+
     .status-btn {
       cursor: pointer;
       color: var(--text-dim);
@@ -5579,6 +5598,7 @@
           <!-- was "RPG", renamed to "Cast" for unified character tracking -->
           <button class="panel-tab" data-tab="rpg" id="rpgTab" style="display:none;">Cast</button>
           <button class="panel-tab" data-tab="media" id="mediaTab">Media</button>
+          <button class="panel-tab" data-tab="scripts" id="scriptsTab">Scripts</button>
         </div>
         <button class="close-btn" id="closePanelBtn">&times;</button>
       </div>
@@ -6158,6 +6178,25 @@
         </div>
       </div>
 
+      <!-- Scripts Panel -->
+      <div class="image-panel-content" id="scriptsContent" style="display:none;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <span style="font-size:14px;font-weight:600;color:var(--text-primary);">User Scripts</span>
+          <button id="scriptsRefreshBtn" class="btn-sm tertiary" title="Refresh script list">Refresh</button>
+        </div>
+
+        <div id="scriptsLoading" style="display:none;text-align:center;padding:20px;color:var(--text-dim);">
+          <div class="spinner" style="margin:0 auto 8px;"></div>
+          <p>Scanning scripts...</p>
+        </div>
+
+        <div id="scriptsList"></div>
+
+        <div id="scriptsEmpty" style="display:none;text-align:center;padding:20px;color:var(--text-dim);">
+          <p>No scripts detected. Open a story first.</p>
+        </div>
+      </div>
+
       <!-- Scene Explorer Overlay -->
       <div id="sceneExplorerOverlay" class="stat-overlay" style="display:none;">
         <div class="stat-overlay-content" style="max-width:480px;">
@@ -6690,6 +6729,7 @@
     import { init as initTimeline } from './modules/scene-timeline.js';
     import { init as initPortraitQueue } from './modules/portrait-queue.js';
     import { init as initStorySelector } from './modules/story-selector.js';
+    import { init as initScriptPanel } from './modules/script-panel.js';
 
     // Boot sequence
     initSettings();
@@ -6701,6 +6741,7 @@
     initLitrpg();
     initPortraitQueue();
     initStorySelector();
+    initScriptPanel();
     initWebview();
     initTts();
     initMediaGallery();

@@ -118,6 +118,15 @@ contextBridge.exposeInMainWorld('powertool', {
   storyTextGet: (storyId) => ipcRenderer.invoke('story-text:get', storyId),
   storyTextSet: (storyId, text, source) => ipcRenderer.invoke('story-text:set', { storyId, text, source }),
 
+  // Script Manager
+  scriptMgrListScripts: () => ipcRenderer.invoke('script-mgr:list-scripts'),
+  scriptMgrEnableScript: (name) => ipcRenderer.invoke('script-mgr:enable-script', name),
+  scriptMgrDisableScript: (name) => ipcRenderer.invoke('script-mgr:disable-script', name),
+  scriptMgrImportScript: (text) => ipcRenderer.invoke('script-mgr:import-script', text),
+  scriptMgrClose: () => ipcRenderer.invoke('script-mgr:close'),
+  scriptMgrGetBundled: () => ipcRenderer.invoke('script-mgr:get-bundled'),
+  scriptMgrGetStatus: (name) => ipcRenderer.invoke('script-mgr:get-status', name),
+
   // Per-story scene state persistence
   sceneGetState: (storyId) => ipcRenderer.invoke('scene:get-state', storyId),
   sceneSetState: (storyId, state) => ipcRenderer.invoke('scene:set-state', { storyId, state }),

@@ -26,6 +26,7 @@ const lorebookOptimizer = require('./lorebook-optimizer');
 const portraitManager = require('./portrait-manager');
 const mediaGallery = require('./media-gallery');
 const db = require('./db');
+const scriptManager = require('./script-manager');
 const { FUZZY_MATCH_THRESHOLD, LLM_TIMEOUT_MS, SCAN_TIMEOUT_MS, withTimeout } = require('./shared-utils');
 
 // Hydrate portrait base64 data onto characters (for renderer display)
@@ -1282,6 +1283,51 @@ ipcMain.handle('story-settings:get', (_, storyId) => {
 ipcMain.handle('story-settings:set', (_, { storyId, settings }) => {
   db.setStorySettings(storyId, settings);
   return { success: true };
+});
+
+// Script Manager
+ipcMain.handle('script-mgr:list-scripts', async () => {
+  const wv = webContents.getAllWebContents().find(wc => wc.getURL().includes('novelai.net'));
+  if (!wv) return { success: false, scripts: [], error: 'No webview found' };
+  const scripts = await scriptManager.listInstalledScripts(wv);
+  return { success: true, scripts };
+});
+
+ipcMain.handle('script-mgr:enable-script', async (_, name) => {
+  const wv = webContents.getAllWebContents().find(wc => wc.getURL().includes('novelai.net'));
+  if (!wv) return { success: false, error: 'No webview found' };
+  return scriptManager.enableScript(wv, name);
+});
+
+ipcMain.handle('script-mgr:disable-script', async (_, name) => {
+  const wv = webContents.getAllWebContents().find(wc => wc.getURL().includes('novelai.net'));
+  if (!wv) return { success: false, error: 'No webview found' };
+  return scriptManager.disableScript(wv, name);
+});
+
+ipcMain.handle('script-mgr:import-script', async (_, scriptText) => {
+  const wv = webContents.getAllWebContents().find(wc => wc.getURL().includes('novelai.net'));
+  if (!wv) return { success: false, error: 'No webview found' };
+  return scriptManager.importScript(wv, scriptText);
+});
+
+ipcMain.handle('script-mgr:close', async () => {
+  const wv = webContents.getAllWebContents().find(wc => wc.getURL().includes('novelai.net'));
+  if (!wv) return false;
+  return scriptManager.closeScriptManager(wv);
+});
+
+ipcMain.handle('script-mgr:get-bundled', () => {
+  const scriptPath = path.join(__dirname, '..', 'script', 'NovelAI PowerTool.naiscript');
+  const version = scriptManager.getBundledVersion(scriptPath);
+  const content = scriptManager.getBundledScriptContent(scriptPath);
+  return { version, content, path: scriptPath };
+});
+
+ipcMain.handle('script-mgr:get-status', async (_, name) => {
+  const wv = webContents.getAllWebContents().find(wc => wc.getURL().includes('novelai.net'));
+  if (!wv) return { installed: false, enabled: false, version: null };
+  return scriptManager.getScriptStatus(wv, name);
 });
 
 // Story text cache

@@ -339,8 +339,9 @@ function showLoginRequired() {
 function selectStory(storyId, title) {
   console.log(`[PowerTool] Selecting story: ${storyId} "${title}"`);
 
-  // Flag that a story is loading — suppresses dashboard phase updates
-  // but DON'T set currentStoryId (handleStoryContextChange needs it unset to fire)
+  // Set both flags: currentStoryId for visibility gating, _loadingStoryId for
+  // dashboard suppression + allowing handleStoryContextChange to re-enter
+  state.currentStoryId = storyId;
   state._loadingStoryId = storyId;
   state.storyTextLoaded = false;
   state.isDashboardActive = false;

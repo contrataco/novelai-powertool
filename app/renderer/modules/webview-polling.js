@@ -164,7 +164,8 @@ export async function readStoryTextFromDOM() {
 // ========================================================================
 
 async function handleStoryContextChange(storyId, storyTitle) {
-  if (!storyId || storyId === state.currentStoryId) return;
+  // Allow re-entry if _loadingStoryId is set (user clicked from story selector)
+  if (!storyId || (storyId === state.currentStoryId && !state._loadingStoryId)) return;
 
   state.currentStoryId = storyId;
   state.currentStoryTitle = storyTitle || null;

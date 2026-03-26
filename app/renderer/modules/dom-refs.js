@@ -61,6 +61,14 @@ export const editorWidthDown = document.getElementById('editorWidthDown');
 export const editorWidthUp = document.getElementById('editorWidthUp');
 export const editorWidthLabel = document.getElementById('editorWidthLabel');
 
+// Scripts panel
+export const scriptsTab = document.getElementById('scriptsTab');
+export const scriptsContent = document.getElementById('scriptsContent');
+export const scriptsRefreshBtn = document.getElementById('scriptsRefreshBtn');
+export const scriptsList = document.getElementById('scriptsList');
+export const scriptsLoading = document.getElementById('scriptsLoading');
+export const scriptsEmpty = document.getElementById('scriptsEmpty');
+
 // Story loading progress
 export const storyLoadingStatus = document.getElementById('storyLoadingStatus');
 export const storyLoadingFill = document.getElementById('storyLoadingFill');
