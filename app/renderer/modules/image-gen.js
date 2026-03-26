@@ -40,11 +40,11 @@ async function refreshVeniceBalanceVisibility() {
   try {
     const provider = await window.powertool.getProvider();
     if (provider === 'venice' && veniceBalance) {
-      veniceBalance.style.display = '';
+      veniceBalance.classList.remove('u-hidden');
       const balance = await window.powertool.veniceGetBalance();
       if (balance) updateVeniceBalanceDisplay(balance);
     } else if (veniceBalance) {
-      veniceBalance.style.display = 'none';
+      veniceBalance.classList.add('u-hidden');
     }
   } catch { /* ignore */ }
 }
@@ -205,7 +205,7 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
   generateBtn.disabled = true;
   status.textContent = 'Generating...';
   status.className = 'status generating';
-  loadingIndicator.style.display = 'flex';
+  loadingIndicator.classList.remove('u-hidden');
 
   const startTime = Date.now();
   const startedForStory = state.currentStoryId;
@@ -292,7 +292,7 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
     clearInterval(timerInterval);
     state.isGenerating = false;
     generateBtn.disabled = false;
-    loadingIndicator.style.display = 'none';
+    loadingIndicator.classList.add('u-hidden');
 
     const clearDelay = wasError ? 15000 : 5000;
     setTimeout(() => {

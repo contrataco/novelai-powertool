@@ -114,23 +114,23 @@ function renderScriptCard(script, bundledVersion) {
 async function refreshScripts() {
   if (!refs.scriptsList) return;
 
-  refs.scriptsLoading.style.display = 'block';
-  refs.scriptsList.style.display = 'none';
-  refs.scriptsEmpty.style.display = 'none';
+  refs.scriptsLoading.classList.remove('u-hidden');
+  refs.scriptsList.classList.add('u-hidden');
+  refs.scriptsEmpty.classList.add('u-hidden');
 
   try {
     const result = await window.powertool.scriptMgrListScripts();
     cachedScripts = result.scripts || [];
     const bundled = await loadBundledInfo();
 
-    refs.scriptsLoading.style.display = 'none';
+    refs.scriptsLoading.classList.add('u-hidden');
 
     if (cachedScripts.length === 0) {
-      refs.scriptsEmpty.style.display = 'block';
+      refs.scriptsEmpty.classList.remove('u-hidden');
       return;
     }
 
-    refs.scriptsList.style.display = 'block';
+    refs.scriptsList.classList.remove('u-hidden');
     refs.scriptsList.innerHTML = '';
 
     // Sort: PowerTool first, then alphabetical
@@ -148,8 +148,8 @@ async function refreshScripts() {
     await window.powertool.scriptMgrClose();
   } catch (e) {
     console.error('[ScriptPanel] Error refreshing:', e);
-    refs.scriptsLoading.style.display = 'none';
-    refs.scriptsEmpty.style.display = 'block';
+    refs.scriptsLoading.classList.add('u-hidden');
+    refs.scriptsEmpty.classList.remove('u-hidden');
     refs.scriptsEmpty.querySelector('p').textContent = 'Error loading scripts: ' + e.message;
   }
 }

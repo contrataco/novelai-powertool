@@ -3,38 +3,14 @@
  * Listens for new character events and auto-enqueues when enabled.
  */
 import { state, bus } from './state.js';
+import { showToast, dismissToast } from './utils.js';
+
 let queue = [];
 let isProcessing = false;
 let currentIndex = 0;
 let autoGenEnabled = true;
 let cancelRequested = false;
-
-function showProgressToast(message, showCancel = false) {
-  const existing = document.getElementById('portrait-queue-toast');
-  if (existing) existing.remove();
-
-  const toast = document.createElement('div');
-  toast.id = 'portrait-queue-toast';
-  toast.className = 'toast toast-info';
-  toast.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:10000;padding:12px 16px;background:#2a2a4a;color:#e0e0e0;border-radius:8px;display:flex;align-items:center;gap:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-  toast.textContent = message;
-
-  if (showCancel) {
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.style.cssText = 'background:#e94560;color:white;border:none;border-radius:4px;padding:4px 8px;cursor:pointer;margin-left:8px;';
-    cancelBtn.onclick = () => cancel();
-    toast.appendChild(cancelBtn);
-  }
-
-  document.body.appendChild(toast);
-  return toast;
-}
-
-function dismissToast() {
-  const existing = document.getElementById('portrait-queue-toast');
-  if (existing) existing.remove();
-}
+let currentToast = null;
 
 async function processQueue() {
   if (isProcessing || queue.length === 0) return;
@@ -46,7 +22,11 @@ async function processQueue() {
     if (cancelRequested) break;
 
     const { charId, charName, rpgData } = queue[currentIndex];
-    showProgressToast(`Generating portrait ${currentIndex + 1}/${total}: ${charName}...`, true);
+    if (currentToast) dismissToast(currentToast);
+    currentToast = showToast(`Generating portrait ${currentIndex + 1}/${total}: ${charName}...`, null, 'info', {
+      persistent: true,
+      onCancel: () => cancel(),
+    });
 
     try {
       const result = await window.powertool.portraitGenerate(
@@ -71,12 +51,13 @@ async function processQueue() {
   queue = [];
   isProcessing = false;
 
+  if (currentToast) dismissToast(currentToast);
   if (cancelRequested) {
-    showProgressToast('Portrait generation cancelled.');
+    showToast('Portrait generation cancelled.', 3000);
   } else {
-    showProgressToast(`Generated ${total} portrait${total !== 1 ? 's' : ''}.`);
+    showToast(`Generated ${total} portrait${total !== 1 ? 's' : ''}.`, 3000, 'success');
   }
-  setTimeout(dismissToast, 3000);
+  currentToast = null;
 
   bus.emit('portrait:queue-complete');
 }
@@ -115,7 +96,7 @@ export async function init() {
   bus.on('story:changed', () => {
     if (isProcessing || queue.length > 0) {
       cancel();
-      dismissToast();
+      if (currentToast) { dismissToast(currentToast); currentToast = null; }
     }
   });
 

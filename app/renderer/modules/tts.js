@@ -336,7 +336,7 @@ async function narrateScene() {
   isNarrating = true;
   aborted = false;
   ttsNarrateBtn.disabled = true;
-  ttsStopBtn.style.display = '';
+  ttsStopBtn.classList.remove('u-hidden');
 
   try {
     const storyText = await readStoryTextFromDOM();
@@ -393,7 +393,7 @@ async function narrateScene() {
   } finally {
     isNarrating = false;
     ttsNarrateBtn.disabled = false;
-    ttsStopBtn.style.display = 'none';
+    ttsStopBtn.classList.add('u-hidden');
     setTimeout(() => { ttsProgress.textContent = ''; }, 3000);
   }
 }

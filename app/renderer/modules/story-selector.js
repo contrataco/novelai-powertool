@@ -125,7 +125,7 @@ export function updateVisibility() {
     refs.storySelectionOverlay.classList.add('visible');
 
     if (refs.editorContainer) {
-      refs.editorContainer.style.display = 'none';
+      refs.editorContainer.classList.add('u-hidden');
     }
 
     // If story is selected but still loading, show loading phase
@@ -142,8 +142,8 @@ export function updateVisibility() {
       setTimeout(() => {
         if (state.availableStories.length === 0 && state.isDashboardActive) {
           updateLoadingPhase('error', 'The connection timed out. NovelAI may be slow or unavailable.');
-          refs.storySelectionLoading.style.display = 'none';
-          refs.storySelectionEmpty.style.display = 'flex';
+          refs.storySelectionLoading.classList.add('u-hidden');
+          refs.storySelectionEmpty.classList.remove('u-hidden');
         }
       }, 30000);
     }
@@ -151,15 +151,15 @@ export function updateVisibility() {
     refs.storySelectionOverlay.classList.remove('visible');
 
     if (state.headlessMode && state.currentStoryId && refs.editorContainer) {
-      refs.editorContainer.style.display = 'flex';
+      refs.editorContainer.classList.remove('u-hidden');
     }
   }
 }
 
 function showLoading() {
-  refs.storySelectionLoading.style.display = 'flex';
-  refs.storyList.style.display = 'none';
-  refs.storySelectionEmpty.style.display = 'none';
+  refs.storySelectionLoading.classList.remove('u-hidden');
+  refs.storyList.classList.add('u-hidden');
+  refs.storySelectionEmpty.classList.add('u-hidden');
   // Only set default dashboard text if not loading a story
   if (!state._loadingStoryId) {
     updateLoadingPhase('connecting');
@@ -182,29 +182,29 @@ function updateLoadingPhase(phase, detail) {
   switch (phase) {
     case 'connecting':
       statusEl.textContent = detail || 'Connecting to NovelAI...';
-      fillEl.style.width = '10%';
+      fillEl.style.setProperty('--progress', '10%');
       if (detailEl) detailEl.textContent = isStoryLoad ? '' : 'This usually takes 10-15 seconds';
       break;
     case 'dashboard':
       statusEl.textContent = detail || 'Waiting for stories to load...';
-      fillEl.style.width = '30%';
+      fillEl.style.setProperty('--progress', '30%');
       if (detailEl) detailEl.textContent = '';
       break;
     case 'parsing':
       statusEl.textContent = detail || 'Scanning for stories...';
-      fillEl.style.width = '50%';
+      fillEl.style.setProperty('--progress', '50%');
       if (detailEl) detailEl.textContent = '';
       break;
     case 'found':
       statusEl.textContent = detail || 'Stories found!';
-      fillEl.style.width = '100%';
+      fillEl.style.setProperty('--progress', '100%');
       fillEl.classList.add('success');
       if (iconEl) iconEl.style.animation = 'none';
       if (detailEl) detailEl.textContent = '';
       break;
     case 'error':
       statusEl.textContent = detail || 'Something went wrong';
-      fillEl.style.width = '100%';
+      fillEl.style.setProperty('--progress', '100%');
       fillEl.classList.add('error');
       if (iconEl) {
         iconEl.textContent = '\u26A0';
@@ -218,11 +218,11 @@ function updateLoadingPhase(phase, detail) {
 function renderStoryList() {
   const stories = state.availableStories;
   
-  refs.storySelectionLoading.style.display = 'none';
-  
+  refs.storySelectionLoading.classList.add('u-hidden');
+
   if (!stories || stories.length === 0) {
-    refs.storyList.style.display = 'none';
-    refs.storySelectionEmpty.style.display = 'block';
+    refs.storyList.classList.add('u-hidden');
+    refs.storySelectionEmpty.classList.remove('u-hidden');
     return;
   }
 
@@ -235,14 +235,14 @@ function renderStoryList() {
   );
 
   if (filtered.length === 0 && filter) {
-    refs.storyList.style.display = 'none';
-    refs.storySelectionEmpty.style.display = 'block';
+    refs.storyList.classList.add('u-hidden');
+    refs.storySelectionEmpty.classList.remove('u-hidden');
     refs.storySelectionEmptyText.textContent = 'No stories match your search.';
     return;
   }
 
-  refs.storySelectionEmpty.style.display = 'none';
-  refs.storyList.style.display = 'grid';
+  refs.storySelectionEmpty.classList.add('u-hidden');
+  refs.storyList.classList.remove('u-hidden');
   refs.storyList.innerHTML = '';
 
   filtered.forEach((story, index) => {
@@ -328,9 +328,9 @@ async function tryFetchFromAPI() {
 }
 
 function showLoginRequired() {
-  refs.storySelectionLoading.style.display = 'none';
-  refs.storyList.style.display = 'none';
-  refs.storySelectionEmpty.style.display = 'block';
+  refs.storySelectionLoading.classList.add('u-hidden');
+  refs.storyList.classList.add('u-hidden');
+  refs.storySelectionEmpty.classList.remove('u-hidden');
   if (refs.storySelectionEmptyText) {
     refs.storySelectionEmptyText.textContent = 'Login required. Please log in to NovelAI in the dashboard.';
   }

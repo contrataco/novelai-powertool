@@ -88,7 +88,7 @@ function showSuggestionStatus(message, type) {
   popoverStatus.className = 'suggestion-status ' + type;
   setTimeout(() => {
     popoverStatus.className = 'suggestion-status';
-    popoverStatus.style.display = 'none';
+    popoverStatus.classList.add('u-hidden');
   }, 3000);
 }
 
@@ -235,14 +235,14 @@ export async function generateSuggestionsFromEditor() {
     const contextText = storyText.length > 4000 ? storyText.slice(-4000) : storyText;
 
     console.log('[Renderer] Generating suggestions via Electron direct API...');
-    popoverLoading.style.display = 'flex';
+    popoverLoading.classList.remove('u-hidden');
     popoverSuggestionsContainer.innerHTML = '';
 
     const result = await window.powertool.generateSuggestionsDirect({
       storyText: contextText,
       storyId: state.currentStoryId,
     });
-    popoverLoading.style.display = 'none';
+    popoverLoading.classList.add('u-hidden');
 
     if (result.success && result.suggestions) {
       state.currentSuggestions = result.suggestions;
@@ -268,7 +268,7 @@ export async function generateSuggestionsFromEditor() {
       console.error('[Renderer] Electron-side suggestion generation failed:', result.error);
     }
   } catch (e) {
-    popoverLoading.style.display = 'none';
+    popoverLoading.classList.add('u-hidden');
     console.error('[Renderer] Electron-side suggestion generation error:', e);
   }
 }

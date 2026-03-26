@@ -25,7 +25,7 @@ async function saveMemoryFromPanel() {
   try {
     await memoryCall('setMemory', text);
     showToast('Memory saved');
-    refs.headlessMemoryPanel.style.display = 'none';
+    refs.headlessMemoryPanel.classList.remove('active');
   } catch (e) {
     console.error('[HeadlessSync] Failed to save memory:', e);
     showToast('Failed to save memory — proxy may not be loaded');
@@ -49,7 +49,7 @@ async function saveNoteFromPanel() {
   try {
     await memoryCall('setAuthorNote', text);
     showToast("Author's note saved");
-    refs.headlessNotePanel.style.display = 'none';
+    refs.headlessNotePanel.classList.remove('active');
   } catch (e) {
     console.error('[HeadlessSync] Failed to save author note:', e);
     showToast("Failed to save author's note — proxy may not be loaded");
@@ -418,7 +418,7 @@ async function saveAiSettingsFromPanel() {
   } else {
     showToast('No AI settings changed');
   }
-  refs.headlessAiSettingsPanel.style.display = 'none';
+  refs.headlessAiSettingsPanel.classList.remove('active');
 }
 
 // --- Init ---
@@ -473,7 +473,7 @@ export function init({ saveCustomizationToStore, flattenEditorText }) {
   // Refresh AI settings when switching stories
   bus.on('story:changed', () => {
     _loadedAiSettings = null;
-    if (refs.headlessAiSettingsPanel?.style.display === 'flex') {
+    if (refs.headlessAiSettingsPanel?.classList.contains('active')) {
       loadAiSettingsToPanel();
     }
   });

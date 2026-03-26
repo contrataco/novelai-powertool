@@ -122,7 +122,7 @@ export async function loadImageSettings(effectiveSettings, effectiveArtStyle, ef
     if (portraitProviderSelect) {
       portraitProviderSelect.value = portraitSettings.portraitProvider || 'novelai';
       if (portraitProviderCostWarning) {
-        portraitProviderCostWarning.style.display = portraitProviderSelect.value !== 'novelai' ? '' : 'none';
+        portraitProviderCostWarning.classList.toggle('u-hidden', !(portraitProviderSelect.value !== 'novelai'));
       }
     }
   } catch (e) {
@@ -271,7 +271,7 @@ export function initImageEvents() {
   // Portrait provider cost warning
   if (portraitProviderSelect && portraitProviderCostWarning) {
     portraitProviderSelect.addEventListener('change', () => {
-      portraitProviderCostWarning.style.display = portraitProviderSelect.value !== 'novelai' ? '' : 'none';
+      portraitProviderCostWarning.classList.toggle('u-hidden', !(portraitProviderSelect.value !== 'novelai'));
     });
   }
 }

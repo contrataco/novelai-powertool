@@ -20,7 +20,7 @@ function showAutocomplete(matches, x, y) {
 
   autocompleteMatches = matches;
   autocompleteIndex = 0;
-  autocompleteBox.style.display = 'block';
+  autocompleteBox.classList.add('is-open');
   autocompleteBox.style.left = `${x}px`;
   autocompleteBox.style.top = `${y}px`;
   autocompleteBox.style.animation = 'none';
@@ -42,7 +42,7 @@ function showAutocomplete(matches, x, y) {
 }
 
 function hideAutocomplete() {
-  if (autocompleteBox) autocompleteBox.style.display = 'none';
+  if (autocompleteBox) autocompleteBox.classList.remove('is-open');
   autocompleteMatches = [];
 }
 
@@ -149,7 +149,7 @@ export function init({ syncToWebview }) {
   });
 
   storyEditor.addEventListener('keydown', (e) => {
-    if (autocompleteBox && autocompleteBox.style.display === 'block') {
+    if (autocompleteBox && autocompleteBox.classList.contains('is-open')) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         autocompleteIndex = (autocompleteIndex + 1) % autocompleteMatches.length;

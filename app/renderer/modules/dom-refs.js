@@ -291,7 +291,7 @@ export const commitCancelBtn = document.getElementById('commitCancelBtn');
 export const commitStoryLabel = document.getElementById('commitStoryLabel');
 export const storyIndicator = document.getElementById('storyIndicator');
 export const sbLinkBtn = document.getElementById('sbLinkBtn');
-export const toastEl = document.getElementById('toast');
+export const toastContainer = document.getElementById('toastContainer');
 
 // Suggestions elements
 export const suggestionsBtn = document.getElementById('suggestionsBtn');

@@ -142,7 +142,7 @@ async function openLightbox(item) {
   if (!mediaLightbox || !mediaLightboxContent) return;
 
   mediaLightboxContent.innerHTML = '<div style="text-align:center;padding:20px;"><div class="spinner"></div></div>';
-  mediaLightbox.style.display = 'flex';
+  mediaLightbox.classList.remove('u-hidden');
 
   try {
     let mediaHtml = '';
@@ -258,7 +258,7 @@ async function openLightbox(item) {
 }
 
 function closeLightbox() {
-  if (mediaLightbox) mediaLightbox.style.display = 'none';
+  if (mediaLightbox) mediaLightbox.classList.add('u-hidden');
   if (mediaLightboxContent) mediaLightboxContent.innerHTML = '';
 }
 
