@@ -5,8 +5,6 @@ import { memoryCall } from './lore-creator.js';
 import { showToast } from './utils.js';
 import { setupPanelToggle } from './headless-panels.js';
 
-const { webview } = refs;
-
 // --- Memory ---
 
 async function loadMemoryToPanel() {
@@ -35,28 +33,7 @@ async function saveMemoryFromPanel() {
 
 async function loadNoteToPanel() {
   try {
-    const note = await webview.executeJavaScript(`
-      (function() {
-        var textareas = document.querySelectorAll('textarea');
-        for (var i = 0; i < textareas.length; i++) {
-          var ph = (textareas[i].placeholder || '').toLowerCase();
-          if (ph.includes('author') || ph.includes('note')) return textareas[i].value;
-        }
-        var labels = document.querySelectorAll('label, span, div');
-        for (var j = 0; j < labels.length; j++) {
-          var text = (labels[j].textContent || '').trim().toLowerCase();
-          if (text.includes("author's note") || text === 'author note') {
-            var parent = labels[j].parentElement;
-            for (var k = 0; k < 5 && parent; k++) {
-              var ta = parent.querySelector('textarea');
-              if (ta) return ta.value;
-              parent = parent.parentElement;
-            }
-          }
-        }
-        return null;
-      })()
-    `);
+    const note = await memoryCall('getAuthorNote');
     if (refs.headlessNoteInput) refs.headlessNoteInput.value = note || '';
   } catch (e) {
     console.error('[HeadlessSync] Failed to load author note:', e);
@@ -67,47 +44,12 @@ async function loadNoteToPanel() {
 async function saveNoteFromPanel() {
   const text = refs.headlessNoteInput?.value || '';
   try {
-    const escapedText = JSON.stringify(text);
-    const success = await webview.executeJavaScript(`
-      (function() {
-        var targetTA = null;
-        var textareas = document.querySelectorAll('textarea');
-        for (var i = 0; i < textareas.length; i++) {
-          var ph = (textareas[i].placeholder || '').toLowerCase();
-          if (ph.includes('author') || ph.includes('note')) { targetTA = textareas[i]; break; }
-        }
-        if (!targetTA) {
-          var labels = document.querySelectorAll('label, span, div');
-          for (var j = 0; j < labels.length; j++) {
-            var lt = (labels[j].textContent || '').trim().toLowerCase();
-            if (lt.includes("author's note") || lt === 'author note') {
-              var parent = labels[j].parentElement;
-              for (var k = 0; k < 5 && parent; k++) {
-                var ta = parent.querySelector('textarea');
-                if (ta) { targetTA = ta; break; }
-                parent = parent.parentElement;
-              }
-              if (targetTA) break;
-            }
-          }
-        }
-        if (!targetTA) return false;
-        var setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-        setter.call(targetTA, ${escapedText});
-        targetTA.dispatchEvent(new Event('input', { bubbles: true }));
-        targetTA.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      })()
-    `);
-    if (success) {
-      showToast("Author's note saved");
-      refs.headlessNotePanel.style.display = 'none';
-    } else {
-      showToast("Author's Note textarea not found in webview — open the sidebar first");
-    }
+    await memoryCall('setAuthorNote', text);
+    showToast("Author's note saved");
+    refs.headlessNotePanel.style.display = 'none';
   } catch (e) {
     console.error('[HeadlessSync] Failed to save author note:', e);
-    showToast('Failed to save author note');
+    showToast("Failed to save author's note — proxy may not be loaded");
   }
 }
 

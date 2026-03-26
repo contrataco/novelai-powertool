@@ -618,6 +618,10 @@ export async function memoryCall(method, ...args) {
       if (!wrote) throw new Error('Memory textarea not found in DOM');
       return true;
     }
+    case 'getAuthorNote':
+    case 'setAuthorNote':
+      // No direct fallback for Author's Note — requires proxy
+      throw new Error("Author's Note requires the PowerTool script proxy (v4.1.0+)");
     case 'countTokens':
       return Math.ceil((args[0] || '').length / 4);
     default:
