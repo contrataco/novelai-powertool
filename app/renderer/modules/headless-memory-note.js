@@ -200,7 +200,7 @@ function populateSelect(selectEl, options, currentLabel) {
 async function loadAiSettingsToPanel() {
   const data = await readAiSettingsFromWebview();
   if (!data) {
-    showToast('Could not read AI settings — is a story open?');
+    showToast('Could not read AI settings — Story tab may not be visible in webview');
     return;
   }
 
@@ -350,7 +350,7 @@ async function saveAiSettingsFromPanel() {
   // Write temperature
   if (newTemp != null && _loadedAiSettings && newTemp !== _loadedAiSettings.temperature) {
     try {
-      await webview.executeJavaScript(`
+      const tempOk = await webview.executeJavaScript(`
         (function() {
           var labels = document.querySelectorAll('div, span');
           for (var i = 0; i < labels.length; i++) {
@@ -372,7 +372,7 @@ async function saveAiSettingsFromPanel() {
           return false;
         })()
       `);
-      changes.push('temperature');
+      if (tempOk) changes.push('temperature');
     } catch (e) {
       console.error('[HeadlessSync] Failed to set temperature:', e);
     }
@@ -381,7 +381,7 @@ async function saveAiSettingsFromPanel() {
   // Write output length
   if (newLen != null && _loadedAiSettings && newLen !== _loadedAiSettings.outputLength) {
     try {
-      await webview.executeJavaScript(`
+      const lenOk = await webview.executeJavaScript(`
         (function() {
           var labels = document.querySelectorAll('div, span');
           for (var i = 0; i < labels.length; i++) {
@@ -403,14 +403,17 @@ async function saveAiSettingsFromPanel() {
           return false;
         })()
       `);
-      changes.push('output length');
+      if (lenOk) changes.push('output length');
     } catch (e) {
       console.error('[HeadlessSync] Failed to set output length:', e);
     }
   }
 
   if (changes.length > 0) {
-    _loadedAiSettings = { model: newModel, preset: newPreset, temperature: newTemp, outputLength: newLen };
+    if (changes.includes('model')) _loadedAiSettings.model = newModel;
+    if (changes.includes('preset')) _loadedAiSettings.preset = newPreset;
+    if (changes.includes('temperature')) _loadedAiSettings.temperature = newTemp;
+    if (changes.includes('output length')) _loadedAiSettings.outputLength = newLen;
     showToast('AI settings applied: ' + changes.join(', '));
   } else {
     showToast('No AI settings changed');
