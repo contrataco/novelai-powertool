@@ -33,8 +33,8 @@ function initSelectionToolbar() {
     }
 
     if (loreMatch && refs.selViewLoreBtn) {
-      refs.selViewLoreBtn.style.display = 'flex';
-      if (refs.selLoreSeparator) refs.selLoreSeparator.style.display = 'block';
+      refs.selViewLoreBtn.classList.remove('u-hidden');
+      if (refs.selLoreSeparator) refs.selLoreSeparator.classList.remove('u-hidden');
       // Replace element in DOM to clear old listeners (can't reassign module namespace)
       const oldBtn = refs.selViewLoreBtn;
       const newBtn = oldBtn.cloneNode(true);
@@ -45,13 +45,13 @@ function initSelectionToolbar() {
         hideToolbar();
       });
     } else if (refs.selViewLoreBtn) {
-      refs.selViewLoreBtn.style.display = 'none';
-      if (refs.selLoreSeparator) refs.selLoreSeparator.style.display = 'none';
+      refs.selViewLoreBtn.classList.add('u-hidden');
+      if (refs.selLoreSeparator) refs.selLoreSeparator.classList.add('u-hidden');
     }
 
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
-    refs.selectionToolbar.style.display = 'flex';
+    refs.selectionToolbar.classList.add('is-visible');
     refs.selectionToolbar.style.visibility = 'hidden';
 
     requestAnimationFrame(() => {
@@ -72,7 +72,10 @@ function initSelectionToolbar() {
   };
 
   const hideToolbar = () => {
-    if (refs.selectionToolbar) refs.selectionToolbar.style.display = 'none';
+    if (refs.selectionToolbar) {
+      refs.selectionToolbar.classList.remove('is-visible');
+      refs.selectionToolbar.style.visibility = '';
+    }
   };
 
   storyEditor.addEventListener('mouseup', () => setTimeout(showToolbar, 10));
@@ -81,7 +84,7 @@ function initSelectionToolbar() {
     else if (e.key === 'Escape') hideToolbar();
   });
   document.addEventListener('mousedown', (e) => {
-    if (refs.selectionToolbar?.style.display === 'flex' &&
+    if (refs.selectionToolbar?.classList.contains('is-visible') &&
         !refs.selectionToolbar.contains(e.target) && !storyEditor.contains(e.target)) {
       hideToolbar();
     }
@@ -137,7 +140,7 @@ function performReplace(all = false) {
 // --- Context Viewer ---
 
 async function loadContextToPanel() {
-  if (refs.headlessContextLoading) refs.headlessContextLoading.style.display = 'block';
+  if (refs.headlessContextLoading) refs.headlessContextLoading.classList.remove('u-hidden');
   if (refs.headlessContextDisplay) refs.headlessContextDisplay.value = '';
 
   try {
@@ -170,7 +173,7 @@ async function loadContextToPanel() {
     console.error('[HeadlessSync] Failed to load context:', e);
     if (refs.headlessContextDisplay) refs.headlessContextDisplay.value = 'Error fetching context.';
   } finally {
-    if (refs.headlessContextLoading) refs.headlessContextLoading.style.display = 'none';
+    if (refs.headlessContextLoading) refs.headlessContextLoading.classList.add('u-hidden');
   }
 }
 
@@ -228,7 +231,7 @@ async function saveMetadataFromPanel() {
       })()
     `);
     if (refs.editorStoryTitle) refs.editorStoryTitle.textContent = meta.title;
-    if (refs.headlessMetadataPanel) refs.headlessMetadataPanel.style.display = 'none';
+    if (refs.headlessMetadataPanel) refs.headlessMetadataPanel.classList.remove('active');
   } catch (e) {
     console.error('[HeadlessSync] Failed to save metadata:', e);
   }
@@ -239,7 +242,7 @@ async function saveMetadataFromPanel() {
 let currentHistorySnapshots = [];
 
 async function loadHistoryToPanel() {
-  if (refs.headlessHistoryLoading) refs.headlessHistoryLoading.style.display = 'block';
+  if (refs.headlessHistoryLoading) refs.headlessHistoryLoading.classList.remove('u-hidden');
   if (refs.headlessHistoryList) refs.headlessHistoryList.innerHTML = '';
 
   try {
@@ -261,7 +264,7 @@ async function loadHistoryToPanel() {
   } catch (e) {
     console.error('[HeadlessSync] Failed to load history:', e);
   } finally {
-    if (refs.headlessHistoryLoading) refs.headlessHistoryLoading.style.display = 'none';
+    if (refs.headlessHistoryLoading) refs.headlessHistoryLoading.classList.add('u-hidden');
   }
 }
 
@@ -345,7 +348,7 @@ function showModal(title, contentHtml) {
     overlay.id = 'headless-modal-overlay';
     overlay.className = 'modal-overlay';
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.style.display = 'none';
+      if (e.target === overlay) overlay.classList.remove('is-open');
     });
     document.body.appendChild(overlay);
   }
@@ -354,12 +357,12 @@ function showModal(title, contentHtml) {
     <div class="modal-content">
       <div class="modal-header">
         <h3>${title}</h3>
-        <button class="close-btn" onclick="document.getElementById('headless-modal-overlay').style.display='none'">&times;</button>
+        <button class="close-btn" onclick="document.getElementById('headless-modal-overlay').classList.remove('is-open')">&times;</button>
       </div>
       <div class="modal-body">${contentHtml}</div>
     </div>
   `;
-  overlay.style.display = 'flex';
+  overlay.classList.add('is-open');
 }
 
 // --- Zen Timer ---
@@ -369,7 +372,7 @@ let zenStartTime = 0;
 
 function startZenTimer() {
   zenStartTime = Date.now();
-  if (refs.editorZenTimer) refs.editorZenTimer.style.display = 'inline';
+  if (refs.editorZenTimer) refs.editorZenTimer.classList.remove('u-hidden');
   zenTimerInterval = setInterval(() => {
     const elapsed = Math.floor((Date.now() - zenStartTime) / 1000);
     const minutes = Math.floor(elapsed / 60);
@@ -381,7 +384,7 @@ function startZenTimer() {
 function stopZenTimer() {
   if (zenTimerInterval) clearInterval(zenTimerInterval);
   zenTimerInterval = null;
-  if (refs.editorZenTimer) refs.editorZenTimer.style.display = 'none';
+  if (refs.editorZenTimer) refs.editorZenTimer.classList.add('u-hidden');
 }
 
 // --- Init ---
@@ -412,10 +415,10 @@ export function init(deps) {
   if (refs.editorStoryTitle) {
     refs.editorStoryTitle.addEventListener('click', (e) => {
       e.stopPropagation();
-      const isVisible = refs.headlessMetadataPanel?.style.display === 'flex';
-      document.querySelectorAll('.headless-panel').forEach(p => p.style.display = 'none');
+      const isVisible = refs.headlessMetadataPanel?.classList.contains('active');
+      document.querySelectorAll('.headless-panel').forEach(p => p.classList.remove('active'));
       if (!isVisible && refs.headlessMetadataPanel) {
-        refs.headlessMetadataPanel.style.display = 'flex';
+        refs.headlessMetadataPanel.classList.add('active');
         loadMetadataToPanel();
       }
     });

@@ -7,9 +7,9 @@ import * as refs from './dom-refs.js';
  */
 export function togglePanel(panel) {
   if (!panel) return;
-  const isVisible = panel.style.display === 'flex';
-  document.querySelectorAll('.headless-panel').forEach(p => p.style.display = 'none');
-  if (!isVisible) panel.style.display = 'flex';
+  const isVisible = panel.classList.contains('active');
+  document.querySelectorAll('.headless-panel').forEach(p => p.classList.remove('active'));
+  if (!isVisible) panel.classList.add('active');
 }
 
 /**
@@ -19,10 +19,10 @@ export function setupPanelToggle(btn, panel, onOpen) {
   if (!btn || !panel) return;
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const isVisible = panel.style.display === 'flex';
-    document.querySelectorAll('.headless-panel').forEach(p => p.style.display = 'none');
+    const isVisible = panel.classList.contains('active');
+    document.querySelectorAll('.headless-panel').forEach(p => p.classList.remove('active'));
     if (!isVisible) {
-      panel.style.display = 'flex';
+      panel.classList.add('active');
       if (onOpen) onOpen();
     }
   });
@@ -32,7 +32,7 @@ export function init() {
   // Close panel on close button
   document.querySelectorAll('.headless-panel .close-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      btn.closest('.headless-panel').style.display = 'none';
+      btn.closest('.headless-panel').classList.remove('active');
     });
   });
 
@@ -41,7 +41,7 @@ export function init() {
     if (!e.target.closest('.headless-panel') &&
         !e.target.closest('.editor-toolbar-center') &&
         !e.target.closest('#editorSettingsBtn')) {
-      document.querySelectorAll('.headless-panel').forEach(p => p.style.display = 'none');
+      document.querySelectorAll('.headless-panel').forEach(p => p.classList.remove('active'));
     }
   });
 

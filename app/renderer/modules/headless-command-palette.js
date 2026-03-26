@@ -34,7 +34,7 @@ let selectedCommandIndex = 0;
 
 export function showCommandPalette() {
   if (!refs.editorCommandPalette) return;
-  refs.editorCommandPalette.style.display = 'flex';
+  refs.editorCommandPalette.classList.add('is-open');
   if (refs.editorCommandInput) refs.editorCommandInput.value = '';
   selectedCommandIndex = 0;
   renderCommandList();
@@ -43,7 +43,7 @@ export function showCommandPalette() {
 
 export function hideCommandPalette() {
   if (!refs.editorCommandPalette) return;
-  refs.editorCommandPalette.style.display = 'none';
+  refs.editorCommandPalette.classList.remove('is-open');
   if (storyEditor) storyEditor.focus();
 }
 
@@ -189,7 +189,7 @@ export function init(deps) {
   }
 
   document.addEventListener('mousedown', (e) => {
-    if (refs.editorCommandPalette?.style.display === 'flex' && !refs.editorCommandPalette.contains(e.target)) {
+    if (refs.editorCommandPalette?.classList.contains('is-open') && !refs.editorCommandPalette.contains(e.target)) {
       hideCommandPalette();
     }
   });

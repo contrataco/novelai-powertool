@@ -179,7 +179,7 @@ async function handleStoryContextChange(storyId, storyTitle) {
   // Update sidebar indicator
   if (storyIndicator) {
     storyIndicator.textContent = 'Story: ' + (storyTitle || storyId.slice(0, 12));
-    storyIndicator.style.display = '';
+    storyIndicator.classList.remove('u-hidden');
   }
 
   bus.emit('story:changed', { storyId, storyTitle });
@@ -188,7 +188,7 @@ async function handleStoryContextChange(storyId, storyTitle) {
   if (state.loreIsScanning) {
     state.loreIsScanning = false;
     const scanStatus = document.getElementById('loreScanStatus');
-    if (scanStatus) scanStatus.style.display = 'none';
+    if (scanStatus) scanStatus.classList.add('u-hidden');
   }
   if (state.isGenerating) {
     state.isGenerating = false;
@@ -284,7 +284,7 @@ async function handleStoryContextChange(storyId, storyTitle) {
       }
       if (storyTitle) {
         commitStoryLabel.textContent = 'Story: ' + storyTitle;
-        commitStoryLabel.style.display = '';
+        commitStoryLabel.classList.remove('u-hidden');
       }
     }
   } catch (e) {

@@ -115,7 +115,7 @@ function rebuildCategoryUI() {
         const removeBtn = document.createElement('span');
         removeBtn.textContent = '\u00d7';
         removeBtn.title = 'Remove custom category';
-        removeBtn.style.cssText = 'cursor:pointer;margin-left:3px;color:var(--text-dim);font-size:12px;';
+        removeBtn.className = 'cat-remove-btn';
         removeBtn.addEventListener('click', async (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -136,10 +136,10 @@ function rebuildCategoryUI() {
     const fullScanBtn = document.createElement('button');
     fullScanBtn.dataset.scan = 'full';
     fullScanBtn.textContent = 'Full Scan';
-    fullScanBtn.style.cssText = 'font-weight:700;border-bottom:1px solid #333;';
+    fullScanBtn.className = 'scan-menu-full';
     fullScanBtn.addEventListener('click', () => {
       state.scanMenuOpen = false;
-      loreScanMenu.style.display = 'none';
+      loreScanMenu.classList.add('u-hidden');
       runLoreScan('full');
     });
     loreScanMenu.appendChild(fullScanBtn);
@@ -149,7 +149,7 @@ function rebuildCategoryUI() {
     allBtn.textContent = 'Scan All';
     allBtn.addEventListener('click', () => {
       state.scanMenuOpen = false;
-      loreScanMenu.style.display = 'none';
+      loreScanMenu.classList.add('u-hidden');
       runLoreScan('all');
     });
     loreScanMenu.appendChild(allBtn);
@@ -160,7 +160,7 @@ function rebuildCategoryUI() {
       btn.textContent = cat.displayName;
       btn.addEventListener('click', () => {
         state.scanMenuOpen = false;
-        loreScanMenu.style.display = 'none';
+        loreScanMenu.classList.add('u-hidden');
         runLoreScan(cat.id);
       });
       loreScanMenu.appendChild(btn);
@@ -171,7 +171,7 @@ function rebuildCategoryUI() {
     relBtn.textContent = 'Relationships';
     relBtn.addEventListener('click', () => {
       state.scanMenuOpen = false;
-      loreScanMenu.style.display = 'none';
+      loreScanMenu.classList.add('u-hidden');
       runLoreScan('relationships');
     });
     loreScanMenu.appendChild(relBtn);
@@ -709,9 +709,9 @@ export function refreshLoreUI() {
   if (!state.loreState) {
     lorePendingList.innerHTML = '<div class="lore-empty">Select a story to get started.</div>';
     lorePendingCount.textContent = '(0)';
-    loreMergesSection.style.display = 'none';
-    loreUpdatesSection.style.display = 'none';
-    loreCleanupSection.style.display = 'none';
+    loreMergesSection.classList.add('u-hidden');
+    loreUpdatesSection.classList.add('u-hidden');
+    loreCleanupSection.classList.add('u-hidden');
     return;
   }
 
@@ -731,9 +731,9 @@ export function refreshLoreUI() {
 
   const pc = state.loreState.pendingCleanups || [];
 
-  loreMergesSection.style.display = pm.length > 0 ? '' : 'none';
-  loreUpdatesSection.style.display = pu.length > 0 ? '' : 'none';
-  loreCleanupSection.style.display = pc.length > 0 ? '' : 'none';
+  loreMergesSection.classList.toggle('u-hidden', pm.length === 0);
+  loreUpdatesSection.classList.toggle('u-hidden', pu.length === 0);
+  loreCleanupSection.classList.toggle('u-hidden', pc.length === 0);
   loreCleanupCount.textContent = `(${pc.length})`;
 
   // Render pending cleanups
@@ -950,7 +950,7 @@ function createUpdateCard(update) {
 
 function showLoreError(msg) {
   loreError.textContent = msg;
-  loreError.style.display = '';
+  loreError.classList.remove('u-hidden');
 }
 
 // Get or create a lorebook category for an entry type
@@ -1321,9 +1321,9 @@ async function runLoreScan(scanType = 'all') {
   let scanHadError = false;
   loreScanBtn.disabled = true;
   loreScanBtn.title = 'Scan in progress';
-  loreScanStatus.style.display = '';
-  loreScanProgressFill.style.width = '0%';
-  loreError.style.display = 'none';
+  loreScanStatus.classList.remove('u-hidden');
+  loreScanProgressFill.style.setProperty('--progress', '0%');
+  loreError.classList.add('u-hidden');
 
   try {
     // Get story text (smart: proxy -> DOM fallback)
@@ -1455,7 +1455,7 @@ async function runLoreScan(scanType = 'all') {
     scanHadError = true;
     showLoreError(e.message || 'Scan failed');
   } finally {
-    loreScanProgressFill.style.width = '100%';
+    loreScanProgressFill.style.setProperty('--progress', '100%');
     loreScanPhase.textContent = 'Scan complete';
     state.loreIsScanning = false;
     state.llmBusy = false;
@@ -1464,8 +1464,8 @@ async function runLoreScan(scanType = 'all') {
     refreshLoreUI();
     buildFamilyTree();
     setTimeout(() => {
-      loreScanStatus.style.display = 'none';
-      loreScanProgressFill.style.width = '0%';
+      loreScanStatus.classList.add('u-hidden');
+      loreScanProgressFill.style.setProperty('--progress', '0%');
     }, scanHadError ? 10000 : 1500);
   }
 }
@@ -1476,9 +1476,9 @@ async function runLoreOrganize() {
   state.loreIsOrganizing = true;
   loreOrganizeBtn.disabled = true;
   loreOrganizeBtn.title = 'Organize in progress';
-  loreScanStatus.style.display = '';
+  loreScanStatus.classList.remove('u-hidden');
   loreScanPhase.textContent = 'Organizing...';
-  loreError.style.display = 'none';
+  loreError.classList.add('u-hidden');
 
   try {
     await checkLoreProxy();
@@ -1521,7 +1521,7 @@ async function runLoreOrganize() {
     state.loreIsOrganizing = false;
     loreOrganizeBtn.disabled = false;
     loreOrganizeBtn.title = '';
-    loreScanStatus.style.display = 'none';
+    loreScanStatus.classList.add('u-hidden');
     refreshLoreUI();
   }
 }
@@ -1618,7 +1618,7 @@ function createCleanupCard(cleanup) {
         <span class="category-badge editable ${cleanup.proposedType || ''}" title="Click to change">${proposedLabel}</span>
         <button class="btn-new-cat btn-xs" style="background:none;border:1px solid var(--border-strong);color:var(--text-muted);border-radius:var(--radius-xs);cursor:pointer;">+ New</button>
       </div>
-      <div class="cleanup-new-cat-form" style="display:none;margin-bottom:8px;gap:6px;align-items:center;flex-wrap:wrap;">
+      <div class="cleanup-new-cat-form u-hidden">
         <input type="text" placeholder="Category name" class="new-cat-name rpg-edit-input" style="width:120px;">
         <input type="color" value="#ff9900" class="new-cat-color" style="width:28px;height:22px;border:none;padding:0;cursor:pointer;background:transparent;">
         <button class="new-cat-confirm btn-xs" style="background:var(--cat-rpg);color:#fff;border:none;border-radius:var(--radius-xs);cursor:pointer;">Add</button>
@@ -1645,11 +1645,11 @@ function createCleanupCard(cleanup) {
     const newCatForm = card.querySelector('.cleanup-new-cat-form');
     card.querySelector('.btn-new-cat').addEventListener('click', (e) => {
       e.stopPropagation();
-      newCatForm.style.display = 'flex';
+      newCatForm.classList.remove('u-hidden');
     });
     newCatForm.querySelector('.new-cat-cancel').addEventListener('click', (e) => {
       e.stopPropagation();
-      newCatForm.style.display = 'none';
+      newCatForm.classList.add('u-hidden');
       newCatForm.querySelector('.new-cat-name').value = '';
     });
     newCatForm.querySelector('.new-cat-confirm').addEventListener('click', async (e) => {
@@ -1679,7 +1679,7 @@ function createCleanupCard(cleanup) {
         card.classList.add(id);
         saveLoreState();
         showToast(`Added category "${singular}"`);
-        newCatForm.style.display = 'none';
+        newCatForm.classList.add('u-hidden');
         nameInput.value = '';
       } else {
         showToast(result.error || 'Failed to add category');
@@ -1864,7 +1864,7 @@ async function runEnrich() {
 
   loreEnrichBtn.disabled = true;
   loreEnrichBtn.textContent = '...';
-  loreEnrichPreview.style.display = 'none';
+  loreEnrichPreview.classList.add('u-hidden');
 
   try {
     // Get entries for target identification (loreCall falls back to direct access)
@@ -1912,7 +1912,7 @@ async function runEnrich() {
     loreEnrichTarget.textContent = targetEntry.displayName;
     loreEnrichOld.textContent = targetEntry.text || '(empty)';
     loreEnrichNew.textContent = enrichResult.result;
-    loreEnrichPreview.style.display = '';
+    loreEnrichPreview.classList.remove('u-hidden');
   } catch (e) {
     showLoreError(e.message || 'Enrich failed');
   } finally {
@@ -1928,7 +1928,7 @@ async function runLoreCreate() {
 
   loreCreateBtn.disabled = true;
   loreCreateBtn.textContent = '...';
-  loreCreatePreview.style.display = 'none';
+  loreCreatePreview.classList.add('u-hidden');
   state.loreCreateResults = [];
 
   try {
@@ -1955,7 +1955,7 @@ async function runLoreCreate() {
 
 function renderCreatePreview() {
   loreCreatePreview.innerHTML = '';
-  loreCreatePreview.style.display = '';
+  loreCreatePreview.classList.remove('u-hidden');
 
   // Accept All button if multiple entries
   if (state.loreCreateResults.length > 1) {
@@ -1968,7 +1968,7 @@ function renderCreatePreview() {
         await acceptCreatedEntry(entry);
       }
       state.loreCreateResults = [];
-      loreCreatePreview.style.display = 'none';
+      loreCreatePreview.classList.add('u-hidden');
       loreCreateInput.value = '';
     });
     acceptAllBar.appendChild(acceptAllBtn);
@@ -2002,7 +2002,7 @@ function createCreatedEntryCard(entry) {
     await acceptCreatedEntry(entry);
     state.loreCreateResults = state.loreCreateResults.filter(e => e.id !== entry.id);
     if (state.loreCreateResults.length === 0) {
-      loreCreatePreview.style.display = 'none';
+      loreCreatePreview.classList.add('u-hidden');
       loreCreateInput.value = '';
     } else {
       renderCreatePreview();
@@ -2028,7 +2028,7 @@ function createCreatedEntryCard(entry) {
   card.querySelector('.btn-reject').addEventListener('click', () => {
     state.loreCreateResults = state.loreCreateResults.filter(e => e.id !== entry.id);
     if (state.loreCreateResults.length === 0) {
-      loreCreatePreview.style.display = 'none';
+      loreCreatePreview.classList.add('u-hidden');
     } else {
       renderCreatePreview();
     }
@@ -2093,7 +2093,7 @@ export async function buildFamilyTree() {
   }
 
   if (entries.length < 2) {
-    section.style.display = 'none';
+    section.classList.add('u-hidden');
     return;
   }
 
@@ -2256,9 +2256,9 @@ export async function buildFamilyTree() {
   if (groupCount > 0) {
     container.innerHTML = html;
     countEl.textContent = `(${groupCount})`;
-    section.style.display = '';
+    section.classList.remove('u-hidden');
   } else {
-    section.style.display = 'none';
+    section.classList.add('u-hidden');
   }
 }
 
@@ -2269,9 +2269,9 @@ export async function buildFamilyTree() {
 export function renderComprehensionState(compState) {
   if (!compState || !compState.masterSummary) {
     comprehensionStatusText.textContent = 'Not scanned';
-    comprehensionProgressFill.style.width = '0%';
-    masterSummaryDisplay.style.display = 'none';
-    entityProfilesList.style.display = 'none';
+    comprehensionProgressFill.style.setProperty('--progress', '0%');
+    masterSummaryDisplay.classList.add('u-hidden');
+    entityProfilesList.classList.add('u-hidden');
     return;
   }
 
@@ -2279,19 +2279,19 @@ export function renderComprehensionState(compState) {
     ? Math.round((compState.lastProcessedLength / compState.totalStoryLength) * 100)
     : 100;
   comprehensionStatusText.textContent = `${compState.chunks?.length || 0} chunks processed`;
-  comprehensionProgressFill.style.width = pct + '%';
+  comprehensionProgressFill.style.setProperty('--progress', pct + '%');
 
   if (compState.masterSummary) {
-    masterSummaryDisplay.style.display = '';
+    masterSummaryDisplay.classList.remove('u-hidden');
     masterSummaryText.textContent = compState.masterSummary;
   } else {
-    masterSummaryDisplay.style.display = 'none';
+    masterSummaryDisplay.classList.add('u-hidden');
   }
 
   const profiles = compState.entityProfiles || {};
   const profileKeys = Object.keys(profiles);
   if (profileKeys.length > 0) {
-    entityProfilesList.style.display = '';
+    entityProfilesList.classList.remove('u-hidden');
     entityCount.textContent = profileKeys.length;
     entityProfileCards.innerHTML = '';
 
@@ -2314,7 +2314,7 @@ export function renderComprehensionState(compState) {
       entityProfileCards.appendChild(card);
     }
   } else {
-    entityProfilesList.style.display = 'none';
+    entityProfilesList.classList.add('u-hidden');
   }
 }
 
@@ -2408,41 +2408,35 @@ export function switchPanelTab(tab) {
   if (mediaTab) mediaTab.classList.remove('active');
   if (scriptsTab) scriptsTab.classList.remove('active');
   sceneContent.classList.remove('active');
-  sceneContent.style.display = 'none';
   loreContent.classList.remove('active');
-  loreContent.style.display = 'none';
   memoryContent.classList.remove('active');
-  memoryContent.style.display = 'none';
-  if (rpgContent) { rpgContent.classList.remove('active'); rpgContent.style.display = 'none'; }
-  if (mediaContent) { mediaContent.classList.remove('active'); mediaContent.style.display = 'none'; }
-  if (scriptsContent) { scriptsContent.classList.remove('active'); scriptsContent.style.display = 'none'; }
+  if (rpgContent) rpgContent.classList.remove('active');
+  if (mediaContent) mediaContent.classList.remove('active');
+  if (scriptsContent) scriptsContent.classList.remove('active');
 
   if (tab === 'scene') {
     sceneTab.classList.add('active');
     sceneContent.classList.add('active');
-    sceneContent.style.display = '';
   } else if (tab === 'lore') {
     loreTab.classList.add('active');
     loreContent.classList.add('active');
-    loreContent.style.display = '';
     refreshLoreUI();
   } else if (tab === 'memory') {
     memoryTab.classList.add('active');
     memoryContent.classList.add('active');
-    memoryContent.style.display = '';
     refreshMemoryUI();
   } else if (tab === 'rpg') {
     if (rpgTab) rpgTab.classList.add('active');
-    if (rpgContent) { rpgContent.classList.add('active'); rpgContent.style.display = ''; }
+    if (rpgContent) rpgContent.classList.add('active');
     // refreshRpgUI is called from litrpg-panel.js
     import('./litrpg-panel.js').then(m => m.refreshRpgUI && m.refreshRpgUI());
   } else if (tab === 'media') {
     if (mediaTab) mediaTab.classList.add('active');
-    if (mediaContent) { mediaContent.classList.add('active'); mediaContent.style.display = ''; }
+    if (mediaContent) mediaContent.classList.add('active');
     bus.emit('media:tab-activated');
   } else if (tab === 'scripts') {
     if (scriptsTab) scriptsTab.classList.add('active');
-    if (scriptsContent) { scriptsContent.classList.add('active'); scriptsContent.style.display = ''; }
+    if (scriptsContent) scriptsContent.classList.add('active');
     bus.emit('panel:scripts-activated');
   }
 }
@@ -2460,14 +2454,14 @@ export function init() {
   storyboardSubTab?.addEventListener('click', () => {
     storyboardSubTab.classList.add('active');
     timelineSubTab.classList.remove('active');
-    storyboardView.style.display = '';
-    timelineView.style.display = 'none';
+    storyboardView.classList.remove('u-hidden');
+    timelineView.classList.add('u-hidden');
   });
   timelineSubTab?.addEventListener('click', () => {
     timelineSubTab.classList.add('active');
     storyboardSubTab.classList.remove('active');
-    storyboardView.style.display = 'none';
-    timelineView.style.display = '';
+    storyboardView.classList.add('u-hidden');
+    timelineView.classList.remove('u-hidden');
     import('./scene-timeline.js').then(m => m.refreshTimelineUI && m.refreshTimelineUI());
   });
 
@@ -2499,7 +2493,7 @@ export function init() {
       loreLlmSelect.value = llmConfig.provider;
       updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel);
       if (llmConfig.provider === 'ollama') {
-        loreOllamaSettings.style.display = '';
+        loreOllamaSettings.classList.remove('u-hidden');
         refreshOllamaModels();
       }
 
@@ -2531,7 +2525,7 @@ export function init() {
 
   loreLlmSelect.addEventListener('change', async () => {
     const provider = loreLlmSelect.value;
-    loreOllamaSettings.style.display = provider === 'ollama' ? '' : 'none';
+    loreOllamaSettings.classList.toggle('u-hidden', provider !== 'ollama');
     await window.powertool.loreSetLlmProvider({ provider });
     if (provider === 'ollama') await refreshOllamaModels();
     const llmConfig = await window.powertool.loreGetLlmProvider();
@@ -2548,12 +2542,12 @@ export function init() {
   // Category management buttons
   if (loreAddCategoryBtn) {
     loreAddCategoryBtn.addEventListener('click', () => {
-      if (loreAddCategoryForm) loreAddCategoryForm.style.display = '';
+      if (loreAddCategoryForm) loreAddCategoryForm.classList.remove('u-hidden');
     });
   }
   if (loreAddCategoryCancel) {
     loreAddCategoryCancel.addEventListener('click', () => {
-      if (loreAddCategoryForm) loreAddCategoryForm.style.display = 'none';
+      if (loreAddCategoryForm) loreAddCategoryForm.classList.add('u-hidden');
       if (loreNewCategoryName) loreNewCategoryName.value = '';
     });
   }
@@ -2579,7 +2573,7 @@ export function init() {
       if (result.success) {
         showToast(`Added category "${singular}"`);
         if (loreNewCategoryName) loreNewCategoryName.value = '';
-        if (loreAddCategoryForm) loreAddCategoryForm.style.display = 'none';
+        if (loreAddCategoryForm) loreAddCategoryForm.classList.add('u-hidden');
         await loadCategoryRegistry();
       } else {
         showToast(result.error || 'Failed to add category');
@@ -2655,14 +2649,14 @@ export function init() {
   loreScanBtn.addEventListener('click', () => {
     if (state.loreIsScanning) return;
     state.scanMenuOpen = !state.scanMenuOpen;
-    loreScanMenu.style.display = state.scanMenuOpen ? '' : 'none';
+    loreScanMenu.classList.toggle('u-hidden', !state.scanMenuOpen);
   });
 
   // Close menu when clicking outside
   document.addEventListener('click', (e) => {
     if (state.scanMenuOpen && !loreScanBtn.contains(e.target) && !loreScanMenu.contains(e.target)) {
       state.scanMenuOpen = false;
-      loreScanMenu.style.display = 'none';
+      loreScanMenu.classList.add('u-hidden');
     }
   });
 
@@ -2712,7 +2706,7 @@ export function init() {
       'propagating-names': 95,
       'optimizing': 97,
     };
-    loreScanProgressFill.style.width = (phaseProgress[progress.phase] || 0) + '%';
+    loreScanProgressFill.style.setProperty('--progress', (phaseProgress[progress.phase] || 0) + '%');
 
     // Live update pending entries as they come in
     if (progress.pendingEntries) {
@@ -2723,7 +2717,7 @@ export function init() {
   });
 
   // Organize
-  if (loreOrganizeBtn) loreOrganizeBtn.style.display = 'none';
+  if (loreOrganizeBtn) loreOrganizeBtn.classList.add('u-hidden');
   loreOrganizeBtn.addEventListener('click', () => runLoreOrganize());
 
   // Organize progress listener
@@ -2866,7 +2860,7 @@ export function init() {
     }
 
     state.loreEnrichResult = null;
-    loreEnrichPreview.style.display = 'none';
+    loreEnrichPreview.classList.add('u-hidden');
     loreEnrichInput.value = '';
   });
 
@@ -2878,7 +2872,7 @@ export function init() {
     loreEnrichNew.innerHTML = '';
     loreEnrichNew.appendChild(textarea);
 
-    loreEnrichEditBtn.style.display = 'none';
+    loreEnrichEditBtn.classList.add('u-hidden');
     textarea.addEventListener('input', () => {
       state.loreEnrichResult.updatedText = textarea.value;
     });
@@ -2886,7 +2880,7 @@ export function init() {
 
   loreEnrichRejectBtn.addEventListener('click', () => {
     state.loreEnrichResult = null;
-    loreEnrichPreview.style.display = 'none';
+    loreEnrichPreview.classList.add('u-hidden');
   });
 
   // Create Entry
@@ -2905,8 +2899,8 @@ export function init() {
     state.comprehensionScanning = true;
     state.comprehensionPaused = false;
     startProgressiveScanBtn.disabled = true;
-    pauseProgressiveScanBtn.style.display = '';
-    cancelProgressiveScanBtn.style.display = '';
+    pauseProgressiveScanBtn.classList.remove('u-hidden');
+    cancelProgressiveScanBtn.classList.remove('u-hidden');
     comprehensionStatusText.textContent = 'Starting...';
 
     try {
@@ -2928,8 +2922,8 @@ export function init() {
     } finally {
       state.comprehensionScanning = false;
       startProgressiveScanBtn.disabled = false;
-      pauseProgressiveScanBtn.style.display = 'none';
-      cancelProgressiveScanBtn.style.display = 'none';
+      pauseProgressiveScanBtn.classList.add('u-hidden');
+      cancelProgressiveScanBtn.classList.add('u-hidden');
     }
   });
 
@@ -2958,7 +2952,7 @@ export function init() {
     const pct = data.chunksTotal > 0
       ? Math.round((data.chunksProcessed / data.chunksTotal) * 100)
       : 0;
-    comprehensionProgressFill.style.width = pct + '%';
+    comprehensionProgressFill.style.setProperty('--progress', pct + '%');
 
     const phaseLabels = {
       processing: `Processing chunk ${data.chunksProcessed}/${data.chunksTotal}...`,
@@ -2973,8 +2967,8 @@ export function init() {
     if (data.storyId !== state.currentStoryId) return;
     state.comprehensionScanning = false;
     startProgressiveScanBtn.disabled = false;
-    pauseProgressiveScanBtn.style.display = 'none';
-    cancelProgressiveScanBtn.style.display = 'none';
+    pauseProgressiveScanBtn.classList.add('u-hidden');
+    cancelProgressiveScanBtn.classList.add('u-hidden');
     loadComprehensionState();
   });
 
@@ -3080,7 +3074,7 @@ export function init() {
           : 'none';
         const msg = `${writableFields.length} writable fields: ${writableList}`;
         if (loreOptStatus) {
-          loreOptStatus.style.display = '';
+          loreOptStatus.classList.remove('u-hidden');
           loreOptStatus.textContent = msg;
         }
         showToast(`Discovery complete — ${msg}`);
@@ -3108,19 +3102,19 @@ export function init() {
 
       // Auto-discover if no confirmed fields yet
       if (confirmedFields.length === 0) {
-        loreScanStatus.style.display = '';
+        loreScanStatus.classList.remove('u-hidden');
         loreScanPhase.textContent = 'Discovering fields...';
-        loreScanProgressFill.style.width = '0%';
+        loreScanProgressFill.style.setProperty('--progress', '0%');
         try {
           confirmedFields = await runDiscovery();
           if (confirmedFields.length === 0) {
             showToast('Could not discover lorebook fields — ensure proxy is connected', null, 'error');
-            loreScanStatus.style.display = 'none';
+            loreScanStatus.classList.add('u-hidden');
             return;
           }
         } catch (e) {
           showToast('Discovery failed: ' + (e.message || 'Unknown error'), null, 'error');
-          loreScanStatus.style.display = 'none';
+          loreScanStatus.classList.add('u-hidden');
           return;
         }
       }
@@ -3128,9 +3122,9 @@ export function init() {
       state.loreIsScanning = true;
       loreOptimizeAllBtn.disabled = true;
       loreOptimizeAllBtn.title = 'Optimization in progress';
-      loreScanStatus.style.display = '';
+      loreScanStatus.classList.remove('u-hidden');
       loreScanPhase.textContent = 'Optimizing lorebook...';
-      loreScanProgressFill.style.width = '0%';
+      loreScanProgressFill.style.setProperty('--progress', '0%');
 
       try {
         // Get expanded entries (with current advanced field values)
@@ -3152,14 +3146,14 @@ export function init() {
 
           if (updates.length > 0) {
             loreScanPhase.textContent = `Applying ${updates.length} optimizations...`;
-            loreScanProgressFill.style.width = '60%';
+            loreScanProgressFill.style.setProperty('--progress', '60%');
 
             // Batch in chunks of 10
             for (let i = 0; i < updates.length; i += 10) {
               const chunk = updates.slice(i, i + 10);
               const batchResult = await loreCall('batchUpdateAdvanced', chunk);
               console.log(`[LoreOpt] Batch ${Math.floor(i / 10) + 1}: ${batchResult.success} ok, ${batchResult.failed} failed`);
-              loreScanProgressFill.style.width = `${60 + (i / updates.length) * 35}%`;
+              loreScanProgressFill.style.setProperty('--progress', `${60 + (i / updates.length) * 35}%`);
             }
           }
 
@@ -3181,7 +3175,7 @@ export function init() {
             if (budgetCount) parts.push(`${budgetCount} budget-adjusted`);
             if (rangeCount) parts.push(`${rangeCount} range-changed`);
             if (prefixCount) parts.push(`${prefixCount} with prefixes`);
-            loreOptStatus.style.display = '';
+            loreOptStatus.classList.remove('u-hidden');
             loreOptStatus.textContent = `Optimized ${details.length} entries: ${parts.join(', ') || 'no changes'}`;
           }
         } else if (result.success) {
@@ -3192,14 +3186,14 @@ export function init() {
       } catch (e) {
         showToast('Optimization failed: ' + (e.message || 'Unknown error'));
       } finally {
-        loreScanProgressFill.style.width = '100%';
+        loreScanProgressFill.style.setProperty('--progress', '100%');
         loreScanPhase.textContent = 'Optimization complete';
         state.loreIsScanning = false;
         loreOptimizeAllBtn.disabled = false;
         loreOptimizeAllBtn.title = '';
         setTimeout(() => {
-          loreScanStatus.style.display = 'none';
-          loreScanProgressFill.style.width = '0%';
+          loreScanStatus.classList.add('u-hidden');
+          loreScanProgressFill.style.setProperty('--progress', '0%');
         }, 1500);
       }
     });

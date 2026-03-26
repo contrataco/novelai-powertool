@@ -45,6 +45,7 @@ export function updateProviderSections() {
 
 async function loadVeniceModels() {
   veniceModelSelect.innerHTML = '<option disabled selected>Loading models...</option>';
+  veniceModelSelect.classList.add('select-loading');
   try {
     const models = await window.powertool.getVeniceModels();
     veniceModelSelect.innerHTML = '';
@@ -65,6 +66,8 @@ async function loadVeniceModels() {
     console.error('Failed to load Venice models:', e);
     veniceModelSelect.innerHTML = '<option disabled selected>Failed to load models</option>';
     showToast('Failed to load Venice models', null, 'warn');
+  } finally {
+    veniceModelSelect.classList.remove('select-loading');
   }
 }
 
@@ -89,7 +92,7 @@ async function loadVeniceVideoModels() {
 async function showVeniceSettingsBalance() {
   if (veniceSettingsBalance && veniceSettingsBalanceText) {
     veniceSettingsBalanceText.textContent = 'Loading...';
-    veniceSettingsBalance.style.display = '';
+    veniceSettingsBalance.classList.remove('u-hidden');
   }
   try {
     const balance = await window.powertool.veniceGetBalance();
@@ -99,9 +102,9 @@ async function showVeniceSettingsBalance() {
         text += ` | ${balance.remainingRequests} requests remaining`;
       }
       veniceSettingsBalanceText.textContent = text;
-      veniceSettingsBalance.style.display = '';
+      veniceSettingsBalance.classList.remove('u-hidden');
     } else if (veniceSettingsBalance) {
-      veniceSettingsBalance.style.display = 'none';
+      veniceSettingsBalance.classList.add('u-hidden');
     }
   } catch { /* ignore */ }
 }
@@ -157,7 +160,7 @@ export function updatePuterQualityVisibility() {
   const model = puterModelSelect.value;
   const qualityOpts = PUTER_QUALITY_MODELS[model];
   if (qualityOpts) {
-    puterQualityGroup.style.display = '';
+    puterQualityGroup.classList.remove('u-hidden');
     const currentVal = puterQualitySelect.value;
     puterQualitySelect.innerHTML = '';
     for (const q of qualityOpts) {
@@ -170,7 +173,7 @@ export function updatePuterQualityVisibility() {
       puterQualitySelect.value = currentVal;
     }
   } else {
-    puterQualityGroup.style.display = 'none';
+    puterQualityGroup.classList.add('u-hidden');
   }
 }
 

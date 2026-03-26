@@ -53,7 +53,7 @@ export async function refreshStoryboardSelect() {
     storyboardSelect.appendChild(opt);
     state.activeStoryboardId = null;
     state.activeStoryboardName = '';
-    sbLinkBtn.style.display = 'none';
+    sbLinkBtn.classList.add('u-hidden');
     return;
   }
 
@@ -123,13 +123,13 @@ export async function refreshStoryboardSelect() {
   if (active && state.currentStoryId) {
     if (active.storyId) {
       sbLinkBtn.textContent = 'Unlink';
-      sbLinkBtn.style.display = '';
+      sbLinkBtn.classList.remove('u-hidden');
     } else {
       sbLinkBtn.textContent = 'Link Story';
-      sbLinkBtn.style.display = '';
+      sbLinkBtn.classList.remove('u-hidden');
     }
   } else {
-    sbLinkBtn.style.display = 'none';
+    sbLinkBtn.classList.add('u-hidden');
   }
 }
 
@@ -294,9 +294,9 @@ export function init() {
     commitSbName.textContent = state.activeStoryboardName || 'Default';
     if (state.currentStoryTitle) {
       commitStoryLabel.textContent = 'Story: ' + state.currentStoryTitle;
-      commitStoryLabel.style.display = '';
+      commitStoryLabel.classList.remove('u-hidden');
     } else {
-      commitStoryLabel.style.display = 'none';
+      commitStoryLabel.classList.add('u-hidden');
     }
     commitNoteInput.value = '';
     commitConfirm.classList.add('active');

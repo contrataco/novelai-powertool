@@ -1,6 +1,6 @@
 // utils.js — Shared utilities
 
-import { toastEl } from './dom-refs.js';
+import { toastContainer } from './dom-refs.js';
 
 export function escapeHtml(str) {
   if (!str) return '';
@@ -14,48 +14,107 @@ const TOAST_ICONS = {
   info: '\u2139',
 };
 
-let toastTimer = null;
-let toastUndoTimer = null;
+const MAX_VISIBLE_TOASTS = 3;
+const activeToasts = [];
+
+function pruneToasts() {
+  while (activeToasts.length > MAX_VISIBLE_TOASTS) {
+    const oldest = activeToasts.shift();
+    if (oldest?.el?.parentNode) {
+      oldest.el.classList.remove('show');
+      setTimeout(() => oldest.el.remove(), 300);
+    }
+    if (oldest?.timer) clearTimeout(oldest.timer);
+    if (oldest?.undoTimer) clearTimeout(oldest.undoTimer);
+  }
+}
 
 /**
- * Show a toast notification.
+ * Show a toast notification. Supports stacking (max 3 visible).
  * @param {string} msg
- * @param {number} duration
- * @param {string} variant - 'success'|'error'|'warn'|'info'
- * @param {object} [opts] - { onUndo: Function, undoLabel: string }
+ * @param {number} [duration]
+ * @param {string} [variant] - 'success'|'error'|'warn'|'info'
+ * @param {object} [opts] - { onUndo, undoLabel, onExpire, persistent, onCancel }
+ * @returns {HTMLElement} the toast element (for dismissToast)
  */
 export function showToast(msg, duration, variant = '', opts = {}) {
+  if (!toastContainer) return null;
   if (duration == null) {
-    duration = variant === 'error' ? 10000 : variant === 'warn' ? 5000 : 2500;
+    duration = opts.persistent ? 0 : variant === 'error' ? 10000 : variant === 'warn' ? 5000 : 2500;
   }
+
+  const el = document.createElement('div');
+  el.className = 'toast' + (variant ? ' ' + variant : '');
   const icon = TOAST_ICONS[variant] || '';
   let html = (icon ? `<span class="toast-icon">${icon}</span> ` : '') + escapeHtml(msg);
+  if (opts.onUndo) html += ` <button class="toast-undo">${escapeHtml(opts.undoLabel || 'Undo')}</button>`;
+  if (opts.onCancel) html += ` <button class="toast-cancel">Cancel</button>`;
+  el.innerHTML = html;
+
+  toastContainer.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+
+  const entry = { el, timer: null, undoTimer: null };
+  activeToasts.push(entry);
+  pruneToasts();
+
   if (opts.onUndo) {
-    html += ` <button class="toast-undo">${escapeHtml(opts.undoLabel || 'Undo')}</button>`;
-  }
-  toastEl.innerHTML = html;
-  toastEl.className = 'toast show' + (variant ? ' ' + variant : '');
-  toastEl.style.pointerEvents = opts.onUndo ? 'auto' : '';
-  clearTimeout(toastTimer);
-  clearTimeout(toastUndoTimer);
-  if (opts.onUndo) {
-    const undoBtn = toastEl.querySelector('.toast-undo');
+    const undoBtn = el.querySelector('.toast-undo');
     if (undoBtn) {
       undoBtn.addEventListener('click', () => {
-        clearTimeout(toastUndoTimer);
+        clearTimeout(entry.undoTimer);
         opts.onUndo();
-        toastEl.className = 'toast';
-        toastEl.style.pointerEvents = '';
+        dismissToast(el);
       }, { once: true });
     }
-    toastUndoTimer = setTimeout(() => {
-      if (opts.onExpire) opts.onExpire();
-    }, duration);
+    entry.undoTimer = setTimeout(() => { if (opts.onExpire) opts.onExpire(); }, duration || 10000);
   }
-  toastTimer = setTimeout(() => {
-    toastEl.className = 'toast';
-    toastEl.style.pointerEvents = '';
-  }, duration);
+
+  if (opts.onCancel) {
+    const cancelBtn = el.querySelector('.toast-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => { opts.onCancel(); dismissToast(el); }, { once: true });
+  }
+
+  if (duration > 0) {
+    entry.timer = setTimeout(() => dismissToast(el), duration);
+  }
+
+  return el;
+}
+
+/**
+ * Dismiss a specific toast element.
+ */
+export function dismissToast(el) {
+  if (!el) return;
+  el.classList.remove('show');
+  const idx = activeToasts.findIndex(t => t.el === el);
+  if (idx >= 0) {
+    const entry = activeToasts[idx];
+    if (entry.timer) clearTimeout(entry.timer);
+    if (entry.undoTimer) clearTimeout(entry.undoTimer);
+    activeToasts.splice(idx, 1);
+  }
+  setTimeout(() => el.remove(), 300);
+}
+
+/**
+ * Create a spinner element with consistent sizing.
+ * @param {'sm'|'md'|'lg'} [size='md'] - sm=12px, md=20px, lg=40px (default .spinner)
+ */
+export function createSpinner(size = 'md') {
+  const el = document.createElement('div');
+  el.className = size === 'lg' ? 'spinner' : `spinner spinner-${size}`;
+  return el;
+}
+
+/**
+ * Set progress bar fill via CSS custom property.
+ * @param {HTMLElement} fillEl - the progress fill element
+ * @param {number} pct - percentage (0-100)
+ */
+export function setProgress(fillEl, pct) {
+  if (fillEl) fillEl.style.setProperty('--progress', Math.min(100, Math.max(0, pct)) + '%');
 }
 
 /**

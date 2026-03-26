@@ -67,7 +67,7 @@ export function selectLoreEntry(id) {
   if (refs.headlessLoreKeysInput) refs.headlessLoreKeysInput.value = entry.keys || '';
   if (refs.headlessLoreTextInput) refs.headlessLoreTextInput.value = entry.text || '';
 
-  if (refs.headlessLoreEditor) refs.headlessLoreEditor.style.display = 'block';
+  if (refs.headlessLoreEditor) refs.headlessLoreEditor.classList.remove('u-hidden');
   renderLoreList();
 }
 
@@ -76,7 +76,7 @@ function createNewLoreEntry() {
   if (refs.headlessLoreNameInput) refs.headlessLoreNameInput.value = '';
   if (refs.headlessLoreKeysInput) refs.headlessLoreKeysInput.value = '';
   if (refs.headlessLoreTextInput) refs.headlessLoreTextInput.value = '';
-  if (refs.headlessLoreEditor) refs.headlessLoreEditor.style.display = 'block';
+  if (refs.headlessLoreEditor) refs.headlessLoreEditor.classList.remove('u-hidden');
 }
 
 async function saveLoreEntryFromPanel() {
@@ -121,7 +121,7 @@ async function deleteLoreEntryFromPanel() {
     await loreCall('removeEntry', selectedLoreEntryId);
     showToast('Entry deleted');
     selectedLoreEntryId = null;
-    if (refs.headlessLoreEditor) refs.headlessLoreEditor.style.display = 'none';
+    if (refs.headlessLoreEditor) refs.headlessLoreEditor.classList.add('u-hidden');
     await loadLoreToPanel();
   } catch (e) {
     console.error('[HeadlessSync] Failed to delete lore entry:', e);
@@ -196,10 +196,10 @@ export function init() {
   if (refs.editorActiveLoreBtn) {
     refs.editorActiveLoreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const isVisible = refs.headlessActiveLorePanel?.style.display === 'flex';
-      document.querySelectorAll('.headless-panel').forEach(p => p.style.display = 'none');
+      const isVisible = refs.headlessActiveLorePanel?.classList.contains('active');
+      document.querySelectorAll('.headless-panel').forEach(p => p.classList.remove('active'));
       if (!isVisible && refs.headlessActiveLorePanel) {
-        refs.headlessActiveLorePanel.style.display = 'flex';
+        refs.headlessActiveLorePanel.classList.add('active');
         loadActiveLoreToPanel();
       }
     });

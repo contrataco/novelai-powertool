@@ -106,7 +106,7 @@ export function refreshMemoryUI() {
 async function runMemoryUpdate() {
   if (!state.currentStoryId || state.memoryIsProcessing) return;
   state.memoryIsProcessing = true;
-  memoryProgress.style.display = 'flex';
+  memoryProgress.classList.remove('u-hidden');
   memoryProgressText.textContent = 'Getting story text...';
   memoryUpdateBtn.disabled = true;
   memoryRefreshBtn.disabled = true;
@@ -116,7 +116,7 @@ async function runMemoryUpdate() {
 
     if (!storyText || storyText.trim().length < 50) {
       memoryProgressText.textContent = 'Not enough story content';
-      setTimeout(() => { memoryProgress.style.display = 'none'; }, 2000);
+      setTimeout(() => { memoryProgress.classList.add('u-hidden'); }, 2000);
       return;
     }
 
@@ -146,7 +146,7 @@ async function runMemoryUpdate() {
     state.memoryIsProcessing = false;
     memoryUpdateBtn.disabled = false;
     memoryRefreshBtn.disabled = false;
-    setTimeout(() => { memoryProgress.style.display = 'none'; }, 2500);
+    setTimeout(() => { memoryProgress.classList.add('u-hidden'); }, 2500);
   }
 }
 
@@ -154,7 +154,7 @@ async function runMemoryUpdate() {
 async function runMemoryRefresh() {
   if (!state.currentStoryId || state.memoryIsProcessing) return;
   state.memoryIsProcessing = true;
-  memoryProgress.style.display = 'flex';
+  memoryProgress.classList.remove('u-hidden');
   memoryProgressText.textContent = 'Getting story text...';
   memoryUpdateBtn.disabled = true;
   memoryRefreshBtn.disabled = true;
@@ -164,7 +164,7 @@ async function runMemoryRefresh() {
 
     if (!storyText || storyText.trim().length < 50) {
       memoryProgressText.textContent = 'Not enough story content';
-      setTimeout(() => { memoryProgress.style.display = 'none'; }, 2000);
+      setTimeout(() => { memoryProgress.classList.add('u-hidden'); }, 2000);
       return;
     }
 
@@ -193,7 +193,7 @@ async function runMemoryRefresh() {
     state.memoryIsProcessing = false;
     memoryUpdateBtn.disabled = false;
     memoryRefreshBtn.disabled = false;
-    setTimeout(() => { memoryProgress.style.display = 'none'; }, 2500);
+    setTimeout(() => { memoryProgress.classList.add('u-hidden'); }, 2500);
   }
 }
 

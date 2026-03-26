@@ -580,12 +580,12 @@ export function openSceneExplorer(sceneId) {
   }
 
   // Show overlay
-  sceneExplorerOverlay.style.display = 'flex';
+  sceneExplorerOverlay.classList.add('is-open');
 }
 
 function closeSceneExplorer() {
   if (sceneExplorerOverlay) {
-    sceneExplorerOverlay.style.display = 'none';
+    sceneExplorerOverlay.classList.remove('is-open');
   }
   explorerSceneId = null;
 }
@@ -663,7 +663,7 @@ export function init() {
 
   // Close overlay on Escape
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && sceneExplorerOverlay?.style.display === 'flex') {
+    if (e.key === 'Escape' && sceneExplorerOverlay?.classList.contains('is-open')) {
       closeSceneExplorer();
     }
   });

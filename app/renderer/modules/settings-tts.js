@@ -20,12 +20,12 @@ function updateTtsV2Visibility() {
   const isNovelai = ttsProviderSelect.value !== 'venice';
   const ver = ttsVersionSelect.value;
   const showV2 = isNovelai && (ver === 'v2' || ver === 'auto');
-  ttsVersionGroup.style.display = isNovelai ? '' : 'none';
-  ttsV2NarratorGroup.style.display = showV2 ? '' : 'none';
-  ttsV2DialogueGroup.style.display = showV2 ? '' : 'none';
+  ttsVersionGroup.classList.toggle('u-hidden', !(isNovelai));
+  ttsV2NarratorGroup.classList.toggle('u-hidden', !(showV2));
+  ttsV2DialogueGroup.classList.toggle('u-hidden', !(showV2));
   // Custom seed inputs
-  if (ttsNarratorCustomSeed) ttsNarratorCustomSeed.style.display = ttsNarratorVoiceSelect.value === '__custom__' ? '' : 'none';
-  if (ttsDialogueCustomSeed) ttsDialogueCustomSeed.style.display = ttsDialogueVoiceSelect.value === '__custom__' ? '' : 'none';
+  if (ttsNarratorCustomSeed) ttsNarratorCustomSeed.classList.toggle('u-hidden', !(ttsNarratorVoiceSelect.value === '__custom__'));
+  if (ttsDialogueCustomSeed) ttsDialogueCustomSeed.classList.toggle('u-hidden', !(ttsDialogueVoiceSelect.value === '__custom__'));
 }
 
 // Populate v2 fields from a voice value (string preset or v2 object)
@@ -151,14 +151,14 @@ function renderSettingsVoiceList(voices) {
 
   for (const [charName, voiceId] of entries) {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:4px;';
+    row.className = 'char-voice-row';
 
     const nameEl = document.createElement('span');
-    nameEl.style.cssText = 'flex:1;font-size:11px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    nameEl.className = 'char-voice-name';
     nameEl.textContent = charName;
 
     const sel = document.createElement('select');
-    sel.style.cssText = 'flex:1;font-size:11px;';
+    sel.className = 'char-voice-select';
     populateVoiceSelect(sel, voices, true);
     if (voiceId) sel.value = voiceId;
     // If voiceId is a custom seed not in the presets, add it as an option
@@ -178,7 +178,7 @@ function renderSettingsVoiceList(voices) {
 
     const rmBtn = document.createElement('button');
     rmBtn.textContent = '\u00d7';
-    rmBtn.style.cssText = 'background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:0 2px;';
+    rmBtn.className = 'char-voice-remove';
     rmBtn.addEventListener('click', async () => {
       if (state.currentStoryId) {
         await window.powertool.ttsRemoveCharacterVoice(state.currentStoryId, charName);
@@ -206,8 +206,7 @@ export async function loadTtsSettings(storySettings) {
     ttsSpeedSlider.value = ttsSettings.ttsSpeed || 1.0;
     ttsSpeedValue.textContent = ttsSettings.ttsSpeed || 1.0;
     ttsFirstPersonCheckbox.checked = !!ttsSettings.ttsFirstPerson;
-    document.getElementById('ttsSpeedGroup').style.display =
-      ttsProviderSelect.value === 'venice' ? '' : 'none';
+    document.getElementById('ttsSpeedGroup').classList.toggle('u-hidden', ttsProviderSelect.value !== 'venice');
     const voices = await loadTtsVoices();
     // Load narrator voice — handle object values (v2 custom) or custom seed strings
     const narVoice = ttsSettings.ttsNarratorVoice;
@@ -219,7 +218,7 @@ export async function loadTtsSettings(storySettings) {
     } else {
       ttsNarratorVoiceSelect.value = narVoice || '';
     }
-    if (ttsNarratorCustomSeed) ttsNarratorCustomSeed.style.display = ttsNarratorVoiceSelect.value === '__custom__' ? '' : 'none';
+    if (ttsNarratorCustomSeed) ttsNarratorCustomSeed.classList.toggle('u-hidden', !(ttsNarratorVoiceSelect.value === '__custom__'));
     populateV2Fields(narVoice, ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence);
     // Load dialogue voice — handle object values (v2 custom) or custom seed strings
     const dlgVoice = ttsSettings.ttsDialogueVoice;
@@ -231,7 +230,7 @@ export async function loadTtsSettings(storySettings) {
     } else {
       ttsDialogueVoiceSelect.value = dlgVoice || '';
     }
-    if (ttsDialogueCustomSeed) ttsDialogueCustomSeed.style.display = ttsDialogueVoiceSelect.value === '__custom__' ? '' : 'none';
+    if (ttsDialogueCustomSeed) ttsDialogueCustomSeed.classList.toggle('u-hidden', !(ttsDialogueVoiceSelect.value === '__custom__'));
     populateV2Fields(dlgVoice, ttsDialogueStyle, ttsDialogueIntonation, ttsDialogueCadence);
     updateTtsV2Visibility();
     renderSettingsVoiceList(voices);
@@ -305,8 +304,7 @@ export function initTtsEvents() {
   // TTS provider change — refresh voice lists and toggle speed slider
   ttsProviderSelect.addEventListener('change', async () => {
     await loadTtsVoices();
-    document.getElementById('ttsSpeedGroup').style.display =
-      ttsProviderSelect.value === 'venice' ? '' : 'none';
+    document.getElementById('ttsSpeedGroup').classList.toggle('u-hidden', ttsProviderSelect.value !== 'venice');
     updateTtsV2Visibility();
   });
 
@@ -318,14 +316,14 @@ export function initTtsEvents() {
   // Sync v2 fields when a preset is selected in narrator/dialogue dropdowns + toggle custom seed
   ttsNarratorVoiceSelect.addEventListener('change', () => {
     const val = ttsNarratorVoiceSelect.value;
-    if (ttsNarratorCustomSeed) ttsNarratorCustomSeed.style.display = val === '__custom__' ? '' : 'none';
+    if (ttsNarratorCustomSeed) ttsNarratorCustomSeed.classList.toggle('u-hidden', !(val === '__custom__'));
     if (val && val !== '__custom__') {
       populateV2Fields(val, ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence);
     }
   });
   ttsDialogueVoiceSelect.addEventListener('change', () => {
     const val = ttsDialogueVoiceSelect.value;
-    if (ttsDialogueCustomSeed) ttsDialogueCustomSeed.style.display = val === '__custom__' ? '' : 'none';
+    if (ttsDialogueCustomSeed) ttsDialogueCustomSeed.classList.toggle('u-hidden', !(val === '__custom__'));
     if (val && val !== '__custom__') {
       populateV2Fields(val, ttsDialogueStyle, ttsDialogueIntonation, ttsDialogueCadence);
     }
@@ -333,7 +331,7 @@ export function initTtsEvents() {
   // Character voice add — toggle custom seed input
   if (ttsAddCharVoice && ttsAddCharCustomSeed) {
     ttsAddCharVoice.addEventListener('change', () => {
-      ttsAddCharCustomSeed.style.display = ttsAddCharVoice.value === '__custom__' ? '' : 'none';
+      ttsAddCharCustomSeed.classList.toggle('u-hidden', !(ttsAddCharVoice.value === '__custom__'));
     });
   }
 }

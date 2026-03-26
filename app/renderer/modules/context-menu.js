@@ -15,7 +15,7 @@ export function init(actions = {}) {
   contextMenu = document.createElement('div');
   contextMenu.id = 'editorContextMenu';
   contextMenu.className = 'editor-context-menu';
-  contextMenu.style.display = 'none';
+  contextMenu.classList.add('u-hidden');
   document.body.appendChild(contextMenu);
 
   const menuItems = [
@@ -109,7 +109,7 @@ function handleDefaultAction(action) {
 export function show(x, y) {
   if (!contextMenu) return;
   
-  contextMenu.style.display = 'block';
+  contextMenu.classList.remove('u-hidden');
   
   // Constrain to window bounds
   const menuWidth = contextMenu.offsetWidth || 180;
@@ -128,6 +128,6 @@ export function show(x, y) {
 
 export function hide() {
   if (!contextMenu) return;
-  contextMenu.style.display = 'none';
+  contextMenu.classList.add('u-hidden');
   contextMenu.classList.remove('visible');
 }

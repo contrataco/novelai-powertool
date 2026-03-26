@@ -35,18 +35,18 @@ function flushCacheWrite() {
 }
 
 function showLoadingBar(text) {
-  if (refs.editorLoadingBar) refs.editorLoadingBar.style.display = 'block';
+  if (refs.editorLoadingBar) refs.editorLoadingBar.classList.remove('u-hidden');
   if (refs.editorLoadingText) refs.editorLoadingText.textContent = text || 'Loading story...';
-  if (refs.editorLoadingFill) refs.editorLoadingFill.style.width = '0%';
+  if (refs.editorLoadingFill) refs.editorLoadingFill.style.setProperty('--progress', '0%');
 }
 
 function updateLoadingBar(percent, text) {
-  if (refs.editorLoadingFill) refs.editorLoadingFill.style.width = `${Math.min(100, percent)}%`;
+  if (refs.editorLoadingFill) refs.editorLoadingFill.style.setProperty('--progress', `${Math.min(100, percent)}%`);
   if (text && refs.editorLoadingText) refs.editorLoadingText.textContent = text;
 }
 
 function hideLoadingBar() {
-  if (refs.editorLoadingBar) refs.editorLoadingBar.style.display = 'none';
+  if (refs.editorLoadingBar) refs.editorLoadingBar.classList.add('u-hidden');
 }
 
 // --- Sync Functions ---
