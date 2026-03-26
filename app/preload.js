@@ -114,6 +114,10 @@ contextBridge.exposeInMainWorld('powertool', {
   storySettingsGet: (storyId) => ipcRenderer.invoke('story-settings:get', storyId),
   storySettingsSet: (storyId, settings) => ipcRenderer.invoke('story-settings:set', { storyId, settings }),
 
+  // Story text cache
+  storyTextGet: (storyId) => ipcRenderer.invoke('story-text:get', storyId),
+  storyTextSet: (storyId, text, source) => ipcRenderer.invoke('story-text:set', { storyId, text, source }),
+
   // Per-story scene state persistence
   sceneGetState: (storyId) => ipcRenderer.invoke('scene:get-state', storyId),
   sceneSetState: (storyId, state) => ipcRenderer.invoke('scene:set-state', { storyId, state }),

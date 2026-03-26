@@ -105,6 +105,14 @@ function createTables() {
       data TEXT NOT NULL DEFAULT '{}',
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS story_text (
+      story_id TEXT PRIMARY KEY REFERENCES stories(id),
+      text TEXT NOT NULL DEFAULT '',
+      char_count INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'webview',
+      updated_at INTEGER NOT NULL
+    );
   `);
   console.log(`${LOG_PREFIX} Tables verified`);
 }
@@ -237,6 +245,19 @@ function setTimelineState(storyId, state) {
   setData('timeline_state', storyId, state);
 }
 
+// --- Story text cache (dedicated schema, not generic JSON) ---
+
+function getStoryText(storyId) {
+  const row = db.prepare('SELECT text, char_count, source, updated_at FROM story_text WHERE story_id = ?').get(storyId);
+  return row || null;
+}
+
+function setStoryText(storyId, text, source = 'webview') {
+  upsertStory(storyId, '');
+  db.prepare('INSERT OR REPLACE INTO story_text (story_id, text, char_count, source, updated_at) VALUES (?, ?, ?, ?, ?)')
+    .run(storyId, text, text.length, source, Date.now());
+}
+
 // --- Bulk load (used on story switch) ---
 
 function loadAllStoryData(storyId) {
@@ -249,6 +270,7 @@ function loadAllStoryData(storyId) {
     ttsState: getTtsState(storyId),
     storySettings: getStorySettings(storyId),
     timelineState: getTimelineState(storyId),
+    storyText: getStoryText(storyId),
   };
 }
 
@@ -328,5 +350,6 @@ module.exports = {
   getStorySettings, setStorySettings,
   getVisualProfiles, setVisualProfile, resetVisualProfiles,
   getTimelineState, setTimelineState,
+  getStoryText, setStoryText,
   loadAllStoryData, migrateFromStore,
 };

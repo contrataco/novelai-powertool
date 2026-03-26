@@ -99,19 +99,96 @@ export async function writeMemoryToDOM(text) {
 }
 
 // Read story text directly from ProseMirror editor in the webview DOM
-export async function readStoryTextFromDOM() {
+/**
+ * Try reading full story text from ProseMirror's internal document model.
+ * The doc model has complete text even when the DOM is virtualized.
+ * Returns { text, length, source } or null.
+ */
+async function readStoryTextFromDocModel() {
   try {
     return await webview.executeJavaScript(`
       (function() {
-        // ProseMirror editor has class .ProseMirror
+        var pm = document.querySelector('.ProseMirror');
+        if (!pm) return null;
+
+        // The document node is directly on pmViewDesc.node (NOT view.state.doc)
+        var doc = null;
+
+        // Strategy 1: pmViewDesc.node — the ProseMirror Node representing the document
+        if (pm.pmViewDesc && pm.pmViewDesc.node) {
+          doc = pm.pmViewDesc.node;
+          console.log('[DocModel] Found doc via pmViewDesc.node');
+        }
+
+        // Strategy 2: view.state.doc (standard ProseMirror path)
+        if (!doc && pm.pmViewDesc) {
+          var view = pm.pmViewDesc.view;
+          if (view && view.state && view.state.doc) {
+            doc = view.state.doc;
+            console.log('[DocModel] Found doc via view.state.doc');
+          }
+        }
+
+        if (!doc || !doc.content) {
+          console.log('[DocModel] No document node found. pmViewDesc:', !!pm.pmViewDesc,
+            'pmViewDesc.node:', !!(pm.pmViewDesc && pm.pmViewDesc.node));
+          return null;
+        }
+        var size = doc.content.size;
+        var tcLen = (doc.textContent || '').length;
+        console.log('[DocModel] SUCCESS! content.size:', size, 'textContent.length:', tcLen);
+
+        // Try textBetween (preserves paragraph breaks)
+        try {
+          var text = doc.textBetween(0, size, '\\n');
+          if (text && text.length > 0) {
+            console.log('[DocModel] textBetween:', text.length, 'chars');
+            return { text: text, length: text.length, source: 'doc-model' };
+          }
+        } catch(e) {}
+
+        // Fallback: textContent
+        if (tcLen > 0) {
+          return { text: doc.textContent, length: tcLen, source: 'doc-model' };
+        }
+
+        // Fallback: node traversal
+        try {
+          var parts = [];
+          doc.forEach(function(node) { if (node.textContent) parts.push(node.textContent); });
+          var joined = parts.join('\\n');
+          if (joined.length > 0) return { text: joined, length: joined.length, source: 'doc-model' };
+        } catch(e) {}
+
+        return null;
+      })()
+    `);
+  } catch (e) { return null; }
+}
+
+export async function readStoryTextFromDOM() {
+  // Fast path: try ProseMirror doc model (complete text, no virtualization)
+  try {
+    const docResult = await readStoryTextFromDocModel();
+    if (docResult && docResult.text && docResult.length > 0) {
+      state._lastTextReadSource = 'doc-model';
+      return docResult.text;
+    }
+  } catch (e) { /* fall through */ }
+
+  // Slow path: read from DOM (may be truncated by virtualization)
+  try {
+    const text = await webview.executeJavaScript(`
+      (function() {
         var pm = document.querySelector('.ProseMirror');
         if (pm) return pm.textContent || '';
-        // Fallback: contenteditable div
         var ce = document.querySelector('[contenteditable="true"]');
         if (ce) return ce.textContent || '';
         return null;
       })()
     `);
+    state._lastTextReadSource = 'dom';
+    return text;
   } catch (e) {
     console.log('[DOM] Error reading story text:', e);
     return null;
@@ -216,6 +293,12 @@ async function handleStoryContextChange(storyId, storyTitle) {
     // Eagerly restore per-story settings (TTS config, image, scene)
     state.storySettings = allData.storySettings || null;
 
+    // Store cached story text and notify headless-editor for cache-first display
+    state._cachedStoryText = allData.storyText || null;
+    if (allData.storyText) {
+      bus.emit('story:text-cached', allData.storyText);
+    }
+
     console.log('[Renderer] Eagerly loaded all data for story:', storyId);
   } catch (e) {
     console.error('[Renderer] Failed to load story data:', e.message);
@@ -256,6 +339,27 @@ export function init() {
   let lastPolledStoryId = null;
   let lastDashboardCheck = 0;
 
+  // Navigation state: prevents race conditions during story loading
+  let navigatingToStory = false;
+  let navigatingToStoryTimeout = null;
+  let pendingStoryId = null; // Set when user clicks a story, cleared on detection
+
+  function setNavigatingToStory(active) {
+    navigatingToStory = active;
+    if (navigatingToStoryTimeout) {
+      clearTimeout(navigatingToStoryTimeout);
+      navigatingToStoryTimeout = null;
+    }
+    if (active) {
+      // Safety timeout: clear flag after 30s if story detection never fires
+      navigatingToStoryTimeout = setTimeout(() => {
+        console.log('[Renderer] Story navigation timeout, clearing navigatingToStory flag');
+        navigatingToStory = false;
+        navigatingToStoryTimeout = null;
+      }, 30000);
+    }
+  }
+
   webview.addEventListener('did-finish-load', async () => {
     status.textContent = 'Connected';
     status.className = 'status connected';
@@ -268,8 +372,8 @@ export function init() {
         const { hasToken } = await window.powertool.getTokenStatus();
         if (hasToken) {
           console.log('[Renderer] Token found, navigating to stories dashboard');
-          webview.loadURL('https://novelai.net/stories');
-    
+          webview.loadURL('https://novelai.net/stories').catch(() => {}); // ERR_ABORTED expected
+
           // Retry dashboard navigation a limited number of times to avoid stacking
           // intervals on repeated did-finish-load events.
           if (!window._dashboardRetryActive) {
@@ -277,7 +381,7 @@ export function init() {
             let attempts = 0;
             const maxAttempts = 6; // 30s total
             const dashboardCheckInterval = setInterval(async () => {
-              if (state.currentStoryId || ++attempts > maxAttempts) {
+              if (state.currentStoryId || navigatingToStory || ++attempts > maxAttempts) {
                 clearInterval(dashboardCheckInterval);
                 window._dashboardRetryActive = false;
                 return;
@@ -287,7 +391,7 @@ export function init() {
                 const tokenStatus = await window.powertool.getTokenStatus();
                 if (tokenStatus.hasToken) {
                   console.log('[Renderer] Still on landing page, forcing dashboard navigation');
-                  webview.loadURL('https://novelai.net/stories');
+                  webview.loadURL('https://novelai.net/stories').catch(() => {});
                 }
               }
             }, 5000);
@@ -303,11 +407,62 @@ export function init() {
   bus.on('headless:select-story', (storyId) => {
     if (!storyId) {
       console.log('[Renderer] Navigating to NovelAI stories dashboard...');
-      webview.loadURL('https://novelai.net/stories');
+      setNavigatingToStory(false);
+      pendingStoryId = null;
+      lastPolledStoryId = null;
+      webview.loadURL('https://novelai.net/stories').catch(() => {});
       return;
     }
     console.log(`[Renderer] Navigating to story: ${storyId}`);
-    webview.loadURL(`https://novelai.net/stories?id=${storyId}`);
+    setNavigatingToStory(true);
+    pendingStoryId = storyId; // Store for ProseMirror-based detection
+    lastPolledStoryId = null;
+    webview.loadURL(`https://novelai.net/stories?id=${storyId}`).catch(() => {});
+  });
+
+  // Listen for click-based story navigation (when we don't have real story IDs)
+  bus.on('headless:click-story', async ({ clickIndex, title }) => {
+    console.log(`[Renderer] Click-navigating story index ${clickIndex}: "${title}"`);
+    setNavigatingToStory(true);
+    try {
+      const clicked = await webview.executeJavaScript(`
+        (function() {
+          var TIME_RE = /^(\\d+\\s+(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\\s+ago|just now|yesterday)$/i;
+          var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, null);
+          var timeElements = [];
+          var node;
+          while (node = walker.nextNode()) {
+            if (node.children.length > 0) continue;
+            var txt = (node.textContent || '').trim();
+            if (TIME_RE.test(txt)) timeElements.push(node);
+          }
+          // Find the card for the given index
+          var seen = new Set();
+          var idx = 0;
+          for (var i = 0; i < timeElements.length; i++) {
+            var card = timeElements[i];
+            for (var j = 0; j < 10; j++) {
+              if (!card.parentElement || card.parentElement === document.body) break;
+              card = card.parentElement;
+              try {
+                if (window.getComputedStyle(card).cursor === 'pointer') break;
+              } catch(e) { break; }
+            }
+            if (seen.has(card)) continue;
+            seen.add(card);
+            if (idx === ${clickIndex}) {
+              card.click();
+              return { success: true, title: (card.innerText || '').split('\\n')[0] };
+            }
+            idx++;
+          }
+          return { success: false, found: idx };
+        })()
+      `);
+      console.log('[Renderer] Click navigation result:', JSON.stringify(clicked));
+    } catch (e) {
+      console.error('[Renderer] Click navigation failed:', e);
+    }
   });
 
   // Listen for force dashboard re-parse
@@ -331,6 +486,11 @@ export function init() {
   });
 
   webview.addEventListener('did-fail-load', (e) => {
+    // ERR_ABORTED (-3) is expected during SPA navigation — don't kill polling
+    if (e.errorCode === -3) {
+      console.log('[Renderer] Webview navigation aborted (ERR_ABORTED) — expected during SPA routing');
+      return;
+    }
     status.textContent = 'Failed to load';
     status.className = 'status error';
     webviewReady = false;
@@ -352,14 +512,18 @@ export function init() {
   polling.register('story-context', async () => {
     try {
       const url = webview.getURL();
-      const isDashboard = url.includes('/stories') && !url.includes('?id=');
+      // NovelAI's SPA strips ?id= from the URL after loading a story,
+      // so URL alone can't distinguish dashboard from loaded story.
+      // If we already have a story loaded, don't treat it as dashboard.
+      const urlLooksDashboard = url.includes('/stories') && !url.includes('?id=');
+      const isDashboard = urlLooksDashboard && !state.currentStoryId && !navigatingToStory;
       
       // Auto-navigate to dashboard if in headless mode and no story is selected
-      if (state.headlessMode && !state.currentStoryId && !isDashboard && !url.includes('login')) {
+      if (state.headlessMode && !state.currentStoryId && !isDashboard && !url.includes('login') && !navigatingToStory) {
         const { hasToken } = await window.powertool.getTokenStatus();
         if (hasToken) {
           console.log('[Renderer] Headless mode active but no story selected, forcing dashboard navigation');
-          webview.loadURL('https://novelai.net/stories');
+          webview.loadURL('https://novelai.net/stories').catch(() => {}); // ERR_ABORTED expected
           return; // Skip rest of poll for this tick
         }
       }
@@ -382,61 +546,123 @@ export function init() {
           console.log('[Renderer] Dashboard active, parsing stories...');
           const stories = await webview.executeJavaScript(`
             (function() {
-              // Strategy 1: Look for elements with "StoryItem" in class name
-              var storyElements = document.querySelectorAll('div[class*="StoryList_StoryItem"]');
-              
-              // Strategy 2: Look for elements that contain both a title and an "Updated" text
-              if (storyElements.length === 0) {
-                storyElements = Array.from(document.querySelectorAll('div')).filter(el => {
-                  var h3 = el.querySelector('h3');
-                  var text = el.innerText || '';
-                  return h3 && (text.includes('Updated') || text.includes('ago') || text.includes('Modified'));
-                });
-              }
-              
-              // Strategy 3: Look for any list items that look like stories
-              if (storyElements.length === 0) {
-                storyElements = Array.from(document.querySelectorAll('li')).filter(el => {
-                  var h3 = el.querySelector('h3');
-                  return h3 && h3.innerText.length > 0;
-                });
-              }
+              var results = [];
+              var TIME_RE = /^(\\d+\\s+(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\\s+ago|just now|yesterday)$/i;
 
-              console.log('[Dashboard] Found potential story elements:', storyElements.length);
+              // NovelAI renders stories as clickable divs with cursor:pointer.
+              // Each story card has: title, description preview, and relative timestamp.
+              // No <h3> or <a> tags — pure styled-component divs.
+              // Strategy: find timestamp elements, walk up to card, extract title.
 
-              return Array.from(storyElements).map(el => {
-                var titleEl = el.querySelector('h3') || el.querySelector('div[class*="title"]') || el.querySelector('span[class*="Title"]');
-                var title = titleEl ? titleEl.innerText : 'Untitled Story';
-                
-                // Try to find the link to extract the ID
-                var link = el.querySelector('a') || (el.tagName === 'A' ? el : null);
-                if (!link) {
-                  // Search parents or children for an <a> tag
-                  link = el.closest('a') || el.querySelector('a');
+              // Step 1: Find all leaf elements showing relative time text
+              var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, null);
+              var timeElements = [];
+              var node;
+              while (node = walker.nextNode()) {
+                if (node.children.length > 0) continue; // leaf nodes only
+                var txt = (node.textContent || '').trim();
+                if (TIME_RE.test(txt)) timeElements.push({ el: node, time: txt });
+              }
+              console.log('[Dashboard] Found timestamp elements:', timeElements.length);
+
+              // Step 2: Walk up from each timestamp to find the story row.
+              // NovelAI layout: timestamp div (cursor:pointer) is a sibling of
+              // the story content div, both inside a parent row. We need the row,
+              // not just the clickable timestamp.
+              var seen = new Set();
+              timeElements.forEach(function(te, teIdx) {
+                // Walk up to cursor:pointer, then one more level for the row
+                var el = te.el;
+                for (var i = 0; i < 10; i++) {
+                  if (!el.parentElement || el.parentElement === document.body) break;
+                  el = el.parentElement;
+                  try {
+                    if (window.getComputedStyle(el).cursor === 'pointer') break;
+                  } catch(e) { break; }
                 }
-                
-                var href = link ? (link.href || '') : '';
+                // The cursor:pointer element is just the timestamp container.
+                // Go up to get the full story row containing title + timestamp.
+                var card = el;
+                if (card.parentElement && card.parentElement !== document.body) {
+                  card = card.parentElement;
+                }
+                // If the parent also has cursor:pointer or is still too narrow,
+                // keep going up until we find content with the story title.
+                for (var up = 0; up < 3; up++) {
+                  var txt = (card.innerText || '').trim();
+                  var hasMultipleLines = txt.split('\\n').filter(function(l) { return l.trim().length > 0; }).length > 1;
+                  if (hasMultipleLines) break;
+                  if (card.parentElement && card.parentElement !== document.body) {
+                    card = card.parentElement;
+                  } else break;
+                }
+
+                if (seen.has(card)) return;
+                seen.add(card);
+
+                // Step 3: Extract title — first line of innerText, excluding time
+                var cardText = (card.innerText || '').trim();
+                var lines = cardText.split('\\n').map(function(l) { return l.trim(); }).filter(function(l) { return l.length > 0; });
+                var title = '';
+                var description = '';
+                for (var j = 0; j < lines.length; j++) {
+                  if (TIME_RE.test(lines[j])) continue;
+                  if (!title) { title = lines[j]; continue; }
+                  if (!description && lines[j].length > 30) { description = lines[j]; break; }
+                }
+
+                if (!title || title.length < 1) return;
+
+                // Step 4: Extract story ID from React fiber tree
                 var id = '';
-                if (href.includes('id=')) {
-                  id = href.split('id=')[1].split('&')[0];
-                } else if (href.includes('/stories/')) {
-                  // Alternative URL format check
-                  id = href.split('/stories/')[1].split('?')[0];
-                }
+                try {
+                  // Try card and ancestors for React fiber with story data
+                  var targets = [card, te.el];
+                  for (var t = 0; t < targets.length && !id; t++) {
+                    var target = targets[t];
+                    var fKey = Object.keys(target).find(function(k) {
+                      return k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance');
+                    });
+                    if (!fKey) continue;
+                    var cur = target[fKey];
+                    for (var fi = 0; fi < 25 && cur && !id; fi++) {
+                      if (cur.memoizedProps) {
+                        var p = cur.memoizedProps;
+                        if (p.story && p.story.id) { id = p.story.id; break; }
+                        if (typeof p.storyId === 'string' && p.storyId.length > 10) { id = p.storyId; break; }
+                        if (p.data && p.data.id && typeof p.data.id === 'string') { id = p.data.id; break; }
+                        if (p.meta && p.meta.id) { id = p.meta.id; break; }
+                        // Check for object props that have an id field
+                        var pKeys = Object.keys(p);
+                        for (var pk = 0; pk < pKeys.length && !id; pk++) {
+                          var val = p[pKeys[pk]];
+                          if (val && typeof val === 'object' && typeof val.id === 'string' && val.id.length > 10 && /^[\\w-]+$/.test(val.id)) {
+                            id = val.id;
+                          }
+                        }
+                      }
+                      cur = cur.return;
+                    }
+                  }
+                } catch(e) {}
 
-                var descriptionEl = el.querySelector('p') || el.querySelector('div[class*="description"]') || el.querySelector('span[class*="Description"]');
-                var description = descriptionEl ? descriptionEl.innerText : '';
+                // Step 5: If no fiber ID, generate a deterministic ID from title for click-nav
+                // The story selector will navigate the webview by clicking the card element
+                var clickIndex = results.length;
+                results.push({
+                  id: id || '__click_' + clickIndex,
+                  title: title.substring(0, 200),
+                  description: (description || '').substring(0, 300),
+                  tags: [],
+                  timeAgo: te.time,
+                  lastModified: Date.now(),
+                  _hasRealId: !!id,
+                  _clickIndex: clickIndex
+                });
+              });
 
-                var tags = Array.from(el.querySelectorAll('span[class*="Tag"]')).map(t => t.innerText);
-
-                return {
-                  id: id,
-                  title: title.trim(),
-                  description: description.trim(),
-                  tags: tags,
-                  lastModified: Date.now()
-                };
-              }).filter(s => s.id && s.title !== 'Untitled Story');
+              console.log('[Dashboard] Parsed', results.length, 'stories,', results.filter(function(s) { return s._hasRealId; }).length, 'with fiber IDs');
+              return results;
             })()
           `);
           
@@ -473,11 +699,33 @@ export function init() {
       `);
       if (ctx && ctx.storyId && ctx.storyId !== lastPolledStoryId) {
         lastPolledStoryId = ctx.storyId;
+        pendingStoryId = null;
         console.log('[Renderer] Story context from webview poll:', ctx.storyId, ctx.storyTitle);
+        if (navigatingToStory) setNavigatingToStory(false);
         handleStoryContextChange(ctx.storyId, ctx.storyTitle);
-        
-        // Ensure story selector is hidden when we have a story
         updateStorySelectorVisibility();
+      }
+      // Fallback: if URL detection failed but we have a pending story ID,
+      // check if ProseMirror appeared (meaning the story editor loaded).
+      // NovelAI strips ?id= from the URL, so URL detection is unreliable.
+      else if (pendingStoryId && !state.currentStoryId) {
+        const hasPM = await webview.executeJavaScript(`!!document.querySelector('.ProseMirror')`).catch(() => false);
+        if (hasPM) {
+          const title = await webview.executeJavaScript(`
+            (function() {
+              var dt = document.title || '';
+              var sep = dt.lastIndexOf(' - NovelAI');
+              return sep > 0 ? dt.substring(0, sep).trim() : '';
+            })()
+          `).catch(() => '');
+          console.log('[Renderer] Story detected via ProseMirror + pendingStoryId:', pendingStoryId, title);
+          lastPolledStoryId = pendingStoryId;
+          const sid = pendingStoryId;
+          pendingStoryId = null;
+          if (navigatingToStory) setNavigatingToStory(false);
+          handleStoryContextChange(sid, title || 'Untitled Story');
+          updateStorySelectorVisibility();
+        }
       }
     } catch (e) {
       // Webview not ready or navigating

@@ -51,6 +51,19 @@ export const editorSettingsBtn = document.getElementById('editorSettingsBtn');
 export const editorLoreBtn = document.getElementById('editorLoreBtn');
 export const editorContextBtn = document.getElementById('editorContextBtn');
 
+// Editor loading bar
+export const editorLoadingBar = document.getElementById('editorLoadingBar');
+export const editorLoadingText = document.getElementById('editorLoadingText');
+export const editorLoadingFill = document.getElementById('editorLoadingFill');
+
+// Story loading progress
+export const storyLoadingStatus = document.getElementById('storyLoadingStatus');
+export const storyLoadingFill = document.getElementById('storyLoadingFill');
+export const storyLoadingDetail = document.getElementById('storyLoadingDetail');
+export const storyLoadingIcon = document.getElementById('storyLoadingIcon');
+export const storySelectionEmptyDetail = document.getElementById('storySelectionEmptyDetail');
+export const retryStoriesBtn = document.getElementById('retryStoriesBtn');
+
 // Headless Panels
 export const headlessLorePanel = document.getElementById('headlessLorePanel');
 export const headlessLoreList = document.getElementById('headlessLoreList');

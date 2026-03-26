@@ -12,6 +12,7 @@ export function init() {
       bus.emit('headless:select-story', ''); // Empty ID tells webview to go to dashboard
       state.currentStoryId = null;
       state.currentStoryTitle = null;
+      state.storyTextLoaded = false;
       if (refs.editorStoryTitle) refs.editorStoryTitle.textContent = 'No Story Loaded';
       updateVisibility();
     });
@@ -29,28 +30,48 @@ export function init() {
   // Listen for story list updates from webview-polling
   bus.on('headless:stories-updated', (stories) => {
     state.availableStories = stories;
-    if (state.isDashboardActive) {
-      renderStoryList();
+    if (stories.length > 0) {
+      updateLoadingPhase('found', `Found ${stories.length} stories!`);
+      // Brief delay to show the success state before rendering the list
+      setTimeout(() => {
+        updateVisibility();
+        if (state.isDashboardActive) renderStoryList();
+      }, 400);
+    } else {
+      updateLoadingPhase('parsing');
+      updateVisibility();
     }
   });
 
   // Listen for dashboard state changes
   bus.on('headless:dashboard-state-changed', (isActive) => {
     state.isDashboardActive = isActive;
-    updateVisibility();
     if (isActive) {
+      updateLoadingPhase('dashboard');
       tryFetchFromAPI();
     }
+    updateVisibility();
   });
 
   // Handle "Refresh" button
   if (refs.refreshStoriesBtn) {
     refs.refreshStoriesBtn.addEventListener('click', () => {
-      console.log('[StorySelector] Refresh button clicked, fetching...');
+      console.log('[StorySelector] Refresh button clicked');
+      updateLoadingPhase('connecting');
       showLoading();
       tryFetchFromAPI();
-      // Also reset polling's dashboard check so it re-parses from DOM
       bus.emit('headless:force-dashboard-reparse');
+    });
+  }
+
+  // Handle "Retry" button (error state)
+  if (refs.retryStoriesBtn) {
+    refs.retryStoriesBtn.addEventListener('click', () => {
+      console.log('[StorySelector] Retry button clicked');
+      updateLoadingPhase('connecting');
+      showLoading();
+      bus.emit('headless:force-dashboard-reparse');
+      tryFetchFromAPI();
     });
   }
 
@@ -82,39 +103,49 @@ export function init() {
     }
   }
   
+  // Listen for story loading phases from headless-editor
+  bus.on('story:loading-phase', (phase, detail) => {
+    updateLoadingPhase(phase, detail);
+  });
+
   // Initial check
   updateVisibility();
 }
 
 export function updateVisibility() {
-  // We should show the selector if headless mode is active AND no story is currently loaded
-  // OR if we are explicitly on the dashboard
-  const shouldShow = state.headlessMode && (!state.currentStoryId || state.isDashboardActive);
-  
-  if (shouldShow) {
-    document.querySelector('.main-container').classList.add('showing-story-selector');
-    
-    // Ensure the editor container is hidden when selector is shown
+  // Show overlay when: no story, on dashboard, or story selected but text not yet loaded
+  const storyReady = state.currentStoryId && state.storyTextLoaded;
+  const shouldShowOverlay = state.headlessMode && (!state.currentStoryId || state.isDashboardActive || !storyReady);
+
+  if (shouldShowOverlay) {
+    refs.storySelectionOverlay.classList.add('visible');
+
     if (refs.editorContainer) {
       refs.editorContainer.style.display = 'none';
+    }
+
+    // If story is selected but still loading, show loading phase
+    if (state.currentStoryId && !state.storyTextLoaded && !state.isDashboardActive) {
+      showLoading();
+      return;
     }
 
     if (state.availableStories.length > 0) {
       renderStoryList();
     } else {
       showLoading();
-      // Add a timeout to show the empty state if nothing loads in 20s
+      // Show error state if nothing loads in 30s
       setTimeout(() => {
         if (state.availableStories.length === 0 && state.isDashboardActive) {
+          updateLoadingPhase('error', 'The connection timed out. NovelAI may be slow or unavailable.');
           refs.storySelectionLoading.style.display = 'none';
-          refs.storySelectionEmpty.style.display = 'block';
+          refs.storySelectionEmpty.style.display = 'flex';
         }
-      }, 20000);
+      }, 30000);
     }
   } else {
-    document.querySelector('.main-container').classList.remove('showing-story-selector');
-    
-    // Restore editor container visibility if headless mode is on
+    refs.storySelectionOverlay.classList.remove('visible');
+
     if (state.headlessMode && state.currentStoryId && refs.editorContainer) {
       refs.editorContainer.style.display = 'flex';
     }
@@ -125,6 +156,54 @@ function showLoading() {
   refs.storySelectionLoading.style.display = 'flex';
   refs.storyList.style.display = 'none';
   refs.storySelectionEmpty.style.display = 'none';
+  updateLoadingPhase('connecting');
+}
+
+function updateLoadingPhase(phase, detail) {
+  const statusEl = refs.storyLoadingStatus;
+  const fillEl = refs.storyLoadingFill;
+  const detailEl = refs.storyLoadingDetail;
+  const iconEl = refs.storyLoadingIcon;
+  if (!statusEl || !fillEl) return;
+
+  // Clear modifier classes
+  fillEl.classList.remove('error', 'success');
+  if (iconEl) iconEl.style.animation = 'spin 2s linear infinite';
+
+  switch (phase) {
+    case 'connecting':
+      statusEl.textContent = 'Connecting to NovelAI...';
+      fillEl.style.width = '10%';
+      if (detailEl) detailEl.textContent = 'This usually takes 10-15 seconds';
+      break;
+    case 'dashboard':
+      statusEl.textContent = 'Waiting for stories to load...';
+      fillEl.style.width = '30%';
+      if (detailEl) detailEl.textContent = 'Dashboard detected, scanning for stories';
+      break;
+    case 'parsing':
+      statusEl.textContent = 'Scanning for stories...';
+      fillEl.style.width = '50%';
+      if (detailEl) detailEl.textContent = 'Dashboard loaded, waiting for story data';
+      break;
+    case 'found':
+      statusEl.textContent = detail || 'Stories found!';
+      fillEl.style.width = '100%';
+      fillEl.classList.add('success');
+      if (iconEl) iconEl.style.animation = 'none';
+      if (detailEl) detailEl.textContent = '';
+      break;
+    case 'error':
+      statusEl.textContent = detail || 'Something went wrong';
+      fillEl.style.width = '100%';
+      fillEl.classList.add('error');
+      if (iconEl) {
+        iconEl.textContent = '\u26A0'; // warning sign
+        iconEl.style.animation = 'none';
+      }
+      if (detailEl) detailEl.textContent = 'Click Retry or try selecting a different story.';
+      break;
+  }
 }
 
 function renderStoryList() {
@@ -161,27 +240,37 @@ function renderStoryList() {
     const card = document.createElement('div');
     card.className = 'story-card';
     card.dataset.id = story.id;
-    
-    const lastModifiedStr = story.lastModified ? new Date(story.lastModified).toLocaleDateString() : 'Unknown';
-    const lastModifiedFull = story.lastModified ? new Date(story.lastModified).toLocaleString() : 'Unknown';
-    
+
+    // Use timeAgo from NovelAI dashboard if available, otherwise format lastModified
+    const timeDisplay = story.timeAgo || (story.lastModified ? new Date(story.lastModified).toLocaleDateString() : '');
+
+    // Escape HTML in title/description to prevent XSS
+    const escTitle = story.title.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escDesc = (story.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
     card.innerHTML = `
-      <div class="story-title" title="${story.title}">${story.title}</div>
-      <div class="story-description">${story.description || 'No description available.'}</div>
+      <div class="story-title" title="${escTitle}">${escTitle}</div>
+      <div class="story-description">${escDesc || 'No description available.'}</div>
       <div class="story-meta">
-        <span title="${lastModifiedFull}">Updated: ${lastModifiedStr}</span>
+        ${timeDisplay ? `<span>${timeDisplay}</span>` : ''}
         ${story.wordCount ? `<span>${story.wordCount} words</span>` : ''}
       </div>
       <div class="story-tags">
         ${(story.tags || []).map(tag => `<span class="story-tag">${tag}</span>`).join('')}
       </div>
     `;
-    
+
     // Add staggered delay for animation
     card.style.animationDelay = `${index * 0.05}s`;
 
     card.addEventListener('click', () => {
-      selectStory(story.id);
+      if (story._hasRealId === false) {
+        // No real story ID available — click the card in the webview to navigate
+        console.log(`[StorySelector] Click-navigating story: "${story.title}" (index ${story._clickIndex})`);
+        selectStoryByClick(story._clickIndex, story.title);
+      } else {
+        selectStory(story.id);
+      }
     });
 
     refs.storyList.appendChild(card);
@@ -241,10 +330,18 @@ function showLoginRequired() {
 
 function selectStory(storyId) {
   console.log(`[PowerTool] Selecting story: ${storyId}`);
-  
+
   // Show loading while we navigate
   showLoading();
-  
+
   // Inform webview-polling/headless-sync to navigate the webview
   bus.emit('headless:select-story', storyId);
+}
+
+function selectStoryByClick(clickIndex, title) {
+  console.log(`[StorySelector] Click-navigating: index=${clickIndex} title="${title}"`);
+  showLoading();
+
+  // Click the story card in the webview's NovelAI dashboard
+  bus.emit('headless:click-story', { clickIndex, title });
 }

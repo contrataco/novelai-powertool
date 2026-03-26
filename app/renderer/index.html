@@ -195,11 +195,21 @@
       color: var(--error);
     }
 
+    .content-row {
+      flex: 1;
+      display: flex;
+      flex-direction: row;
+      overflow: hidden;
+      min-height: 0; /* Allow flex children to shrink */
+    }
+
     .main-container {
       flex: 1;
       display: flex;
       overflow: hidden;
       background: var(--bg-base);
+      position: relative;
+      min-width: 0; /* Allow flex shrink */
     }
 
     .editor-container {
@@ -449,6 +459,31 @@
 
     .story-editor {
       transition: padding-top 0.4s ease;
+    }
+
+    .editor-loading-bar {
+      padding: 10px 24px;
+      text-align: center;
+      background: var(--bg-secondary, #1e1e2e);
+      border-bottom: 1px solid var(--border-default);
+    }
+    .editor-loading-text {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+    .editor-loading-track {
+      height: 3px;
+      background: var(--border-default);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .editor-loading-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent, #e94560);
+      border-radius: 2px;
+      transition: width 0.3s ease;
     }
 
     .status-btn {
@@ -958,13 +993,13 @@
 
     /* Headless Story Selection */
     .story-selection-overlay {
-      position: absolute;
-      top: 0;
+      position: fixed;
+      top: 38px; /* Below toolbar */
       left: 0;
       right: 0;
       bottom: 0;
       background: var(--bg-base);
-      z-index: 100;
+      z-index: 9000;
       display: none;
       flex-direction: column;
       padding: 40px;
@@ -972,7 +1007,7 @@
       animation: fadeIn 0.4s ease;
     }
 
-    .main-container.showing-story-selector .story-selection-overlay {
+    .story-selection-overlay.visible {
       display: flex;
     }
 
@@ -1097,15 +1132,72 @@
       padding: 60px;
       color: var(--text-dim);
       display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
     }
 
     .story-selection-loading {
       text-align: center;
-      padding: 60px;
+      padding: 60px 40px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 16px;
+      justify-content: center;
+      flex: 1;
+    }
+
+    .story-loading-progress {
+      max-width: 360px;
+      width: 100%;
+    }
+
+    .story-loading-icon {
+      font-size: 28px;
+      margin-bottom: 16px;
+      animation: spin 2s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .story-loading-status {
+      font-size: 16px;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+      font-weight: 500;
+    }
+
+    .story-loading-track {
+      height: 4px;
+      background: var(--border-default);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+
+    .story-loading-fill {
+      height: 100%;
+      width: 10%;
+      background: var(--accent, #e94560);
+      border-radius: 2px;
+      transition: width 0.6s ease, background-color 0.3s ease;
+    }
+
+    .story-loading-fill.error {
+      background: #c0392b;
+    }
+
+    .story-loading-fill.success {
+      background: #27ae60;
+    }
+
+    .story-loading-detail {
+      font-size: 12px;
+      color: var(--text-dim);
     }
 
     .spinner {
@@ -5067,6 +5159,7 @@
   </div>
   </div>
 
+  <div class="content-row">
   <div class="main-container">
     <div class="editor-container" id="editorContainer">
       <!-- Command Palette -->
@@ -5102,6 +5195,12 @@
           <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
           <button id="editorHistoryBtn" class="btn-sm tertiary" title="Story History">History</button>
           <button id="editorLockBtn" class="btn-sm tertiary" title="Toggle Read-Only Mode">Lock</button>
+        </div>
+      </div>
+      <div id="editorLoadingBar" class="editor-loading-bar" style="display: none;">
+        <div class="editor-loading-text" id="editorLoadingText">Loading story...</div>
+        <div class="editor-loading-track">
+          <div class="editor-loading-fill" id="editorLoadingFill"></div>
         </div>
       </div>
       <div id="storyEditor" class="story-editor" contenteditable="true" spellcheck="true" placeholder="Start writing your story here..."></div>
@@ -5385,29 +5484,41 @@
           </div>
         </div>
       </div>
-      
-      <!-- Headless Story Selection Overlay -->
-      <div id="storySelectionOverlay" class="story-selection-overlay">
-        <div class="story-selection-header">
-          <h2>Your Stories</h2>
-          <p>Select a story to continue or create a new one in the NovelAI dashboard.</p>
-          <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: center; align-items: center;">
-            <input type="text" id="headlessStorySearch" placeholder="Search stories..." class="btn-sm" style="background: var(--bg-input); border: 1px solid var(--border-subtle); color: var(--text-primary); padding: 5px 10px; width: 250px;">
-            <button id="refreshStoriesBtn" class="btn-sm tertiary" title="Re-fetch stories from API and DOM">Refresh</button>
-            <button id="toggleStoryListViewBtn" class="btn-sm tertiary" title="Toggle Grid/List View">&#9776;</button>
+    </div>
+  </div>
+
+  <!-- Headless Story Selection Overlay — outside main-container, direct body child -->
+    <div id="storySelectionOverlay" class="story-selection-overlay">
+      <div class="story-selection-header">
+        <h2>Your Stories</h2>
+        <p>Select a story to continue or create a new one in the NovelAI dashboard.</p>
+        <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: center; align-items: center;">
+          <input type="text" id="headlessStorySearch" placeholder="Search stories..." class="btn-sm" style="background: var(--bg-input); border: 1px solid var(--border-subtle); color: var(--text-primary); padding: 5px 10px; width: 250px;">
+          <button id="refreshStoriesBtn" class="btn-sm tertiary" title="Re-fetch stories from API and DOM">Refresh</button>
+          <button id="toggleStoryListViewBtn" class="btn-sm tertiary" title="Toggle Grid/List View">&#9776;</button>
+        </div>
+      </div>
+
+      <div id="storySelectionLoading" class="story-selection-loading">
+        <div class="story-loading-progress">
+          <div class="story-loading-icon" id="storyLoadingIcon">&#9881;</div>
+          <div class="story-loading-status" id="storyLoadingStatus">Connecting to NovelAI...</div>
+          <div class="story-loading-track">
+            <div class="story-loading-fill" id="storyLoadingFill"></div>
           </div>
+          <div class="story-loading-detail" id="storyLoadingDetail">This usually takes 10-15 seconds</div>
         </div>
-        
-        <div id="storySelectionLoading" class="story-selection-loading">
-          <div class="spinner"></div>
-          <p>Loading your stories from NovelAI...</p>
-        </div>
-        
-        <div id="storyList" class="story-list"></div>
-        
-        <div id="storySelectionEmpty" class="story-selection-empty">
-          <p id="storySelectionEmptyText">No stories found. Make sure you are logged in to NovelAI.</p>
-          <button id="goToNovelaiDashboard" class="btn primary" style="margin-top: 16px;">Go to NovelAI Dashboard</button>
+      </div>
+
+      <div id="storyList" class="story-list"></div>
+
+      <div id="storySelectionEmpty" class="story-selection-empty">
+        <div class="story-loading-icon" style="font-size: 32px; margin-bottom: 12px;">&#9888;</div>
+        <p id="storySelectionEmptyText" style="font-size: 16px; margin-bottom: 4px;">Could not load stories from NovelAI</p>
+        <p id="storySelectionEmptyDetail" style="font-size: 13px; color: var(--text-dim); margin-bottom: 16px;">The connection timed out. NovelAI may be slow or unavailable.</p>
+        <div style="display: flex; gap: 8px; justify-content: center;">
+          <button id="retryStoriesBtn" class="btn primary">Retry</button>
+          <button id="goToNovelaiDashboard" class="btn tertiary">Show Webview</button>
         </div>
       </div>
     </div>
@@ -6017,7 +6128,7 @@
         </div>
       </div>
     </div>
-  </div>
+  </div> <!-- /content-row -->
 
   <!-- Settings Modal -->
   <div class="modal" id="settingsModal">

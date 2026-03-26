@@ -44,6 +44,7 @@ export const state = {
 
   // Headless Mode state
   headlessMode: true, // Default to true for the new interface
+  storyTextLoaded: false, // true once editor has story text loaded
   isDashboardActive: false, // true if webview is on dashboard/story list
   availableStories: [],    // list of stories found on dashboard
 

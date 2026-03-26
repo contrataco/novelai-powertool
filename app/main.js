@@ -240,22 +240,19 @@ ipcMain.handle('novelai:fetch-stories', async () => {
     });
 
     if (!response.ok) {
-      return { success: false, status: response.status, error: 'Failed to fetch stories from NovelAI API' };
+      return { success: false, status: response.status, error: `NovelAI stories API returned ${response.status}` };
     }
 
     const data = await response.json();
-    // NovelAI returns objects in a specific format: { objects: [...] }
-    const stories = (data.objects || []).map(obj => {
-      // Decode the object if it's a story
-      // Note: NovelAI stories are often encrypted, but metadata might be available
-      return {
-        id: obj.id,
-        title: obj.name || 'Untitled Story',
-        description: obj.description || '',
-        tags: obj.tags || [],
-        lastModified: obj.lastModified || Date.now()
-      };
-    });
+    // NovelAI returns encrypted story objects — metadata like id and lastUpdatedAt
+    // are available but title/description are client-side encrypted.
+    const stories = (data.objects || []).map(obj => ({
+      id: obj.id || '',
+      title: obj.meta?.title || '',
+      description: obj.meta?.description || '',
+      tags: obj.meta?.tags || [],
+      lastModified: obj.lastUpdatedAt || Date.now()
+    })).filter(s => s.id);
 
     return { success: true, stories };
   } catch (e) {
@@ -276,6 +273,7 @@ ipcMain.handle('open-webview-devtools', () => {
   console.log('[Main] No NovelAI webview found');
   return { success: false, error: 'No NovelAI webview found' };
 });
+
 
 // Clear webview cache (NovelAI partition)
 ipcMain.handle('clear-webview-cache', async () => {
@@ -1283,6 +1281,13 @@ ipcMain.handle('story-settings:get', (_, storyId) => {
 
 ipcMain.handle('story-settings:set', (_, { storyId, settings }) => {
   db.setStorySettings(storyId, settings);
+  return { success: true };
+});
+
+// Story text cache
+ipcMain.handle('story-text:get', (_, storyId) => db.getStoryText(storyId));
+ipcMain.handle('story-text:set', (_, { storyId, text, source }) => {
+  db.setStoryText(storyId, text, source || 'webview');
   return { success: true };
 });
 
