@@ -402,6 +402,7 @@ export function openStatOverlay(charId, rpg) {
   if (!char || !rpgStatOverlay || !rpgStatOverlayContent) return;
 
   rpgStatOverlayContent.innerHTML = buildStatSheetHTML(char);
+  rpgStatOverlay.classList.remove('u-hidden');
   rpgStatOverlay.classList.add('is-open');
   rpgStatOverlay.dataset.charId = charId;
 
@@ -440,13 +441,13 @@ function closeStatOverlay() {
       <button class="btn-accept btn-xs">Keep Editing</button>`;
     bar.querySelector('.btn-reject').addEventListener('click', () => {
       editDirty = false;
-      if (rpgStatOverlay) rpgStatOverlay.classList.remove('is-open');
+      if (rpgStatOverlay) { rpgStatOverlay.classList.remove('is-open'); rpgStatOverlay.classList.add('u-hidden'); }
     });
     bar.querySelector('.btn-accept').addEventListener('click', () => bar.remove());
     rpgStatOverlayContent?.prepend(bar);
     return;
   }
-  if (rpgStatOverlay) rpgStatOverlay.classList.remove('is-open');
+  if (rpgStatOverlay) { rpgStatOverlay.classList.remove('is-open'); rpgStatOverlay.classList.add('u-hidden'); }
 }
 
 async function cycleRole(charId) {
@@ -1220,7 +1221,7 @@ async function deleteCharacter(charId) {
     if (result.success) {
       state.litrpgState = result.state;
       editDirty = false;
-      if (rpgStatOverlay) rpgStatOverlay.classList.remove('is-open');
+      if (rpgStatOverlay) { rpgStatOverlay.classList.remove('is-open'); rpgStatOverlay.classList.add('u-hidden'); }
       refreshRpgUI();
       showToast('Character deleted', 2000, 'success');
     } else {
@@ -1892,6 +1893,7 @@ async function showAlbumLightbox() {
     if (!imageData) return;
     rpgAlbumLightboxImg.src = `data:image/png;base64,${imageData}`;
     if (rpgAlbumCounter) rpgAlbumCounter.textContent = `${albumIndex + 1} of ${albumItems.length}`;
+    rpgAlbumLightbox.classList.remove('u-hidden');
     rpgAlbumLightbox.classList.add('is-open');
   } catch (err) {
     showToast('Failed to load image');
@@ -2574,18 +2576,18 @@ export function init() {
     showAlbumLightbox();
   });
   if (rpgAlbumClose) rpgAlbumClose.addEventListener('click', () => {
-    if (rpgAlbumLightbox) rpgAlbumLightbox.classList.remove('is-open');
+    if (rpgAlbumLightbox) { rpgAlbumLightbox.classList.remove('is-open'); rpgAlbumLightbox.classList.add('u-hidden'); }
   });
   if (rpgAlbumSetActive) rpgAlbumSetActive.addEventListener('click', () => {
     if (albumItems[albumIndex]) {
       setAlbumAsActive(albumCharId, albumItems[albumIndex].id);
-      if (rpgAlbumLightbox) rpgAlbumLightbox.classList.remove('is-open');
+      if (rpgAlbumLightbox) { rpgAlbumLightbox.classList.remove('is-open'); rpgAlbumLightbox.classList.add('u-hidden'); }
     }
   });
   if (rpgAlbumDelete) rpgAlbumDelete.addEventListener('click', () => {
     if (albumItems[albumIndex]) {
       deleteAlbumImage(albumCharId, albumItems[albumIndex].id);
-      if (rpgAlbumLightbox) rpgAlbumLightbox.classList.remove('is-open');
+      if (rpgAlbumLightbox) { rpgAlbumLightbox.classList.remove('is-open'); rpgAlbumLightbox.classList.add('u-hidden'); }
     }
   });
   // Keyboard navigation for album lightbox

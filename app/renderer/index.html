@@ -26,9 +26,9 @@
       <input type="checkbox" id="autoGenerateToggle" style="cursor:pointer;">
       Auto-generate
     </label>
-    <span class="story-indicator" id="storyIndicator" style="display:none;"></span>
+    <span class="story-indicator u-hidden" id="storyIndicator"></span>
     <span class="status" id="status">Initializing...</span>
-    <span class="venice-balance" id="veniceBalance" style="display:none;font-size:11px;color:#aaa;margin-left:4px;">
+    <span class="venice-balance u-hidden" id="veniceBalance" style="font-size:11px;color:#aaa;margin-left:4px">
       <span id="veniceBalanceText"></span>
     </span>
 
@@ -59,7 +59,7 @@
       <div id="popoverSuggestionsContainer">
         <div class="suggestions-empty">Suggestions will appear after the AI responds.</div>
       </div>
-      <div id="popoverLoading" class="loading" style="display: none;">
+      <div id="popoverLoading" class="loading u-hidden">
         <div class="spinner"></div>
         <span>Generating suggestions...</span>
       </div>
@@ -106,7 +106,7 @@
           <button id="editorLockBtn" class="btn-sm tertiary" title="Toggle Read-Only Mode">Lock</button>
         </div>
       </div>
-      <div id="editorLoadingBar" class="editor-loading-bar" style="display: none;">
+      <div id="editorLoadingBar" class="editor-loading-bar u-hidden">
         <div class="editor-loading-text" id="editorLoadingText">Loading story...</div>
         <div class="editor-loading-track">
           <div class="editor-loading-fill" id="editorLoadingFill"></div>
@@ -143,7 +143,7 @@
                 <p class="text-xs color-dim" style="text-align: center; padding: 20px;">Loading entries...</p>
               </div>
             </div>
-            <div id="headlessLoreEditor" class="lore-main-editor" style="display: none;">
+            <div id="headlessLoreEditor" class="lore-main-editor u-hidden">
               <div class="form-group">
                 <label>Display Name</label>
                 <input type="text" id="headlessLoreNameInput" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
@@ -269,7 +269,7 @@
         </div>
         <div class="headless-panel-body" style="gap: 8px;">
           <p class="text-xs color-dim">The raw text exactly as it is sent to the AI, including Memory, Lorebook, and Author's Note.</p>
-          <div id="headlessContextLoading" class="loading" style="display: none; padding: 20px;">
+          <div id="headlessContextLoading" class="loading u-hidden" style="padding: 20px">
             <div class="spinner"></div>
             <span>Fetching context...</span>
           </div>
@@ -332,7 +332,7 @@
         </div>
         <div class="headless-panel-body">
           <p class="text-xs color-dim">Restore your story to a previous state using NovelAI's backtrack system.</p>
-          <div id="headlessHistoryLoading" class="loading" style="display: none; padding: 20px;">
+          <div id="headlessHistoryLoading" class="loading u-hidden" style="padding: 20px">
             <div class="spinner"></div>
             <span>Loading history...</span>
           </div>
@@ -350,8 +350,8 @@
       <div class="editor-status-bar">
         <!-- Floating Selection Toolbar -->
         <div id="selectionToolbar" class="selection-toolbar">
-          <button id="selViewLoreBtn" title="View lore entry for selection" style="display:none;"><i>&#x1f4d6;</i> Lore</button>
-          <div id="selLoreSeparator" class="separator" style="display:none;"></div>
+          <button class="u-hidden" id="selViewLoreBtn" title="View lore entry for selection"><i>&#x1f4d6;</i> Lore</button>
+          <div id="selLoreSeparator" class="separator u-hidden"></div>
           <button id="selAiGenerateBtn" title="Generate from selection"><i>&#x2728;</i> Generate</button>
           <div class="separator"></div>
           <button id="selAiRewriteBtn" title="Rewrite selection"><i>&#x21bb;</i> Rewrite</button>
@@ -446,7 +446,7 @@
           <button class="panel-tab" data-tab="lore" id="loreTab">Lore</button>
           <button class="panel-tab" data-tab="memory" id="memoryTab">Memory</button>
           <!-- was "RPG", renamed to "Cast" for unified character tracking -->
-          <button class="panel-tab" data-tab="rpg" id="rpgTab" style="display:none;">Cast</button>
+          <button class="panel-tab u-hidden" data-tab="rpg" id="rpgTab">Cast</button>
           <button class="panel-tab" data-tab="media" id="mediaTab">Media</button>
           <button class="panel-tab" data-tab="scripts" id="scriptsTab">Scripts</button>
         </div>
@@ -463,7 +463,7 @@
             Click "Generate Scene" to create an image
           </div>
         </div>
-        <div id="loadingIndicator" class="loading" style="display: none;">
+        <div id="loadingIndicator" class="loading u-hidden">
           <div class="spinner"></div>
           <span>Generating...</span>
         </div>
@@ -481,7 +481,7 @@
         <!-- TTS Controls -->
         <div class="tts-controls" id="ttsControls">
           <button class="btn btn-sm" id="ttsNarrateBtn" title="Narrate current scene text">&#128266; Narrate</button>
-          <button class="btn btn-sm btn-danger" id="ttsStopBtn" title="Stop narration" style="display:none;">&#9632; Stop</button>
+          <button class="btn btn-sm btn-danger u-hidden" id="ttsStopBtn" title="Stop narration">&#9632; Stop</button>
           <span class="tts-progress" id="ttsProgress"></span>
         </div>
 
@@ -499,7 +499,7 @@
 
         <button id="commitBtn" class="commit-btn" disabled>Commit to Storyboard</button>
         <div id="commitConfirm" class="commit-confirm">
-          <div id="commitStoryLabel" class="commit-story-label" style="display:none;"></div>
+          <div id="commitStoryLabel" class="commit-story-label u-hidden"></div>
           <label>Storyboard: <span id="commitSbName">Default</span></label>
           <label>Note (optional):</label>
           <input type="text" id="commitNoteInput" placeholder="Scene annotation...">
@@ -510,7 +510,7 @@
         </div>
         </div><!-- /#storyboardView -->
 
-        <div id="timelineView" style="display:none;">
+        <div class="u-hidden" id="timelineView">
           <div class="timeline-actions" id="timelineActions">
             <button id="timelineScanBtn" class="action-btn" style="background:#e94560;color:white;border:none;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;">Scan Story</button>
             <span id="timelineScanStatus" class="scan-status" style="color:#888;font-size:11px;margin-left:8px;"></span>
@@ -534,7 +534,7 @@
         <div class="lore-action-bar">
           <div style="flex:1;position:relative;">
             <button id="loreScanBtn" style="width:100%;">Scan Now</button>
-            <div id="loreScanMenu" class="scan-dropdown" style="display:none;">
+            <div id="loreScanMenu" class="scan-dropdown u-hidden">
               <!-- Populated dynamically from category registry -->
             </div>
           </div>
@@ -559,10 +559,10 @@
           <button id="loreOptimizeAllBtn" style="font-size:11px;padding:2px 8px;white-space:nowrap;" title="Run lorebook optimization on all entries">Optimize</button>
           <button id="loreDiscoverFieldsBtn" style="font-size:11px;padding:2px 8px;white-space:nowrap;color:#888;" title="Discover which advanced lorebook fields NovelAI supports">Discover</button>
         </div>
-        <div id="loreOptStatus" style="display:none;font-size:11px;color:#8a8;margin-bottom:4px;"></div>
+        <div class="u-hidden" id="loreOptStatus" style="font-size:11px;color:#8a8;margin-bottom:4px"></div>
 
         <!-- Scan Status -->
-        <div class="lore-scan-status" id="loreScanStatus" style="display:none;">
+        <div class="lore-scan-status u-hidden" id="loreScanStatus">
           <span class="spinner"></span>
           <span id="loreScanPhase">Scanning...</span>
           <div class="lore-scan-progress">
@@ -571,7 +571,7 @@
         </div>
 
         <!-- Error -->
-        <div class="lore-error" id="loreError" style="display:none;"></div>
+        <div class="lore-error u-hidden" id="loreError"></div>
 
         <!-- Story Comprehension -->
         <details class="lore-section" id="comprehensionSection">
@@ -585,14 +585,14 @@
             </div>
             <div class="comprehension-controls">
               <button id="startProgressiveScanBtn">Build Story Knowledge</button>
-              <button id="pauseProgressiveScanBtn" style="display:none">Pause</button>
-              <button id="cancelProgressiveScanBtn" style="display:none">Cancel</button>
+              <button class="u-hidden" id="pauseProgressiveScanBtn">Pause</button>
+              <button class="u-hidden" id="cancelProgressiveScanBtn">Cancel</button>
             </div>
-            <div id="masterSummaryDisplay" style="display:none">
+            <div class="u-hidden" id="masterSummaryDisplay">
               <h4>Story Summary</h4>
               <p id="masterSummaryText"></p>
             </div>
-            <div id="entityProfilesList" style="display:none">
+            <div class="u-hidden" id="entityProfilesList">
               <h4>Tracked Entities (<span id="entityCount">0</span>)</h4>
               <div id="entityProfileCards"></div>
             </div>
@@ -612,7 +612,7 @@
               <button id="loreCreateBtn">Create</button>
             </div>
           </div>
-          <div id="loreCreatePreview" class="lore-create-preview" style="display:none"></div>
+          <div id="loreCreatePreview" class="lore-create-preview u-hidden"></div>
         </details>
 
         <!-- Enrich Entry -->
@@ -622,7 +622,7 @@
             <input type="text" id="loreEnrichInput" placeholder="e.g. Add Elena's magical abilities">
             <button id="loreEnrichBtn">Enrich</button>
           </div>
-          <div class="lore-enrich-preview" id="loreEnrichPreview" style="display:none;">
+          <div class="lore-enrich-preview u-hidden" id="loreEnrichPreview">
             <h4>Enriching: <span id="loreEnrichTarget"></span></h4>
             <div class="lore-diff">
               <div class="lore-diff-col"><h5>Current</h5><div id="loreEnrichOld"></div></div>
@@ -645,19 +645,19 @@
         </details>
 
         <!-- Pending Merges -->
-        <details class="lore-section" id="loreMergesSection" style="display:none;">
+        <details class="lore-section u-hidden" id="loreMergesSection">
           <summary>Pending Merges <span class="count" id="loreMergesCount">(0)</span></summary>
           <div id="loreMergesList"></div>
         </details>
 
         <!-- Pending Updates -->
-        <details class="lore-section" id="loreUpdatesSection" style="display:none;">
+        <details class="lore-section u-hidden" id="loreUpdatesSection">
           <summary>Pending Updates <span class="count" id="loreUpdatesCount">(0)</span></summary>
           <div id="loreUpdatesList"></div>
         </details>
 
         <!-- Pending Cleanups -->
-        <details class="lore-section" id="loreCleanupSection" style="display:none;">
+        <details class="lore-section u-hidden" id="loreCleanupSection">
           <summary>Organize Results <span class="count" id="loreCleanupCount">(0)</span></summary>
           <div id="loreCleanupList"></div>
           <div style="padding:6px 0;">
@@ -666,7 +666,7 @@
         </details>
 
         <!-- Family Tree -->
-        <details class="lore-section" id="familyTreeSection" style="display:none;">
+        <details class="lore-section u-hidden" id="familyTreeSection">
           <summary>Family Tree <span class="count" id="familyTreeCount">(0)</span></summary>
           <div id="familyTreeContainer" style="padding:8px;"></div>
         </details>
@@ -706,7 +706,7 @@
                 <option value="ollama">Ollama (Local)</option>
               </select>
             </label>
-            <div id="loreOllamaSettings" style="display:none; margin-left: 16px;">
+            <div class="u-hidden" id="loreOllamaSettings" style="margin-left: 16px">
               <label>
                 Model:
                 <select id="loreOllamaModelSelect">
@@ -766,7 +766,7 @@
         </div>
 
         <!-- Progress Indicator -->
-        <div class="memory-progress" id="memoryProgress" style="display:none;">
+        <div class="memory-progress u-hidden" id="memoryProgress">
           <span class="spinner"></span>
           <span id="memoryProgressText">Processing...</span>
         </div>
@@ -820,7 +820,7 @@
       <!-- LitRPG Panel -->
       <div class="rpg-panel-content panel-content" id="rpgContent">
         <!-- Detection Banner -->
-        <div id="rpgDetectionBanner" class="rpg-detection-banner-v2" style="display:none;">
+        <div id="rpgDetectionBanner" class="rpg-detection-banner-v2 u-hidden">
           <div style="display:flex;align-items:center;gap:8px;position:relative;">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--cat-rpg)" stroke-width="2"><path d="M12 2L4 7v6c0 5.5 3.4 10.7 8 12 4.6-1.3 8-6.5 8-12V7l-8-5z"/><path d="M9 12l2 2 4-4"/></svg>
             <div>
@@ -835,7 +835,7 @@
         </div>
 
         <!-- System Type Indicator -->
-        <div class="rpg-system-indicator" id="rpgSystemIndicator" style="display:none;">
+        <div class="rpg-system-indicator u-hidden" id="rpgSystemIndicator">
           <span id="rpgSystemType" style="font-size:11px;color:#10b981;">System: Generic</span>
         </div>
 
@@ -861,7 +861,7 @@
         <label class="rpg-option-label"><input type="checkbox" id="rpgForceReEnrich"> Re-enrich all descriptions</label>
 
         <!-- Scan Status -->
-        <div class="rpg-scan-status" id="rpgScanStatus" style="display:none;">
+        <div class="rpg-scan-status u-hidden" id="rpgScanStatus">
           <div class="rpg-scan-steps" id="rpgScanSteps">
             <div class="rpg-scan-step" data-phase="characters"><span class="rpg-scan-step-dot"></span><span>R1</span></div>
             <span class="rpg-scan-step-line"></span>
@@ -878,7 +878,7 @@
         </div>
 
         <!-- Persona Cast View (non-LitRPG) -->
-        <div id="rpgCastView" style="display:none;"></div>
+        <div class="u-hidden" id="rpgCastView"></div>
 
         <!-- Party View -->
         <details class="lore-section" id="rpgPartySection" open>
@@ -910,11 +910,11 @@
         </details>
 
         <!-- Pending RPG Updates -->
-        <details class="lore-section" id="rpgUpdatesSection" style="display:none;">
+        <details class="lore-section u-hidden" id="rpgUpdatesSection">
           <summary>Pending Updates <span class="count" id="rpgUpdatesCount">(0)</span></summary>
           <div class="rpg-bulk-actions">
-            <button id="rpgAcceptAllBtn" class="btn-accept" style="font-size:10px;padding:2px 8px;display:none;">Accept All</button>
-            <button id="rpgRejectAllBtn" class="btn-reject" style="font-size:10px;padding:2px 8px;display:none;">Reject All</button>
+            <button id="rpgAcceptAllBtn" class="btn-accept u-hidden" style="font-size:10px;padding:2px 8px">Accept All</button>
+            <button id="rpgRejectAllBtn" class="btn-reject u-hidden" style="font-size:10px;padding:2px 8px">Reject All</button>
           </div>
           <div id="rpgUpdatesList"></div>
         </details>
@@ -956,7 +956,7 @@
         </details>
 
         <!-- Scan History -->
-        <details class="lore-section" id="rpgScanHistorySection" style="display:none;">
+        <details class="lore-section u-hidden" id="rpgScanHistorySection">
           <summary>Scan History <span class="count" id="rpgScanHistoryCount">(0)</span></summary>
           <div id="rpgScanHistoryList"></div>
         </details>
@@ -1000,7 +1000,7 @@
       </div>
 
       <!-- Media Lightbox -->
-      <div class="media-lightbox" id="mediaLightbox" style="display:none;">
+      <div class="media-lightbox u-hidden" id="mediaLightbox">
         <div class="media-lightbox-panel">
           <button class="media-lightbox-close" id="mediaLightboxClose">&times;</button>
           <div id="mediaLightboxContent"></div>
@@ -1008,7 +1008,7 @@
       </div>
 
       <!-- Album Lightbox -->
-      <div class="rpg-album-lightbox" id="rpgAlbumLightbox" style="display:none;">
+      <div class="rpg-album-lightbox u-hidden" id="rpgAlbumLightbox">
         <div class="rpg-album-lightbox-counter" id="rpgAlbumCounter"></div>
         <img id="rpgAlbumLightboxImg" src="" alt="Album image">
         <button class="rpg-album-lightbox-nav prev" id="rpgAlbumPrev">&#8249;</button>
@@ -1021,7 +1021,7 @@
       </div>
 
       <!-- Stat Sheet Overlay (Phase 5H) -->
-      <div class="rpg-stat-overlay" id="rpgStatOverlay" style="display:none;">
+      <div class="rpg-stat-overlay u-hidden" id="rpgStatOverlay">
         <div class="rpg-stat-overlay-panel">
           <button class="rpg-stat-overlay-close" id="rpgStatOverlayClose">&times;</button>
           <div id="rpgStatOverlayContent"></div>
@@ -1035,20 +1035,20 @@
           <button id="scriptsRefreshBtn" class="btn-sm tertiary" title="Refresh script list">Refresh</button>
         </div>
 
-        <div id="scriptsLoading" style="display:none;text-align:center;padding:20px;color:var(--text-dim);">
+        <div class="u-hidden" id="scriptsLoading" style="text-align:center;padding:20px;color:var(--text-dim)">
           <div class="spinner" style="margin:0 auto 8px;"></div>
           <p>Scanning scripts...</p>
         </div>
 
         <div id="scriptsList"></div>
 
-        <div id="scriptsEmpty" style="display:none;text-align:center;padding:20px;color:var(--text-dim);">
+        <div class="u-hidden" id="scriptsEmpty" style="text-align:center;padding:20px;color:var(--text-dim)">
           <p>No scripts detected. Open a story first.</p>
         </div>
       </div>
 
       <!-- Scene Explorer Overlay -->
-      <div id="sceneExplorerOverlay" class="stat-overlay" style="display:none;">
+      <div id="sceneExplorerOverlay" class="stat-overlay u-hidden">
         <div class="stat-overlay-content" style="max-width:480px;">
           <div class="scene-explorer-header" id="sceneExplorerHeader"></div>
           <div class="scene-explorer-body" id="sceneExplorerBody" style="padding:16px;max-height:70vh;overflow-y:auto;"></div>
@@ -1315,7 +1315,7 @@
           </div>
         </div>
         <!-- Balance display -->
-        <div id="veniceSettingsBalance" style="margin-top:12px;padding:8px 10px;background:#1a1a2e;border-radius:6px;font-size:12px;color:#aaa;display:none;">
+        <div class="u-hidden" id="veniceSettingsBalance" style="margin-top:12px;padding:8px 10px;background:#1a1a2e;border-radius:6px;font-size:12px;color:#aaa">
           <span id="veniceSettingsBalanceText"></span>
         </div>
       </div>
@@ -1330,7 +1330,7 @@
           <label>Model</label>
           <select id="puterModel"></select>
         </div>
-        <div class="form-group" id="puterQualityGroup" style="display:none">
+        <div class="form-group u-hidden" id="puterQualityGroup">
           <label>Quality</label>
           <select id="puterQuality">
             <option value="standard">Standard</option>
@@ -1458,7 +1458,7 @@
             <option value="perchance">Perchance</option>
             <option value="puter">Puter.js</option>
           </select>
-          <span id="portraitProviderCostWarning" style="display:none;color:#e94560;font-size:0.85em;">
+          <span class="u-hidden" id="portraitProviderCostWarning" style="color:#e94560;font-size:0.85em">
             This provider charges per image. Bulk/auto generation may incur costs.
           </span>
         </div>
@@ -1486,9 +1486,9 @@
         <div class="form-group">
           <label>Narrator Voice</label>
           <select id="ttsNarratorVoice"></select>
-          <input type="text" id="ttsNarratorCustomSeed" placeholder="Enter custom seed (e.g. Maria, seedmix:Aini+Orea)" style="display:none;font-size:11px;margin-top:4px;width:100%;">
+          <input class="u-hidden" type="text" id="ttsNarratorCustomSeed" placeholder="Enter custom seed (e.g. Maria, seedmix:Aini+Orea)" style="font-size:11px;margin-top:4px;width:100%">
         </div>
-        <div id="ttsV2NarratorGroup" style="display:none;margin-top:4px;">
+        <div class="u-hidden" id="ttsV2NarratorGroup" style="margin-top:4px">
           <details style="margin:0;">
             <summary style="font-size:11px;color:var(--text-muted);cursor:pointer;">Advanced v2 voice control</summary>
             <div style="display:flex;gap:4px;margin-top:4px;">
@@ -1501,9 +1501,9 @@
         <div class="form-group">
           <label>Dialogue Voice</label>
           <select id="ttsDialogueVoice"></select>
-          <input type="text" id="ttsDialogueCustomSeed" placeholder="Enter custom seed (e.g. Max, seedmix:Aulon+Oyn)" style="display:none;font-size:11px;margin-top:4px;width:100%;">
+          <input class="u-hidden" type="text" id="ttsDialogueCustomSeed" placeholder="Enter custom seed (e.g. Max, seedmix:Aulon+Oyn)" style="font-size:11px;margin-top:4px;width:100%">
         </div>
-        <div id="ttsV2DialogueGroup" style="display:none;margin-top:4px;">
+        <div class="u-hidden" id="ttsV2DialogueGroup" style="margin-top:4px">
           <details style="margin:0;">
             <summary style="font-size:11px;color:var(--text-muted);cursor:pointer;">Advanced v2 voice control</summary>
             <div style="display:flex;gap:4px;margin-top:4px;">
@@ -1513,7 +1513,7 @@
             </div>
           </details>
         </div>
-        <div class="form-group" id="ttsSpeedGroup" style="display:none;">
+        <div class="form-group u-hidden" id="ttsSpeedGroup">
           <label>Speed: <span id="ttsSpeedValue">1.0</span>x</label>
           <input type="range" id="ttsSpeed" min="0.5" max="2.0" step="0.1" value="1.0">
         </div>
@@ -1528,7 +1528,7 @@
           <div style="display:flex;gap:4px;align-items:center;">
             <input type="text" id="ttsAddCharName" placeholder="Character name" style="flex:1;font-size:11px;">
             <select id="ttsAddCharVoice" style="flex:1;font-size:11px;"></select>
-            <input type="text" id="ttsAddCharCustomSeed" placeholder="Custom seed" style="flex:1;font-size:11px;display:none;">
+            <input class="u-hidden" type="text" id="ttsAddCharCustomSeed" placeholder="Custom seed" style="flex:1;font-size:11px">
             <button class="btn-sm" id="ttsAddCharBtn" style="font-size:11px;padding:4px 8px;background:var(--bg-elevated);border:1px solid var(--border-default);color:var(--text-secondary);border-radius:3px;cursor:pointer;">Add</button>
           </div>
         </div>
@@ -1548,7 +1548,7 @@
       <div class="storyboard-header">
         <select id="storyboardSelect"></select>
         <button class="sb-rename-btn" id="sbRenameBtn">Rename</button>
-        <button class="sb-link-btn" id="sbLinkBtn" style="display:none;">Link Story</button>
+        <button class="sb-link-btn u-hidden" id="sbLinkBtn">Link Story</button>
         <button class="sb-new-btn" id="sbNewBtn">New</button>
         <button class="sb-del-btn" id="sbDeleteBtn">Delete</button>
       </div>

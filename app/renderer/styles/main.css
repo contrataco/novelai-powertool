@@ -1820,7 +1820,7 @@
       height: 100%;
       background: var(--accent);
       border-radius: 2px;
-      width: 0%;
+      width: var(--progress, 0%);
       transition: width var(--transition-slow);
     }
 
@@ -1891,7 +1891,7 @@
       background: var(--accent);
       border-radius: 2px;
       transition: width var(--transition-slow);
-      width: 0%;
+      width: var(--progress, 0%);
     }
 
     .comprehension-controls {
@@ -5234,7 +5234,7 @@
     /* Show-class overrides for CSS-hidden elements */
     .command-palette.is-open { display: flex; }
     .editor-autocomplete-box.is-open { display: block; }
-    .scene-explorer-overlay.is-open { display: flex; }
+    .stat-overlay.is-open { display: flex; }
     .editor-context-menu.is-open { display: block; }
-    .loading-indicator.is-open { display: flex; }
     .media-lightbox.is-open { display: flex; }
+    .rpg-album-lightbox.is-open { display: flex; }

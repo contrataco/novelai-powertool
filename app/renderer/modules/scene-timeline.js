@@ -580,12 +580,14 @@ export function openSceneExplorer(sceneId) {
   }
 
   // Show overlay
+  sceneExplorerOverlay.classList.remove('u-hidden');
   sceneExplorerOverlay.classList.add('is-open');
 }
 
 function closeSceneExplorer() {
   if (sceneExplorerOverlay) {
     sceneExplorerOverlay.classList.remove('is-open');
+    sceneExplorerOverlay.classList.add('u-hidden');
   }
   explorerSceneId = null;
 }
