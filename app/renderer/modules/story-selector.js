@@ -9,10 +9,11 @@ export function init() {
   if (refs.editorBackBtn) {
     refs.editorBackBtn.addEventListener('click', () => {
       console.log('[StorySelector] Dashboard button clicked, navigating back...');
-      bus.emit('headless:select-story', ''); // Empty ID tells webview to go to dashboard
+      bus.emit('headless:select-story', { storyId: '', title: '' }); // Empty ID = go to dashboard
       state.currentStoryId = null;
       state.currentStoryTitle = null;
       state.storyTextLoaded = false;
+      state._loadingStoryId = null;
       if (refs.editorStoryTitle) refs.editorStoryTitle.textContent = 'No Story Loaded';
       updateVisibility();
     });
@@ -30,9 +31,10 @@ export function init() {
   // Listen for story list updates from webview-polling
   bus.on('headless:stories-updated', (stories) => {
     state.availableStories = stories;
+    // Don't update dashboard phases if a story is loading
+    if (state._loadingStoryId) return;
     if (stories.length > 0) {
       updateLoadingPhase('found', `Found ${stories.length} stories!`);
-      // Brief delay to show the success state before rendering the list
       setTimeout(() => {
         updateVisibility();
         if (state.isDashboardActive) renderStoryList();
@@ -46,6 +48,8 @@ export function init() {
   // Listen for dashboard state changes
   bus.on('headless:dashboard-state-changed', (isActive) => {
     state.isDashboardActive = isActive;
+    // Don't override story loading phases with dashboard phases
+    if (state._loadingStoryId) return;
     if (isActive) {
       updateLoadingPhase('dashboard');
       tryFetchFromAPI();
@@ -156,7 +160,10 @@ function showLoading() {
   refs.storySelectionLoading.style.display = 'flex';
   refs.storyList.style.display = 'none';
   refs.storySelectionEmpty.style.display = 'none';
-  updateLoadingPhase('connecting');
+  // Only set default dashboard text if not loading a story
+  if (!state._loadingStoryId) {
+    updateLoadingPhase('connecting');
+  }
 }
 
 function updateLoadingPhase(phase, detail) {
@@ -170,21 +177,23 @@ function updateLoadingPhase(phase, detail) {
   fillEl.classList.remove('error', 'success');
   if (iconEl) iconEl.style.animation = 'spin 2s linear infinite';
 
+  // Detail text overrides defaults when provided (story loading sends its own text)
+  var isStoryLoad = !!state.currentStoryId && !state.storyTextLoaded;
   switch (phase) {
     case 'connecting':
-      statusEl.textContent = 'Connecting to NovelAI...';
+      statusEl.textContent = detail || 'Connecting to NovelAI...';
       fillEl.style.width = '10%';
-      if (detailEl) detailEl.textContent = 'This usually takes 10-15 seconds';
+      if (detailEl) detailEl.textContent = isStoryLoad ? '' : 'This usually takes 10-15 seconds';
       break;
     case 'dashboard':
-      statusEl.textContent = 'Waiting for stories to load...';
+      statusEl.textContent = detail || 'Waiting for stories to load...';
       fillEl.style.width = '30%';
-      if (detailEl) detailEl.textContent = 'Dashboard detected, scanning for stories';
+      if (detailEl) detailEl.textContent = '';
       break;
     case 'parsing':
-      statusEl.textContent = 'Scanning for stories...';
+      statusEl.textContent = detail || 'Scanning for stories...';
       fillEl.style.width = '50%';
-      if (detailEl) detailEl.textContent = 'Dashboard loaded, waiting for story data';
+      if (detailEl) detailEl.textContent = '';
       break;
     case 'found':
       statusEl.textContent = detail || 'Stories found!';
@@ -198,7 +207,7 @@ function updateLoadingPhase(phase, detail) {
       fillEl.style.width = '100%';
       fillEl.classList.add('error');
       if (iconEl) {
-        iconEl.textContent = '\u26A0'; // warning sign
+        iconEl.textContent = '\u26A0';
         iconEl.style.animation = 'none';
       }
       if (detailEl) detailEl.textContent = 'Click Retry or try selecting a different story.';
@@ -265,11 +274,10 @@ function renderStoryList() {
 
     card.addEventListener('click', () => {
       if (story._hasRealId === false) {
-        // No real story ID available — click the card in the webview to navigate
         console.log(`[StorySelector] Click-navigating story: "${story.title}" (index ${story._clickIndex})`);
         selectStoryByClick(story._clickIndex, story.title);
       } else {
-        selectStory(story.id);
+        selectStory(story.id, story.title);
       }
     });
 
@@ -328,20 +336,28 @@ function showLoginRequired() {
   }
 }
 
-function selectStory(storyId) {
-  console.log(`[PowerTool] Selecting story: ${storyId}`);
+function selectStory(storyId, title) {
+  console.log(`[PowerTool] Selecting story: ${storyId} "${title}"`);
 
-  // Show loading while we navigate
+  // Flag that a story is loading — suppresses dashboard phase updates
+  // but DON'T set currentStoryId (handleStoryContextChange needs it unset to fire)
+  state._loadingStoryId = storyId;
+  state.storyTextLoaded = false;
+  state.isDashboardActive = false;
+
+  updateLoadingPhase('connecting', 'Opening story in NovelAI...');
   showLoading();
-
-  // Inform webview-polling/headless-sync to navigate the webview
-  bus.emit('headless:select-story', storyId);
+  bus.emit('headless:select-story', { storyId, title });
 }
 
 function selectStoryByClick(clickIndex, title) {
   console.log(`[StorySelector] Click-navigating: index=${clickIndex} title="${title}"`);
-  showLoading();
 
-  // Click the story card in the webview's NovelAI dashboard
+  state._loadingStoryId = true;
+  state.storyTextLoaded = false;
+  state.isDashboardActive = false;
+
+  updateLoadingPhase('connecting', 'Opening story in NovelAI...');
+  showLoading();
   bus.emit('headless:click-story', { clickIndex, title });
 }

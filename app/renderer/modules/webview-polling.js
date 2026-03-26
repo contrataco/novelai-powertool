@@ -111,55 +111,19 @@ async function readStoryTextFromDocModel() {
         var pm = document.querySelector('.ProseMirror');
         if (!pm) return null;
 
-        // The document node is directly on pmViewDesc.node (NOT view.state.doc)
+        // Access doc via pmViewDesc.node (primary) or view.state.doc (fallback)
         var doc = null;
+        if (pm.pmViewDesc && pm.pmViewDesc.node) doc = pm.pmViewDesc.node;
+        else if (pm.pmViewDesc && pm.pmViewDesc.view && pm.pmViewDesc.view.state) doc = pm.pmViewDesc.view.state.doc;
+        if (!doc || !doc.content) return null;
 
-        // Strategy 1: pmViewDesc.node — the ProseMirror Node representing the document
-        if (pm.pmViewDesc && pm.pmViewDesc.node) {
-          doc = pm.pmViewDesc.node;
-          console.log('[DocModel] Found doc via pmViewDesc.node');
-        }
-
-        // Strategy 2: view.state.doc (standard ProseMirror path)
-        if (!doc && pm.pmViewDesc) {
-          var view = pm.pmViewDesc.view;
-          if (view && view.state && view.state.doc) {
-            doc = view.state.doc;
-            console.log('[DocModel] Found doc via view.state.doc');
-          }
-        }
-
-        if (!doc || !doc.content) {
-          console.log('[DocModel] No document node found. pmViewDesc:', !!pm.pmViewDesc,
-            'pmViewDesc.node:', !!(pm.pmViewDesc && pm.pmViewDesc.node));
-          return null;
-        }
         var size = doc.content.size;
-        var tcLen = (doc.textContent || '').length;
-        console.log('[DocModel] SUCCESS! content.size:', size, 'textContent.length:', tcLen);
-
-        // Try textBetween (preserves paragraph breaks)
         try {
           var text = doc.textBetween(0, size, '\\n');
-          if (text && text.length > 0) {
-            console.log('[DocModel] textBetween:', text.length, 'chars');
-            return { text: text, length: text.length, source: 'doc-model' };
-          }
+          if (text && text.length > 0) return { text: text, length: text.length, source: 'doc-model' };
         } catch(e) {}
-
-        // Fallback: textContent
-        if (tcLen > 0) {
-          return { text: doc.textContent, length: tcLen, source: 'doc-model' };
-        }
-
-        // Fallback: node traversal
-        try {
-          var parts = [];
-          doc.forEach(function(node) { if (node.textContent) parts.push(node.textContent); });
-          var joined = parts.join('\\n');
-          if (joined.length > 0) return { text: joined, length: joined.length, source: 'doc-model' };
-        } catch(e) {}
-
+        var tc = doc.textContent || '';
+        if (tc.length > 0) return { text: tc, length: tc.length, source: 'doc-model' };
         return null;
       })()
     `);
@@ -404,18 +368,22 @@ export function init() {
   });
 
   // Listen for headless story selection
-  bus.on('headless:select-story', (storyId) => {
+  let pendingStoryTitle = null;
+
+  bus.on('headless:select-story', ({ storyId, title } = {}) => {
     if (!storyId) {
       console.log('[Renderer] Navigating to NovelAI stories dashboard...');
       setNavigatingToStory(false);
       pendingStoryId = null;
+      pendingStoryTitle = null;
       lastPolledStoryId = null;
       webview.loadURL('https://novelai.net/stories').catch(() => {});
       return;
     }
-    console.log(`[Renderer] Navigating to story: ${storyId}`);
+    console.log(`[Renderer] Navigating to story: ${storyId} "${title}"`);
     setNavigatingToStory(true);
-    pendingStoryId = storyId; // Store for ProseMirror-based detection
+    pendingStoryId = storyId;
+    pendingStoryTitle = title || null;
     lastPolledStoryId = null;
     webview.loadURL(`https://novelai.net/stories?id=${storyId}`).catch(() => {});
   });
@@ -718,12 +686,14 @@ export function init() {
               return sep > 0 ? dt.substring(0, sep).trim() : '';
             })()
           `).catch(() => '');
-          console.log('[Renderer] Story detected via ProseMirror + pendingStoryId:', pendingStoryId, title);
+          const resolvedTitle = pendingStoryTitle || title || 'Untitled Story';
+          console.log('[Renderer] Story detected via ProseMirror + pendingStoryId:', pendingStoryId, resolvedTitle);
           lastPolledStoryId = pendingStoryId;
           const sid = pendingStoryId;
           pendingStoryId = null;
+          pendingStoryTitle = null;
           if (navigatingToStory) setNavigatingToStory(false);
-          handleStoryContextChange(sid, title || 'Untitled Story');
+          handleStoryContextChange(sid, resolvedTitle);
           updateStorySelectorVisibility();
         }
       }

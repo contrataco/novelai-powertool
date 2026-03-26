@@ -167,7 +167,7 @@ async function executeSelectedCommand() {
       case 'context': togglePanel(refs.headlessContextPanel); break;
     }
   } else if (item.type === 'story') {
-    bus.emit('headless:select-story', item.storyId);
+    bus.emit('headless:select-story', { storyId: item.storyId, title: item.name });
     showToast(`Switching to story: ${item.name}`);
   } else if (item.type === 'lore') {
     togglePanel(refs.headlessLorePanel);

@@ -270,7 +270,7 @@
       padding: 60px 80px;
       overflow-y: auto;
       min-height: 100%;
-      max-width: 850px;
+      max-width: 1100px;
       margin: 0 auto;
       width: 100%;
       position: relative;
@@ -484,6 +484,38 @@
       background: var(--accent, #e94560);
       border-radius: 2px;
       transition: width 0.3s ease;
+    }
+
+    .width-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .width-btn {
+      background: none;
+      border: 1px solid var(--border-default);
+      color: var(--text-dim);
+      cursor: pointer;
+      width: 18px;
+      height: 18px;
+      border-radius: 3px;
+      font-size: 12px;
+      line-height: 1;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .width-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+    #editorWidthLabel {
+      min-width: 28px;
+      text-align: center;
+      font-size: 10px;
     }
 
     .status-btn {
@@ -5352,7 +5384,7 @@
           </div>
           <div class="form-group">
             <label>Editor Max-Width: <span id="headlessWidthValue">850px</span></label>
-            <input type="range" id="headlessWidthSlider" min="400" max="1600" step="50" value="850">
+            <input type="range" id="headlessWidthSlider" min="400" max="1600" step="50" value="1100">
           </div>
         </div>
         <div class="headless-panel-footer">
@@ -5472,6 +5504,12 @@
           <span id="editorTokensEstimate" title="Estimated Context Tokens (Characters / 4)">0 tokens</span>
           <span style="margin: 0 8px;">|</span>
           <span id="editorReadingTime" title="Estimated reading time (200 wpm)">0 min read</span>
+          <span style="margin: 0 8px;">|</span>
+          <span class="width-controls" title="Adjust editor width">
+            <button id="editorWidthDown" class="width-btn" title="Narrower">&#x2212;</button>
+            <span id="editorWidthLabel">1100</span>
+            <button id="editorWidthUp" class="width-btn" title="Wider">&#x2b;</button>
+          </span>
         </div>
         <div class="editor-status-item">
           <span id="editorSyncStatus">In Sync</span>

@@ -185,156 +185,101 @@ async function scrollToLoadAll() {
     if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'Loading full story...';
     if (refs.editorSyncIndicator) refs.editorSyncIndicator.className = 'status-indicator busy';
 
-    const result = await webview.executeJavaScript(`
+    // Renderer-driven scroll loop — enables real-time progress reporting.
+    // Each iteration scrolls one step, reads text length, updates UI.
+    const scrollInfo = await webview.executeJavaScript(`
       (function() {
-        return new Promise(function(resolve) {
-          var pm = document.querySelector('.ProseMirror');
-          if (!pm) return resolve({ success: false, reason: 'no ProseMirror' });
-
-          // Find the scrollable conversation container
-          var scrollEl = document.querySelector('.conversation-main') || pm.closest('[class*="conversation"]');
-          if (!scrollEl) {
-            scrollEl = pm;
-            while (scrollEl && scrollEl !== document.body) {
-              if (scrollEl.scrollHeight > scrollEl.clientHeight + 10) break;
-              scrollEl = scrollEl.parentElement;
-            }
+        var pm = document.querySelector('.ProseMirror');
+        if (!pm) return null;
+        var scrollEl = document.querySelector('.conversation-main') || pm.closest('[class*="conversation"]');
+        if (!scrollEl) {
+          scrollEl = pm;
+          while (scrollEl && scrollEl !== document.body) {
+            if (scrollEl.scrollHeight > scrollEl.clientHeight + 10) break;
+            scrollEl = scrollEl.parentElement;
           }
-          if (!scrollEl || scrollEl === document.body) scrollEl = pm;
-
-          var viewportHeight = scrollEl.clientHeight || 600;
-          console.log('[ScrollLoad] scrollEl:', scrollEl.tagName, scrollEl.className.substring(0, 50),
-            'scrollHeight:', scrollEl.scrollHeight, 'clientHeight:', viewportHeight);
-
-          // Diagnostic: detect chunk-loading mechanisms
-          // Check for IntersectionObservers (sentinel-based loading)
-          try {
-            var sentinels = document.querySelectorAll('[data-observe], [class*="sentinel"], [class*="loader"], [class*="Loader"]');
-            console.log('[ScrollLoad] Potential sentinel elements:', sentinels.length);
-            sentinels.forEach(function(s) { console.log('[ScrollLoad]   sentinel:', s.tagName, s.className.substring(0, 60)); });
-          } catch(e) {}
-
-          // Check for React fiber state with story/document data
-          try {
-            var fKey = Object.keys(scrollEl).find(function(k) { return k.startsWith('__reactFiber'); });
-            if (fKey) {
-              var cur = scrollEl[fKey];
-              for (var fi = 0; fi < 15 && cur; fi++) {
-                if (cur.memoizedState) {
-                  // Look for state containing story text, chunks, or document data
-                  var ms = cur.memoizedState;
-                  while (ms) {
-                    if (ms.queue && ms.queue.lastRenderedState) {
-                      var st = ms.queue.lastRenderedState;
-                      if (typeof st === 'object' && st !== null) {
-                        var stKeys = Object.keys(st);
-                        var interesting = stKeys.filter(function(k) {
-                          return k.toLowerCase().includes('chunk') || k.toLowerCase().includes('text') ||
-                                 k.toLowerCase().includes('content') || k.toLowerCase().includes('document') ||
-                                 k.toLowerCase().includes('story') || k.toLowerCase().includes('block');
-                        });
-                        if (interesting.length > 0) {
-                          console.log('[ScrollLoad] React state at fiber level', fi, ':', interesting.join(', '));
-                          interesting.forEach(function(k) {
-                            var v = st[k];
-                            if (Array.isArray(v)) console.log('[ScrollLoad]   ', k, '= Array[' + v.length + ']');
-                            else if (typeof v === 'string') console.log('[ScrollLoad]   ', k, '= string(' + v.length + ' chars)');
-                            else if (typeof v === 'object' && v) console.log('[ScrollLoad]   ', k, '= object, keys:', Object.keys(v).slice(0, 10).join(','));
-                          });
-                        }
-                      }
-                    }
-                    ms = ms.next;
-                  }
-                }
-                cur = cur.return;
-              }
-            }
-          } catch(e) { console.log('[ScrollLoad] React state probe error:', e.message); }
-
-          // Phase 1: Scroll UP to load beginning of story
-          // NovelAI loads the end of the story first; scrolling up fetches earlier chunks.
-          var prevLength = pm.textContent.length;
-          var stableCount = 0;
-          var maxSteps = 300;
-          var stepCount = 0;
-          var stableThreshold = 6;
-          var step = Math.max(viewportHeight * 0.7, 200);
-          var phase = 'up'; // 'up' then 'down'
-
-          // Start at current scroll position (usually near bottom)
-          var pos = scrollEl.scrollTop;
-
-          function scrollStep() {
-            stepCount++;
-
-            if (phase === 'up') {
-              // Scroll upward
-              pos -= step;
-              if (pos < 0) pos = 0;
-              scrollEl.scrollTop = pos;
-
-              var currentLength = pm.textContent.length;
-              if (currentLength !== prevLength) {
-                console.log('[ScrollLoad] UP step', stepCount, 'chars:', currentLength, '(+' + (currentLength - prevLength) + ')');
-                stableCount = 0;
-                prevLength = currentLength;
-              } else {
-                stableCount++;
-              }
-
-              // Switch to scrolling down when we've reached the top and text stabilized
-              if (pos <= 0 && stableCount >= stableThreshold) {
-                console.log('[ScrollLoad] Reached top. Switching to scroll DOWN. chars:', pm.textContent.length);
-                phase = 'down';
-                pos = 0;
-                stableCount = 0;
-                prevLength = pm.textContent.length;
-              }
-            } else {
-              // Phase 2: Scroll DOWN to load end of story
-              pos += step;
-              scrollEl.scrollTop = pos;
-
-              var totalHeight = scrollEl.scrollHeight;
-              var currentLength = pm.textContent.length;
-
-              if (currentLength !== prevLength) {
-                console.log('[ScrollLoad] DOWN step', stepCount, 'chars:', currentLength, '(+' + (currentLength - prevLength) + ')');
-                stableCount = 0;
-                prevLength = currentLength;
-              } else {
-                stableCount++;
-              }
-
-              var atBottom = pos >= totalHeight - viewportHeight;
-              if (atBottom && stableCount >= stableThreshold) {
-                scrollEl.scrollTop = scrollEl.scrollHeight;
-                console.log('[ScrollLoad] Done. Steps:', stepCount, 'chars:', pm.textContent.length, 'height:', scrollEl.scrollHeight);
-                resolve({
-                  success: true,
-                  length: pm.textContent.length,
-                  steps: stepCount,
-                  finalHeight: scrollEl.scrollHeight
-                });
-                return;
-              }
-              if (atBottom) pos = totalHeight - viewportHeight;
-            }
-
-            if (stepCount >= maxSteps) {
-              console.log('[ScrollLoad] Max steps reached. chars:', pm.textContent.length);
-              resolve({ success: true, length: pm.textContent.length, steps: stepCount, finalHeight: scrollEl.scrollHeight });
-              return;
-            }
-
-            setTimeout(scrollStep, 500);
-          }
-
-          setTimeout(scrollStep, 1000);
-        });
+        }
+        if (!scrollEl || scrollEl === document.body) scrollEl = pm;
+        return {
+          viewportHeight: scrollEl.clientHeight || 600,
+          scrollHeight: scrollEl.scrollHeight,
+          scrollTop: scrollEl.scrollTop,
+          textLength: pm.textContent.length,
+          scrollSelector: '.' + (scrollEl.className || '').split(' ')[0]
+        };
       })()
     `);
+
+    if (!scrollInfo) {
+      console.log('[HeadlessSync] Scroll-to-load: no ProseMirror found');
+    } else {
+      const step = Math.max(scrollInfo.viewportHeight * 0.7, 200);
+      let pos = scrollInfo.scrollTop;
+      let prevLength = scrollInfo.textLength;
+      let stableCount = 0;
+      let stepCount = 0;
+      let chunksLoaded = 0;
+      let totalChars = prevLength;
+      let phase = 'up';
+      const stableThreshold = 6;
+      const maxSteps = 300;
+      const sel = scrollInfo.scrollSelector;
+
+      while (stepCount < maxSteps) {
+        stepCount++;
+
+        // Execute one scroll step
+        const stepResult = await webview.executeJavaScript(`
+          (function() {
+            var scrollEl = document.querySelector('${sel}') || document.querySelector('.ProseMirror');
+            var pm = document.querySelector('.ProseMirror');
+            if (!scrollEl || !pm) return null;
+            scrollEl.scrollTop = ${phase === 'up' ? Math.max(0, pos - step) : pos + step};
+            return {
+              textLength: pm.textContent.length,
+              scrollTop: scrollEl.scrollTop,
+              scrollHeight: scrollEl.scrollHeight
+            };
+          })()
+        `).catch(() => null);
+
+        if (!stepResult) break;
+
+        if (phase === 'up') pos = Math.max(0, pos - step);
+        else pos += step;
+
+        if (stepResult.textLength !== prevLength) {
+          chunksLoaded++;
+          totalChars = stepResult.textLength;
+          stableCount = 0;
+          console.log(`[ScrollLoad] ${phase.toUpperCase()} chunk #${chunksLoaded}: ${totalChars} chars (+${stepResult.textLength - prevLength})`);
+          bus.emit('story:loading-phase', 'parsing',
+            `Retrieving story text... ${chunksLoaded} chunk${chunksLoaded > 1 ? 's' : ''} loaded (${totalChars.toLocaleString()} chars)`);
+          prevLength = stepResult.textLength;
+        } else {
+          stableCount++;
+        }
+
+        // Phase transitions
+        if (phase === 'up' && stepResult.scrollTop <= 0 && stableCount >= stableThreshold) {
+          console.log(`[ScrollLoad] Reached top after ${chunksLoaded} chunks. Scrolling down...`);
+          phase = 'down';
+          pos = 0;
+          stableCount = 0;
+          prevLength = stepResult.textLength;
+        } else if (phase === 'down') {
+          const atBottom = pos >= stepResult.scrollHeight - scrollInfo.viewportHeight;
+          if (atBottom && stableCount >= stableThreshold) break;
+          if (atBottom) pos = stepResult.scrollHeight - scrollInfo.viewportHeight;
+        }
+
+        await new Promise(r => setTimeout(r, 400));
+      }
+
+      console.log(`[ScrollLoad] Done. ${chunksLoaded} chunks, ${totalChars} chars, ${stepCount} steps`);
+    }
+
+    const result = { success: true };
 
     console.log('[HeadlessSync] Scroll-to-load result:', JSON.stringify(result));
 
@@ -388,7 +333,7 @@ export function updateEditorStyles() {
 
   const fontSize = refs.headlessFontSizeSlider?.value || 16;
   const lineHeight = refs.headlessLineHeightSlider?.value || 1.8;
-  const maxWidth = refs.headlessWidthSlider?.value || 850;
+  const maxWidth = refs.headlessWidthSlider?.value || 1100;
 
   storyEditor.style.fontSize = `${fontSize}px`;
   storyEditor.style.lineHeight = lineHeight;
@@ -423,12 +368,13 @@ export async function loadCustomizationFromStore() {
     const settings = storySettings?.editorCustomization || {
       fontSize: 16,
       lineHeight: 1.8,
-      editorWidth: 850
+      editorWidth: 1100
     };
 
     if (refs.headlessFontSizeSlider) refs.headlessFontSizeSlider.value = settings.fontSize;
     if (refs.headlessLineHeightSlider) refs.headlessLineHeightSlider.value = settings.lineHeight;
     if (refs.headlessWidthSlider) refs.headlessWidthSlider.value = settings.editorWidth;
+    if (refs.editorWidthLabel) refs.editorWidthLabel.textContent = settings.editorWidth;
 
     updateEditorStyles();
   } catch (e) {
@@ -576,6 +522,23 @@ export function init() {
     });
   }
 
+  // Width +/- buttons in status bar
+  function adjustWidth(delta) {
+    const slider = refs.headlessWidthSlider;
+    const current = parseInt(slider?.value || '1100', 10);
+    const next = Math.max(400, Math.min(1600, current + delta));
+    if (slider) slider.value = next;
+    if (refs.headlessWidthValue) refs.headlessWidthValue.textContent = `${next}px`;
+    if (refs.editorWidthLabel) refs.editorWidthLabel.textContent = next;
+    updateEditorStyles();
+  }
+  if (refs.editorWidthDown) {
+    refs.editorWidthDown.addEventListener('click', () => adjustWidth(-100));
+  }
+  if (refs.editorWidthUp) {
+    refs.editorWidthUp.addEventListener('click', () => adjustWidth(100));
+  }
+
   // Immediate display from cache when bulk data arrives
   bus.on('story:text-cached', (cached) => {
     if (!storyEditor || !cached || !cached.text) return;
@@ -596,10 +559,9 @@ export function init() {
 
     // Keep overlay visible — show "Loading story..." phase
     state.storyTextLoaded = false;
-    bus.emit('story:loading-phase', 'connecting', 'Loading story text...');
+    bus.emit('story:loading-phase', 'connecting', 'Preparing story...');
 
-    // Poll for script proxy readiness, then use api.v1.document.scan() for full text.
-    // ProseMirror doc model is virtualized — only the Script API has the complete story.
+    // Poll for ProseMirror + proxy readiness, then scroll to load full text.
     let attempts = 0;
     const maxAttempts = 20; // 20 * 1.5s = 30s max
     const pollInterval = setInterval(async () => {
@@ -609,13 +571,15 @@ export function init() {
         return;
       }
 
-      // Update progress phases
+      // Story-specific progress phases
       if (attempts <= 2) {
-        bus.emit('story:loading-phase', 'connecting', 'Waiting for NovelAI to load the story...');
+        bus.emit('story:loading-phase', 'connecting', 'Opening story in NovelAI...');
+      } else if (attempts <= 4) {
+        bus.emit('story:loading-phase', 'dashboard', 'Waiting for story editor to initialize...');
       } else if (attempts <= 6) {
-        bus.emit('story:loading-phase', 'dashboard', 'Waiting for story script to initialize...');
+        bus.emit('story:loading-phase', 'dashboard', 'Connecting to story data...');
       } else {
-        bus.emit('story:loading-phase', 'parsing', 'Still loading... (' + (attempts * 1.5).toFixed(0) + 's)');
+        bus.emit('story:loading-phase', 'parsing', 'Loading story text... (' + (attempts * 1.5).toFixed(0) + 's)');
       }
 
       if (attempts >= maxAttempts) {
@@ -640,7 +604,7 @@ export function init() {
 
       if (hasPM && (state.loreProxyReady || state.memoryProxyReady)) {
         clearInterval(pollInterval);
-        bus.emit('story:loading-phase', 'parsing', 'Loading full story text...');
+        bus.emit('story:loading-phase', 'parsing', 'Retrieving full story from NovelAI...');
         console.log('[HeadlessSync] ProseMirror + proxy ready. Starting scroll-to-load...');
 
         // Scroll through the visible webview to trigger NovelAI's chunk loading
@@ -680,9 +644,10 @@ export function init() {
     bus.emit('story:loading-phase', 'found', 'Story loaded!');
     setTimeout(() => {
       if (state.currentStoryId !== storyId) return;
-      // Clear dashboard state so overlay hides and editor shows
+      // Clear loading flags so overlay hides and editor shows
       state.storyTextLoaded = true;
       state.isDashboardActive = false;
+      state._loadingStoryId = null;
       updateStorySelectorVisibility();
       hideLoadingBar();
       if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'In Sync';

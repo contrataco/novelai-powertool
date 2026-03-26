@@ -56,6 +56,11 @@ export const editorLoadingBar = document.getElementById('editorLoadingBar');
 export const editorLoadingText = document.getElementById('editorLoadingText');
 export const editorLoadingFill = document.getElementById('editorLoadingFill');
 
+// Editor width controls
+export const editorWidthDown = document.getElementById('editorWidthDown');
+export const editorWidthUp = document.getElementById('editorWidthUp');
+export const editorWidthLabel = document.getElementById('editorWidthLabel');
+
 // Story loading progress
 export const storyLoadingStatus = document.getElementById('storyLoadingStatus');
 export const storyLoadingFill = document.getElementById('storyLoadingFill');
