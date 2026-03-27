@@ -689,6 +689,13 @@ export function init() {
     }
   });
 
+  // Merge newly detected scenes from incremental polling in webview-polling.js
+  bus.on('timeline:scene-detected', ({ scenes }) => {
+    if (!scenes?.length || !state.timelineState) return;
+    refreshTimelineUI();
+    showToast(`${scenes.length} new scene${scenes.length > 1 ? 's' : ''} detected`, 3000);
+  });
+
   // Refresh timeline when settings are saved (provider or story settings may affect scan behavior)
   bus.on('settings:saved', () => {
     refreshTimelineUI();

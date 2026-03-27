@@ -1,6 +1,6 @@
 // memory-manager.js — Token bar, events, auto-update, proxy
 
-import { state } from './state.js';
+import { state, bus } from './state.js';
 import {
   webview,
   memoryProxyDot, memoryProxyText,
@@ -296,7 +296,7 @@ export function init() {
     }
   });
 
-  // Auto-update interval -- runs every 20s, checks for new content
+  // Auto-update interval — runs every 20s, checks for new content
   setInterval(async () => {
     if (!state.memorySettings || !state.memorySettings.autoUpdate) return;
     if (!state.currentStoryId || state.memoryIsProcessing) return;
@@ -316,6 +316,11 @@ export function init() {
       // Ignore polling errors
     }
   }, 20000);
+
+  // Re-render memory UI when switching stories (state.memoryState loaded by webview-polling.js)
+  bus.on('story:changed', () => {
+    renderMemoryUI();
+  });
 
   // Check memory proxy on initial webview ready (data loading handled by handleStoryContextChange)
   webview.addEventListener('dom-ready', () => {

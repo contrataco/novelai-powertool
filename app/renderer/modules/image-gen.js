@@ -400,8 +400,6 @@ export async function generateScenePromptFromEditor() {
         });
       }
 
-      bus.emit('prompt:updated', { prompt: state.currentPrompt, negativePrompt: state.currentNegativePrompt });
-
       // Auto-generate image if toggle is on — use raw flags since suffixes are already baked in
       // Pass structured prompt data for V4 char_captions
       if (autoGenerateToggle.checked && !state.isGenerating) {

@@ -411,18 +411,15 @@ export function init(deps) {
     });
   }
 
-  // Metadata panel
-  if (refs.editorStoryTitle) {
-    refs.editorStoryTitle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isVisible = refs.headlessMetadataPanel?.classList.contains('active');
-      document.querySelectorAll('.headless-panel').forEach(p => p.classList.remove('active'));
-      if (!isVisible && refs.headlessMetadataPanel) {
-        refs.headlessMetadataPanel.classList.add('active');
-        loadMetadataToPanel();
-      }
-    });
-  }
+  // Metadata panel — opened via bus event from story-selector.js
+  bus.on('headless:open-metadata-panel', () => {
+    const isVisible = refs.headlessMetadataPanel?.classList.contains('active');
+    document.querySelectorAll('.headless-panel').forEach(p => p.classList.remove('active'));
+    if (!isVisible && refs.headlessMetadataPanel) {
+      refs.headlessMetadataPanel.classList.add('active');
+      loadMetadataToPanel();
+    }
+  });
   if (refs.headlessMetadataSaveBtn) {
     refs.headlessMetadataSaveBtn.addEventListener('click', () => saveMetadataFromPanel());
   }

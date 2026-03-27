@@ -92,12 +92,19 @@ function renderScriptCard(script, bundledVersion) {
       try {
         const bundled = await loadBundledInfo();
         if (!bundled.content) { showToast('Bundled script not found'); return; }
-        // Disable old, import new
-        // For now, user should re-import manually — full automation needs more testing
-        showToast('Copy the updated script to clipboard and import via NovelAI Script Manager');
-        // Copy to clipboard
-        await navigator.clipboard.writeText(bundled.content);
-        showToast('Script copied to clipboard! Paste in NovelAI Script Manager.');
+        // Automated flow: disable old script, import new, refresh list
+        try {
+          await window.powertool.scriptMgrDisableScript(POWERTOOL_SCRIPT_NAME);
+          await window.powertool.scriptMgrImportScript(bundled.content);
+          await window.powertool.scriptMgrClose();
+          showToast(`Updated to ${bundledVersion}`, 3000, 'success');
+          await refreshScripts();
+        } catch (autoErr) {
+          // Fallback: copy to clipboard for manual import
+          console.warn('[Scripts] Auto-update failed, falling back to clipboard:', autoErr);
+          await navigator.clipboard.writeText(bundled.content);
+          showToast('Auto-update failed — script copied to clipboard. Paste in NovelAI Script Manager.');
+        }
       } catch (e) {
         showToast('Update failed: ' + e.message);
       } finally {
