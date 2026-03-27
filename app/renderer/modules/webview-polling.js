@@ -703,12 +703,14 @@ export function init() {
     }
   }, 3000, { condition: () => webviewReady });
 
-  // 2. Scene settings refresh (~30s) — keep cached settings up to date
-  polling.register('scene-settings', refreshSceneSettings, 30000);
+  // 2. Scene settings refresh (~60s) — keep cached settings up to date
+  // Immediate refreshes happen via bus.emit('settings:saved')
+  polling.register('scene-settings', refreshSceneSettings, 60000);
 
   // 3. Auto-gen / story change detection (~10s)
   polling.register('auto-gen', async () => {
     if (state.isGenerating || state.isGeneratingPrompt) return;
+    if (state.llmBusy || state.loreIsScanning) return;
     // Check auto-generate setting
     if (cachedSceneSettings && cachedSceneSettings.autoGeneratePrompts === false) return;
     const minChange = (cachedSceneSettings && cachedSceneSettings.minTextChange) || 50;

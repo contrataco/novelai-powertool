@@ -843,24 +843,7 @@ function createEntryCard(entry) {
     </div>
   `;
 
-  card.querySelector('.lore-card-text').addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.currentTarget.classList.toggle('expanded');
-  });
-  card.querySelector('.category-badge').addEventListener('click', (e) => {
-    e.stopPropagation();
-    cycleCategoryBadge(e.target, () => entry.category, (newCat) => {
-      entry.category = newCat;
-      saveLoreState();
-    });
-  });
-  card.querySelector('[data-action="accept"]').addEventListener('click', () => acceptEntry(entry.id));
-  card.querySelector('[data-action="reject"]').addEventListener('click', () => rejectEntry(entry.id));
-  card.querySelector('[data-action="edit"]').addEventListener('click', () => editEntry(entry.id, card));
-  if (hasTemplate) {
-    card.querySelector('[data-action="reformat"]').addEventListener('click', () => reformatEntry(entry.id));
-  }
-
+  // Event listeners handled via delegation on lorePendingList (see init)
   return card;
 }
 
@@ -881,21 +864,7 @@ function createMergeCard(merge) {
     </div>
   `;
 
-  card.querySelector('.lore-card-text').addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.currentTarget.classList.toggle('expanded');
-  });
-  card.querySelector('.category-badge').addEventListener('click', (e) => {
-    e.stopPropagation();
-    cycleCategoryBadge(e.target, () => merge.newCategory, (newCat) => {
-      merge.newCategory = newCat;
-      saveLoreState();
-    });
-  });
-  card.querySelector('[data-action="accept-merge"]').addEventListener('click', () => acceptMerge(merge.id));
-  card.querySelector('[data-action="reject-merge"]').addEventListener('click', () => rejectMerge(merge.id));
-  card.querySelector('[data-action="edit-merge"]').addEventListener('click', () => editMerge(merge.id, card));
-
+  // Event listeners handled via delegation on loreMergesList (see init)
   return card;
 }
 
@@ -930,21 +899,7 @@ function createUpdateCard(update) {
     </div>
   `;
 
-  card.querySelector('.lore-card-text').addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.currentTarget.classList.toggle('expanded');
-  });
-  card.querySelector('.category-badge').addEventListener('click', (e) => {
-    e.stopPropagation();
-    cycleCategoryBadge(e.target, () => update.category, (newCat) => {
-      update.category = newCat;
-      saveLoreState();
-    });
-  });
-  card.querySelector('[data-action="accept-update"]').addEventListener('click', () => acceptUpdate(update.id));
-  card.querySelector('[data-action="dismiss-update"]').addEventListener('click', () => dismissUpdate(update.id));
-  card.querySelector('[data-action="edit-update"]').addEventListener('click', () => editUpdate(update.id, card));
-
+  // Event listeners handled via delegation on loreUpdatesList (see init)
   return card;
 }
 
@@ -1695,9 +1650,7 @@ function createCleanupCard(cleanup) {
     });
   }
 
-  card.querySelector('[data-action="accept-cleanup"]').addEventListener('click', () => acceptCleanup(cleanup.id));
-  card.querySelector('[data-action="reject-cleanup"]').addEventListener('click', () => rejectCleanup(cleanup.id));
-
+  // Event listeners handled via delegation on loreCleanupList (see init)
   return card;
 }
 
@@ -2464,6 +2417,73 @@ export function init() {
     timelineView.classList.remove('u-hidden');
     import('./scene-timeline.js').then(m => m.refreshTimelineUI && m.refreshTimelineUI());
   });
+
+  // --- Delegated event listeners for lore card lists ---
+  // Single listener per container replaces per-card addEventListener calls
+  function handleLoreCardClick(e) {
+    // Text expand/collapse
+    const textEl = e.target.closest('.lore-card-text');
+    if (textEl && !e.target.closest('[data-action]') && !e.target.closest('.category-badge')) {
+      textEl.classList.toggle('expanded');
+      return;
+    }
+    // Category badge cycling
+    const badge = e.target.closest('.category-badge.editable');
+    if (badge) {
+      e.stopPropagation();
+      const card = badge.closest('.lore-card');
+      if (!card || !state.loreState) return;
+      const entryId = card.dataset.entryId;
+      const cleanupId = card.dataset.cleanupId;
+      // Find the object to update
+      let obj, field;
+      if (entryId) {
+        obj = (state.loreState.pendingEntries || []).find(o => o.id === entryId);
+        field = 'category';
+      }
+      if (!obj && card.closest('#loreMergesList')) {
+        const id = card.querySelector('[data-id]')?.dataset.id;
+        obj = id && (state.loreState.pendingMerges || []).find(o => o.id === id);
+        field = 'newCategory';
+      }
+      if (!obj && card.closest('#loreUpdatesList')) {
+        const id = card.querySelector('[data-id]')?.dataset.id;
+        obj = id && (state.loreState.pendingUpdates || []).find(o => o.id === id);
+        field = 'category';
+      }
+      if (obj && field) {
+        cycleCategoryBadge(badge, () => obj[field], (newCat) => {
+          obj[field] = newCat;
+          saveLoreState();
+        });
+      }
+      return;
+    }
+    // Action buttons
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const id = btn.dataset.id;
+    const card = btn.closest('.lore-card');
+    switch (action) {
+      case 'accept': return acceptEntry(id);
+      case 'reject': return rejectEntry(id);
+      case 'edit': return editEntry(id, card);
+      case 'reformat': return reformatEntry(id);
+      case 'accept-merge': return acceptMerge(id);
+      case 'reject-merge': return rejectMerge(id);
+      case 'edit-merge': return editMerge(id, card);
+      case 'accept-update': return acceptUpdate(id);
+      case 'dismiss-update': return dismissUpdate(id);
+      case 'edit-update': return editUpdate(id, card);
+      case 'accept-cleanup': return acceptCleanup(card?.dataset.cleanupId);
+      case 'reject-cleanup': return rejectCleanup(card?.dataset.cleanupId);
+    }
+  }
+  lorePendingList.addEventListener('click', handleLoreCardClick);
+  loreMergesList.addEventListener('click', handleLoreCardClick);
+  loreUpdatesList.addEventListener('click', handleLoreCardClick);
+  loreCleanupList.addEventListener('click', handleLoreCardClick);
 
   // Periodically refresh last-scanned timestamp
   setInterval(() => {

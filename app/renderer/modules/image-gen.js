@@ -304,13 +304,21 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
   }
 }
 
+// Cooldown to prevent double-triggers from overlapping polling tasks
+let _lastPromptGenAt = 0;
+const PROMPT_GEN_COOLDOWN_MS = 5000;
+
 // Electron-side scene prompt generation -- reads story text + lorebook entries,
 // calls GLM-4-6 to produce an image prompt, then triggers image gen + suggestions.
 export async function generateScenePromptFromEditor() {
+  // Cooldown: at most one prompt generation per 5 seconds
+  const now = Date.now();
+  if (now - _lastPromptGenAt < PROMPT_GEN_COOLDOWN_MS) return;
   // Skip if any LLM operation is in progress (avoids NovelAI 429 concurrent lock)
   if (state.isGeneratingPrompt || state.isGenerating || state.loreIsScanning) return;
   if (state.memoryIsProcessing) return;
   if (state.comprehensionScanning) return;
+  _lastPromptGenAt = now;
   state.isGeneratingPrompt = true;
   const startedForStory = state.currentStoryId;
 

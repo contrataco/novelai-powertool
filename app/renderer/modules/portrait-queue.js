@@ -48,6 +48,15 @@ async function processQueue() {
     }
   }
 
+  // Release large base64 strings from character objects before save
+  const rpg = state.litrpgState;
+  if (rpg?.characters) {
+    for (const char of Object.values(rpg.characters)) {
+      if (char._portraitData) char._portraitData = null;
+      if (char._thumbnailData) char._thumbnailData = null;
+    }
+  }
+
   queue = [];
   isProcessing = false;
 

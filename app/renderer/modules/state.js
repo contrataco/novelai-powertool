@@ -15,6 +15,14 @@ export class EventBus {
     this._listeners[event] = this._listeners[event].filter(f => f !== fn);
   }
 
+  once(event, fn) {
+    const wrapper = (data) => {
+      this.off(event, wrapper);
+      fn(data);
+    };
+    this.on(event, wrapper);
+  }
+
   emit(event, data) {
     if (!this._listeners[event]) return;
     for (const fn of this._listeners[event]) {

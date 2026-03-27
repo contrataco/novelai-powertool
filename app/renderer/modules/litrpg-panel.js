@@ -388,9 +388,7 @@ function renderParty(rpg) {
     </div>`;
   }).join('');
 
-  rpgPartyList.querySelectorAll('.rpg-character-card-v2').forEach(card => {
-    card.addEventListener('click', () => openStatOverlay(card.dataset.charId, rpg));
-  });
+  // Party card click handlers delegated to rpgPartyList in init()
 }
 
 // =========================================================================
@@ -1468,33 +1466,7 @@ function renderPendingUpdates(rpg) {
     `;
   }).join('');
 
-  // Wire accept/reject buttons
-  rpgUpdatesList.querySelectorAll('.rpg-accept-update').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const card = btn.closest('.rpg-update-card');
-      const updateId = card.dataset.updateId;
-      const result = await window.powertool.litrpgAcceptUpdate(state.currentStoryId, updateId);
-      if (result.success) {
-        state.litrpgState = result.state;
-        refreshRpgUI();
-        showToast('Update accepted', 2000, 'success');
-      } else {
-        showToast(`Failed to accept: ${result.error || 'Unknown error'}`, 3000, 'error');
-      }
-    });
-  });
-
-  rpgUpdatesList.querySelectorAll('.rpg-reject-update').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const card = btn.closest('.rpg-update-card');
-      const updateId = card.dataset.updateId;
-      const result = await window.powertool.litrpgRejectUpdate(state.currentStoryId, updateId);
-      if (result.success) {
-        state.litrpgState = result.state;
-        refreshRpgUI();
-      }
-    });
-  });
+  // Accept/reject handlers delegated to rpgUpdatesList in init()
 }
 
 // =========================================================================
@@ -2545,6 +2517,37 @@ export function init() {
   if (rpgStatOverlayClose) rpgStatOverlayClose.addEventListener('click', closeStatOverlay);
   if (rpgStatOverlay) rpgStatOverlay.addEventListener('click', (e) => {
     if (e.target === rpgStatOverlay) closeStatOverlay();
+  });
+
+  // --- Delegated event listeners for RPG card lists ---
+  if (rpgPartyList) rpgPartyList.addEventListener('click', (e) => {
+    const card = e.target.closest('.rpg-character-card-v2');
+    if (card) openStatOverlay(card.dataset.charId, getRpgState());
+  });
+
+  if (rpgUpdatesList) rpgUpdatesList.addEventListener('click', async (e) => {
+    const acceptBtn = e.target.closest('.rpg-accept-update');
+    const rejectBtn = e.target.closest('.rpg-reject-update');
+    if (!acceptBtn && !rejectBtn) return;
+    const card = (acceptBtn || rejectBtn).closest('.rpg-update-card');
+    if (!card) return;
+    const updateId = card.dataset.updateId;
+    if (acceptBtn) {
+      const result = await window.powertool.litrpgAcceptUpdate(state.currentStoryId, updateId);
+      if (result.success) {
+        state.litrpgState = result.state;
+        refreshRpgUI();
+        showToast('Update accepted', 2000, 'success');
+      } else {
+        showToast(`Failed to accept: ${result.error || 'Unknown error'}`, 3000, 'error');
+      }
+    } else {
+      const result = await window.powertool.litrpgRejectUpdate(state.currentStoryId, updateId);
+      if (result.success) {
+        state.litrpgState = result.state;
+        refreshRpgUI();
+      }
+    }
   });
 
   // NPC search (Phase 5F)
