@@ -2023,10 +2023,9 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       if (optProfile && optFields && optFields.length > 0) {
         effectiveSettings._lorebookProfile = optProfile;
         effectiveSettings.confirmedOptFields = optFields;
-        // Load entity profiles for optimization rules
-        const compStateForOpt = db.getComprehension(storyId);
-        if (compStateForOpt && compStateForOpt.entityProfiles) {
-          effectiveSettings._entityProfiles = compStateForOpt.entityProfiles;
+        // Reuse comprehension state loaded above for entity profiles
+        if (compState && compState.entityProfiles) {
+          effectiveSettings._entityProfiles = compState.entityProfiles;
         }
         console.log(`[Main] Pass 6 enabled: profile=${optProfile}, fields=${optFields.length}`);
       }

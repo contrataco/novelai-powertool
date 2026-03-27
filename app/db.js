@@ -16,6 +16,8 @@ function init(userDataPath) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   createTables();
+  db.pragma('analysis_limit = 1000');
+  db.exec('ANALYZE');
   return db;
 }
 
@@ -27,6 +29,8 @@ function createTables() {
       first_seen_at INTEGER NOT NULL,
       last_accessed_at INTEGER NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_stories_last_accessed ON stories(last_accessed_at DESC);
 
     CREATE TABLE IF NOT EXISTS scene_state (
       story_id TEXT PRIMARY KEY REFERENCES stories(id),
@@ -261,17 +265,18 @@ function setStoryText(storyId, text, source = 'webview') {
 // --- Bulk load (used on story switch) ---
 
 function loadAllStoryData(storyId) {
-  return {
-    sceneState: getSceneState(storyId),
-    loreState: getLoreState(storyId),
-    comprehension: getComprehension(storyId),
-    memoryState: getMemoryState(storyId),
-    litrpgState: getLitrpgState(storyId),
-    ttsState: getTtsState(storyId),
-    storySettings: getStorySettings(storyId),
-    timelineState: getTimelineState(storyId),
-    storyText: getStoryText(storyId),
-  };
+  const loadInTransaction = db.transaction((sid) => ({
+    sceneState: getSceneState(sid),
+    loreState: getLoreState(sid),
+    comprehension: getComprehension(sid),
+    memoryState: getMemoryState(sid),
+    litrpgState: getLitrpgState(sid),
+    ttsState: getTtsState(sid),
+    storySettings: getStorySettings(sid),
+    timelineState: getTimelineState(sid),
+    storyText: getStoryText(sid),
+  }));
+  return loadInTransaction(storyId);
 }
 
 // --- Migration from electron-store ---
@@ -320,6 +325,12 @@ function getVisualProfiles(storyId) {
   return profiles;
 }
 
+function getVisualProfile(storyId, characterName) {
+  const row = db.prepare('SELECT data FROM visual_profiles WHERE story_id = ? AND character_name = ?').get(storyId, characterName);
+  if (!row) return null;
+  try { return JSON.parse(row.data); } catch { return null; }
+}
+
 function setVisualProfile(storyId, characterName, data) {
   upsertStory(storyId, '');
   db.prepare(`INSERT OR REPLACE INTO visual_profiles (story_id, character_name, data, updated_at) VALUES (?, ?, ?, ?)`)
@@ -348,7 +359,7 @@ module.exports = {
   getLitrpgState, setLitrpgState, getOrCreateLitrpgState, LITRPG_STATE_DEFAULTS,
   getTtsState, setTtsState, TTS_STATE_DEFAULTS,
   getStorySettings, setStorySettings,
-  getVisualProfiles, setVisualProfile, resetVisualProfiles,
+  getVisualProfiles, getVisualProfile, setVisualProfile, resetVisualProfiles,
   getTimelineState, setTimelineState,
   getStoryText, setStoryText,
   loadAllStoryData, migrateFromStore,

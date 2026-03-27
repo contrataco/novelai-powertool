@@ -145,16 +145,17 @@ function enforceCap(storyId, type, cap) {
 
   const dir = getStoryDir(storyId);
   for (const item of oldest) {
-    // Delete files
     const filePath = path.join(dir, item.filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     if (item.thumb_filename) {
       const thumbPath = path.join(dir, item.thumb_filename);
       if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
     }
-    // Delete row
-    dbInstance.prepare('DELETE FROM media_items WHERE id = ?').run(item.id);
   }
+  // Batch delete rows
+  const ids = oldest.map(item => item.id);
+  const placeholders = ids.map(() => '?').join(',');
+  dbInstance.prepare(`DELETE FROM media_items WHERE id IN (${placeholders})`).run(...ids);
 
   console.log(`${LOG_PREFIX} Enforced ${type} cap: removed ${excess} oldest items`);
 }
@@ -221,13 +222,13 @@ function deleteMedia(storyId, mediaId) {
 }
 
 function getMediaCount(storyId) {
-  const images = dbInstance.prepare(
-    'SELECT COUNT(*) as cnt FROM media_items WHERE story_id = ? AND type = ?'
-  ).get(storyId, 'image').cnt;
-  const videos = dbInstance.prepare(
-    'SELECT COUNT(*) as cnt FROM media_items WHERE story_id = ? AND type = ?'
-  ).get(storyId, 'video').cnt;
-  return { images, videos };
+  const row = dbInstance.prepare(`
+    SELECT
+      SUM(CASE WHEN type = 'image' THEN 1 ELSE 0 END) as images,
+      SUM(CASE WHEN type = 'video' THEN 1 ELSE 0 END) as videos
+    FROM media_items WHERE story_id = ?
+  `).get(storyId);
+  return { images: row?.images || 0, videos: row?.videos || 0 };
 }
 
 module.exports = {
