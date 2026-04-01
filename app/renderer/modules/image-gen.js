@@ -251,7 +251,7 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
       // Append video button (Venice only)
       appendVideoButton();
 
-      bus.emit('image:generated', { imageData: result.imageData, meta: result.meta });
+      bus.emit('image:generated', { imageData: result.imageData, meta: result.meta, storyId: state.currentStoryId });
     } else {
       wasError = true;
       let errorMsg;

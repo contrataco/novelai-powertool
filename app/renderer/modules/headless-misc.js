@@ -5,7 +5,7 @@ import * as refs from './dom-refs.js';
 import { loreCall } from './lore-creator.js';
 import { showToast } from './utils.js';
 import { togglePanel, setupPanelToggle } from './headless-panels.js';
-import { currentLoreEntries, selectLoreEntry } from './headless-lore-panel.js';
+import { getCurrentEntries, selectLoreEntry } from './headless-lore-panel.js';
 
 const { webview, storyEditor } = refs;
 
@@ -26,7 +26,7 @@ function initSelectionToolbar() {
     // Context-aware View Lore button
     let loreMatch = null;
     if (text.length > 2 && text.length < 50) {
-      loreMatch = currentLoreEntries.find(e =>
+      loreMatch = getCurrentEntries().find(e =>
         (e.displayName || '').toLowerCase() === text.toLowerCase() ||
         (e.keys || '').split(',').some(k => k.trim().toLowerCase() === text.toLowerCase())
       );
@@ -239,62 +239,75 @@ async function saveMetadataFromPanel() {
 
 // --- History ---
 
-let currentHistorySnapshots = [];
-
 async function loadHistoryToPanel() {
-  if (refs.headlessHistoryLoading) refs.headlessHistoryLoading.classList.remove('u-hidden');
-  if (refs.headlessHistoryList) refs.headlessHistoryList.innerHTML = '';
+  const listEl = document.getElementById('headlessHistoryList');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:#555;font-size:12px;padding:8px;">Loading history…</div>';
 
   try {
-    const snapshots = await webview.executeJavaScript(`
+    const items = await webview.executeJavaScript(`
       (function() {
-        var history = [];
-        var items = document.querySelectorAll('div[class*="HistoryItem"]');
-        items.forEach(function(item, i) {
-          history.push({ index: i, label: item.querySelector('span')?.textContent || item.textContent, time: item.querySelector('time')?.textContent || "" });
-        });
-        if (history.length === 0) {
-          return [{ index: 0, label: "Current State", time: "Now" }, { index: 1, label: "Previous Edit", time: "2m ago" }];
+        var containers = document.querySelectorAll('[class*="HistoryItem"], [class*="history-item"], [data-testid*="history"]');
+        if (!containers.length) {
+          var timeEls = document.querySelectorAll('time, [datetime]');
+          containers = Array.from(timeEls).map(function(t) { return t.closest('li, [role="listitem"]'); }).filter(Boolean);
         }
-        return history;
+        return Array.from(containers).slice(0, 20).map(function(el, i) {
+          return {
+            index: i,
+            label: (el.querySelector('time, [datetime]') || el.querySelector('[class*="Date"], [class*="Time"]') || {}).textContent?.trim()
+              || ('Snapshot ' + (i + 1)),
+          };
+        });
       })()
     `);
-    currentHistorySnapshots = snapshots || [];
-    renderHistoryList();
+
+    listEl.innerHTML = '';
+
+    if (!items || items.length === 0) {
+      listEl.innerHTML = '<div style="color:#555;font-size:12px;padding:8px;">No history snapshots found. History may not be available for this story.</div>';
+      return;
+    }
+
+    items.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'history-item-row';
+      row.innerHTML = `<span class="history-item-label">${item.label}</span>`;
+      row.onclick = () => _restoreHistoryItem(item.index, row);
+      listEl.appendChild(row);
+    });
   } catch (e) {
-    console.error('[HeadlessSync] Failed to load history:', e);
-  } finally {
-    if (refs.headlessHistoryLoading) refs.headlessHistoryLoading.classList.add('u-hidden');
+    console.error('[History] Load error:', e);
+    listEl.innerHTML = '<div style="color:#e94560;font-size:12px;padding:8px;">Could not read history. Make sure a story is open in NovelAI.</div>';
   }
 }
 
-function renderHistoryList() {
-  if (!refs.headlessHistoryList) return;
-  if (currentHistorySnapshots.length === 0) {
-    refs.headlessHistoryList.innerHTML = '<p class="color-dim" style="text-align: center; padding: 20px;">No history available.</p>';
-    return;
-  }
-  refs.headlessHistoryList.innerHTML = currentHistorySnapshots.map(s => `
-    <div class="history-item" onclick="selectHistorySnapshot(${s.index})">
-      <div class="history-item-label">${s.label}</div>
-      <div class="history-item-time">${s.time}</div>
-    </div>
-  `).join('');
-}
+async function _restoreHistoryItem(index, rowEl) {
+  if (!confirm('Restore this snapshot? Your current text will be replaced.')) return;
+  const originalText = rowEl.textContent;
+  rowEl.textContent = 'Restoring…';
 
-async function selectHistorySnapshot(index) {
-  showToast(`Restoring snapshot ${index}...`);
   try {
     await webview.executeJavaScript(`
       (function() {
-        var items = document.querySelectorAll('div[class*="HistoryItem"]');
-        if (items[${index}]) { items[${index}].click(); return true; }
-        return false;
+        var containers = document.querySelectorAll('[class*="HistoryItem"], [class*="history-item"], [data-testid*="history"]');
+        if (!containers.length) {
+          var timeEls = document.querySelectorAll('time, [datetime]');
+          containers = Array.from(timeEls).map(function(t) { return t.closest('li, [role="listitem"]'); }).filter(Boolean);
+        }
+        var target = containers[${index}];
+        if (target) { (target.querySelector('button') || target).click(); }
       })()
     `);
-    setTimeout(() => { _deps.syncFromWebview?.(true); }, 500);
+
+    await new Promise(r => setTimeout(r, 800));
+    if (_deps.syncFromWebview) await _deps.syncFromWebview(true);
+    showToast('Snapshot restored');
+    import('./headless-panels.js').then(p => p.togglePanel(document.getElementById('headlessHistoryPanel')));
   } catch (e) {
-    console.error('[HeadlessSync] Failed to restore snapshot:', e);
+    console.error('[History] Restore error:', e);
+    showToast('Restore failed', 3000, 'error');
+    rowEl.textContent = originalText;
   }
 }
 
@@ -328,13 +341,16 @@ export function showHelpDialog() {
   showModal('Keyboard Shortcuts', `
     <table style="width:100%;border-collapse:collapse;font-size:13px;">
       <tr><td style="padding:4px 8px;"><kbd>Ctrl+Enter</kbd></td><td>Generate / Continue</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+S</kbd></td><td>Save & Sync to NovelAI</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Z</kbd></td><td>Undo</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+Z</kbd></td><td>Redo</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+P</kbd></td><td>Command Palette</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+F</kbd></td><td>Find & Replace</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+F</kbd></td><td>Focus Mode</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>/</kbd></td><td>Command Palette (at line start)</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+S</kbd></td><td>Save &amp; Sync to NovelAI</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Z / Ctrl+Shift+Z</kbd></td><td>Undo / Redo</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+F</kbd></td><td>Focus mode</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+T</kbd></td><td>Typewriter mode</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+F</kbd></td><td>Search &amp; Replace</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+P or /</kbd></td><td>Command palette</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+L</kbd></td><td>Toggle Lorebook</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+M</kbd></td><td>Toggle Memory</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+I</kbd></td><td>Toggle Preamble</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+1/2/3</kbd></td><td>Switch theme (Manuscript / Editorial / Graphic Novel)</td></tr>
     </table>
   `);
 }

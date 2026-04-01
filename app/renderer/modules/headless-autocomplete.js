@@ -1,7 +1,7 @@
 // headless-autocomplete.js — Lorebook autocomplete as-you-type
 
 import * as refs from './dom-refs.js';
-import { currentLoreEntries } from './headless-lore-panel.js';
+import { getCurrentEntries } from './headless-lore-panel.js';
 
 const { storyEditor } = refs;
 
@@ -131,8 +131,8 @@ export function init({ syncToWebview }) {
     const lastSpace = content.lastIndexOf(' ');
     const word = content.substring(lastSpace + 1).toLowerCase();
 
-    if (word.length >= 2 && currentLoreEntries.length > 0) {
-      const matches = currentLoreEntries.filter(entry =>
+    if (word.length >= 2 && getCurrentEntries().length > 0) {
+      const matches = getCurrentEntries().filter(entry =>
         (entry.displayName || '').toLowerCase().startsWith(word) ||
         (entry.keys || '').toLowerCase().split(',').some(k => k.trim().toLowerCase().startsWith(word))
       ).slice(0, 8);

@@ -4,12 +4,17 @@ import * as refs from './dom-refs.js';
 
 /**
  * Toggle a headless panel open/closed. Closes all other panels first.
+ * @param {HTMLElement} panel
+ * @param {Function} [onOpen] — called when panel is being opened
  */
-export function togglePanel(panel) {
+export function togglePanel(panel, onOpen) {
   if (!panel) return;
-  const isVisible = panel.classList.contains('active');
-  document.querySelectorAll('.headless-panel').forEach(p => p.classList.remove('active'));
-  if (!isVisible) panel.classList.add('active');
+  const isOpen = panel.classList.contains('active');
+  document.querySelectorAll('.headless-panel.active').forEach(p => p.classList.remove('active'));
+  if (!isOpen) {
+    panel.classList.add('active');
+    if (onOpen) onOpen();
+  }
 }
 
 /**

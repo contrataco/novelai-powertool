@@ -117,6 +117,18 @@ function createTables() {
       source TEXT NOT NULL DEFAULT 'webview',
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS story_images (
+      id TEXT PRIMARY KEY,
+      story_id TEXT NOT NULL REFERENCES stories(id),
+      image_id TEXT NOT NULL,
+      paragraph_index INTEGER NOT NULL DEFAULT 0,
+      layout_mode TEXT NOT NULL DEFAULT 'break',
+      float_side TEXT NOT NULL DEFAULT 'right',
+      caption TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_story_images_story ON story_images(story_id, paragraph_index);
   `);
   console.log(`${LOG_PREFIX} Tables verified`);
 }
@@ -262,6 +274,40 @@ function setStoryText(storyId, text, source = 'webview') {
     .run(storyId, text, text.length, source, Date.now());
 }
 
+// --- Story Images ---
+
+function getStoryImages(storyId) {
+  return db.prepare(
+    'SELECT * FROM story_images WHERE story_id = ? ORDER BY paragraph_index ASC'
+  ).all(storyId);
+}
+
+function setStoryImage(img) {
+  upsertStory(img.story_id, '');
+  db.prepare(`
+    INSERT OR REPLACE INTO story_images
+      (id, story_id, image_id, paragraph_index, layout_mode, float_side, caption, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    img.id,
+    img.story_id,
+    img.image_id,
+    img.paragraph_index,
+    img.layout_mode || 'break',
+    img.float_side || 'right',
+    img.caption || '',
+    img.created_at || Date.now()
+  );
+}
+
+function removeStoryImage(id) {
+  db.prepare('DELETE FROM story_images WHERE id = ?').run(id);
+}
+
+function removeAllStoryImages(storyId) {
+  db.prepare('DELETE FROM story_images WHERE story_id = ?').run(storyId);
+}
+
 // --- Bulk load (used on story switch) ---
 
 function loadAllStoryData(storyId) {
@@ -362,5 +408,6 @@ module.exports = {
   getVisualProfiles, getVisualProfile, setVisualProfile, resetVisualProfiles,
   getTimelineState, setTimelineState,
   getStoryText, setStoryText,
+  getStoryImages, setStoryImage, removeStoryImage, removeAllStoryImages,
   loadAllStoryData, migrateFromStore,
 };

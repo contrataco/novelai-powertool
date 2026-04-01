@@ -88,20 +88,29 @@
           <button id="editorBoldBtn" class="btn-sm tertiary" title="Bold (Ctrl+B)"><b>B</b></button>
           <button id="editorItalicBtn" class="btn-sm tertiary" title="Italic (Ctrl+I)"><i>I</i></button>
           <button id="editorUnderlineBtn" class="btn-sm tertiary" title="Underline (Ctrl+U)"><u>U</u></button>
-          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
-          <button id="editorLoreBtn" class="btn-sm tertiary" title="Edit Lorebook">Lore</button>
-          <button id="editorMemoryBtn" class="btn-sm tertiary" title="Edit Memory">Memory</button>
-          <button id="editorNoteBtn" class="btn-sm tertiary" title="Edit Author's Note">Note</button>
+          <div class="toolbar-divider"></div>
+          <!-- Context tools -->
+          <button id="editorMemoryBtn" class="btn-sm tertiary" title="Memory (Ctrl+Shift+M)">Memory</button>
+          <button id="editorPreambleBtn" class="btn-sm tertiary" title="Preamble &amp; Author's Note (Ctrl+Shift+I)">Preamble</button>
+          <div class="toolbar-divider"></div>
+          <!-- Lore tools -->
+          <button id="editorLoreBtn" class="btn-sm tertiary" title="Lorebook (Ctrl+Shift+L)">Lore</button>
+          <button id="editorNoteBtn" class="btn-sm tertiary u-hidden" title="Author's Note (legacy)" aria-hidden="true"></button>
         </div>
         <div class="editor-toolbar-right">
+          <div class="editor-theme-toggle" title="Presentation style">
+            <button id="themeBtn-manuscript" class="btn-sm tertiary theme-btn active" title="Manuscript (Ctrl+Shift+1)">M</button>
+            <button id="themeBtn-editorial" class="btn-sm tertiary theme-btn" title="Editorial (Ctrl+Shift+2)">E</button>
+            <button id="themeBtn-graphic-novel" class="btn-sm tertiary theme-btn" title="Graphic Novel (Ctrl+Shift+3)">G</button>
+          </div>
+          <div class="toolbar-divider"></div>
           <button id="editorContextBtn" class="btn-sm tertiary" title="View AI Context">Context</button>
-          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
           <button id="editorSettingsBtn" class="btn-sm tertiary" title="AI Generation Settings">AI Settings</button>
-          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
+          <div class="toolbar-divider"></div>
           <button id="editorGenerateBtn" class="btn-sm primary" title="Generate next text (Ctrl+Enter)">Generate</button>
           <button id="editorUndoBtn" class="btn-sm tertiary" title="Undo (Ctrl+Z)">Undo</button>
           <button id="editorRedoBtn" class="btn-sm tertiary" title="Redo (Ctrl+Shift+Z)">Redo</button>
-          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
+          <div class="toolbar-divider"></div>
           <button id="editorHistoryBtn" class="btn-sm tertiary" title="Story History">History</button>
           <button id="editorLockBtn" class="btn-sm tertiary" title="Toggle Read-Only Mode">Lock</button>
         </div>
@@ -124,63 +133,128 @@
       </div>
       
       <!-- Headless Panels -->
-      <div id="headlessLorePanel" class="headless-panel wide">
-        <div class="headless-panel-header">
-          <h3>Lorebook Entries</h3>
-          <div class="header-actions">
-            <button id="headlessLoreCreateBtn" class="btn-sm primary">+ New Entry</button>
-            <button class="close-btn">&times;</button>
+      <div id="headlessLorePanel" class="headless-panel wide lore-two-pane">
+        <div class="lore-sidebar">
+          <div class="lore-sidebar-top">
+            <input type="text" id="loreSearchInput" class="lore-search-input" placeholder="Search entries...">
+            <button id="loreBulkToggleBtn" class="btn-sm tertiary" title="Bulk select">☑</button>
+          </div>
+          <div id="loreCategoryTree" class="lore-category-tree"></div>
+          <div class="lore-sidebar-footer">
+            <button id="loreNewCategoryBtn" class="btn-sm tertiary">+ Category</button>
+          </div>
+          <div id="loreBulkBar" class="lore-bulk-bar u-hidden">
+            <span id="loreBulkCount">0 selected</span>
+            <button id="loreBulkMoveBtn" class="btn-sm tertiary">Move to…</button>
+            <button id="loreBulkDeleteBtn" class="btn-sm tertiary danger">Delete</button>
+            <button id="loreBulkExportBtn" class="btn-sm tertiary">Export JSON</button>
           </div>
         </div>
-        <div class="headless-panel-body">
-          <div class="lore-editor-grid">
-            <div class="lore-sidebar">
-              <div class="lore-search-box">
-                <input type="text" id="headlessLoreSearch" placeholder="Search entries...">
-              </div>
-              <div id="headlessLoreList" class="lore-entry-list">
-                <!-- Entries populated here -->
-                <p class="text-xs color-dim" style="text-align: center; padding: 20px;">Loading entries...</p>
-              </div>
+        <div class="lore-editor-pane">
+          <div class="headless-panel-header">
+            <h3 id="loreEditorTitle">Lorebook</h3>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <button id="loreNewEntryBtn" class="btn-sm tertiary">+ Entry</button>
+              <button class="close-btn">&times;</button>
             </div>
-            <div id="headlessLoreEditor" class="lore-main-editor u-hidden">
-              <div class="form-group">
+          </div>
+          <div id="loreEditorBody" class="headless-panel-body lore-editor-body">
+            <div id="loreEditorEmpty" class="lore-editor-empty">
+              Select an entry to edit, or click <strong>+ Entry</strong> to create one.
+            </div>
+            <div id="loreEditorForm" class="u-hidden">
+              <div class="lore-field-group">
                 <label>Display Name</label>
-                <input type="text" id="headlessLoreNameInput" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
+                <input type="text" id="loreEntryName" class="lore-input" placeholder="Entry name...">
               </div>
-              <div class="form-group">
-                <label>Keys (comma-separated)</label>
-                <input type="text" id="headlessLoreKeysInput" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
+              <div class="lore-field-group">
+                <label>Keys</label>
+                <div id="loreKeyChips" class="lore-key-chips"></div>
+                <input type="text" id="loreKeyInput" class="lore-input lore-key-raw" placeholder="Add key, press Enter…">
               </div>
-              <div class="form-group" style="flex: 1; display: flex; flex-direction: column;">
-                <label>Entry Text</label>
-                <textarea id="headlessLoreTextInput" style="flex: 1; min-height: 150px; font-size: 12px;"></textarea>
+              <div class="lore-field-group">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <label>Content</label>
+                  <span id="loreContentCounter" class="lore-counter">0 chars · ~0 tokens</span>
+                </div>
+                <div id="loreTypeBadges" class="lore-badge-row"></div>
+                <textarea id="loreEntryContent" class="lore-textarea" rows="10" placeholder="Entry content…"></textarea>
               </div>
-              <div class="form-group">
-                <button id="headlessLoreDeleteBtn" class="btn-sm tertiary" style="color: var(--error);">Delete Entry</button>
-              </div>
-            </div>
-            <div id="headlessLoreEmpty" class="color-dim" style="display: flex; align-items: center; justify-content: center; text-align: center; padding: 40px;">
-              Select an entry to edit or create a new one.
+              <details class="lore-advanced-details">
+                <summary>Advanced Settings</summary>
+                <div class="lore-advanced-body">
+                  <div class="lore-field-group">
+                    <label>Search Range</label>
+                    <input type="number" id="loreSearchRange" class="lore-input lore-input-sm" value="1000" min="0">
+                  </div>
+                  <div class="lore-field-group lore-toggle-row">
+                    <label>Force Activation</label>
+                    <input type="checkbox" id="loreForceActivation">
+                  </div>
+                  <div class="lore-field-group">
+                    <label>Budget Priority</label>
+                    <input type="range" id="loreBudgetPriority" min="0" max="3" step="1" value="0">
+                    <span id="loreBudgetPriorityVal">0</span>
+                  </div>
+                  <div class="lore-field-group">
+                    <label>Prefix</label>
+                    <input type="text" id="lorePrefix" class="lore-input" placeholder="Text before entry…">
+                  </div>
+                  <div class="lore-field-group">
+                    <label>Suffix</label>
+                    <input type="text" id="loreSuffix" class="lore-input" placeholder="Text after entry…">
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
-        </div>
-        <div class="headless-panel-footer">
-          <button id="headlessLoreSaveBtn" class="btn primary" disabled>Save Entry</button>
+          <div id="loreEditorFooter" class="headless-panel-footer u-hidden">
+            <button id="loreSaveBtn" class="btn-sm primary">Save</button>
+            <button id="loreDeleteBtn" class="btn-sm tertiary danger">Delete</button>
+          </div>
         </div>
       </div>
 
       <div id="headlessMemoryPanel" class="headless-panel">
         <div class="headless-panel-header">
-          <h3>Story Memory</h3>
+          <h3>Memory</h3>
           <button class="close-btn">&times;</button>
         </div>
         <div class="headless-panel-body">
-          <p class="text-xs color-dim">Context that is always sent to the AI (e.g., core premise, important rules).</p>
-          <textarea id="headlessMemoryInput" placeholder="Enter memory text..."></textarea>
+          <div class="memory-section">
+            <div class="preamble-label-row">
+              <label>Pinned Facts</label>
+              <button id="memoryAddFactBtn" class="btn-sm tertiary" title="Add a fact">+ Add</button>
+            </div>
+            <p class="preamble-hint">Always-true facts prepended at full priority — protagonist name, world rules, etc.</p>
+            <div id="memoryPinnedList" class="memory-pinned-list"></div>
+          </div>
+          <div class="preamble-divider"></div>
+          <div class="memory-section">
+            <div class="preamble-label-row">
+              <label>Narrative Memory</label>
+              <span id="memoryNarrativeCounter" class="lore-counter">0 chars</span>
+              <button id="memorySummariseBtn" class="btn-sm tertiary" title="Auto-summarise from story text">Summarise…</button>
+            </div>
+            <p class="preamble-hint">What has happened recently that the AI needs to remember.</p>
+            <textarea id="memoryNarrativeTextarea" class="lore-textarea" rows="7" placeholder="Recent events, discoveries, character states…"></textarea>
+          </div>
+          <div class="preamble-divider"></div>
+          <details id="memoryContextPreview" class="memory-context-preview">
+            <summary>Context Preview</summary>
+            <div class="memory-preview-body">
+              <div class="memory-budget-bar">
+                <div id="memoryBudgetPreamble" class="budget-segment segment-preamble" style="width:0%"></div>
+                <div id="memoryBudgetPinned" class="budget-segment segment-pinned" style="width:0%"></div>
+                <div id="memoryBudgetNarrative" class="budget-segment segment-narrative" style="width:0%"></div>
+              </div>
+              <div id="memoryBudgetLegend" class="memory-budget-legend"></div>
+              <pre id="memoryPreviewText" class="memory-preview-text"></pre>
+            </div>
+          </details>
         </div>
         <div class="headless-panel-footer">
-          <button id="headlessMemorySaveBtn" class="btn primary">Save Memory</button>
+          <button id="memorySaveBtn" class="btn-sm primary">Save</button>
         </div>
       </div>
 
@@ -195,6 +269,42 @@
         </div>
         <div class="headless-panel-footer">
           <button id="headlessNoteSaveBtn" class="btn primary">Save Note</button>
+        </div>
+      </div>
+
+      <div id="headlessPreamblePanel" class="headless-panel">
+        <div class="headless-panel-header">
+          <h3>Preamble &amp; Instructions</h3>
+          <button class="close-btn">&times;</button>
+        </div>
+        <div class="headless-panel-body">
+          <div class="preamble-section">
+            <div class="preamble-label-row">
+              <label>Preamble</label>
+              <span id="preambleCounter" class="lore-counter">0 chars · ~0 tokens</span>
+              <button id="preambleTemplateBtn" class="btn-sm tertiary preamble-template-btn" title="Load a template">Templates ▾</button>
+              <div id="preambleTemplateMenu" class="preamble-template-menu u-hidden"></div>
+            </div>
+            <p class="preamble-hint">Text prepended before your story in the AI context. Use it to establish POV, genre, tone, or writing style rules.</p>
+            <textarea id="preambleTextarea" class="lore-textarea" rows="8" placeholder="e.g. Write in a dark, atmospheric style. The story is told in close third person…"></textarea>
+          </div>
+          <div class="preamble-divider"></div>
+          <div class="preamble-section">
+            <div class="preamble-label-row">
+              <label>Author's Note / AI Instructions</label>
+              <span id="authorNoteCounter" class="lore-counter">0 chars · ~0 tokens</span>
+            </div>
+            <p class="preamble-hint">Injected at a configurable depth from the end of the context. Strong short-term influence on style and tone.</p>
+            <div class="preamble-depth-row">
+              <label>Injection depth (tokens from end)</label>
+              <input type="range" id="authorNoteDepth" min="0" max="200" step="4" value="208">
+              <span id="authorNoteDepthVal">208</span>
+            </div>
+            <textarea id="authorNoteTextarea" class="lore-textarea" rows="5" placeholder="e.g. [ Write in the style of Cormac McCarthy. Use short, punchy sentences. ]"></textarea>
+          </div>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="preambleSaveBtn" class="btn-sm primary">Save</button>
         </div>
       </div>
 

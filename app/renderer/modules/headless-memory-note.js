@@ -1,34 +1,137 @@
 // headless-memory-note.js — Memory, Author's Note, and AI Settings panels
 
 import * as refs from './dom-refs.js';
-import { bus } from './state.js';
+import { state, bus } from './state.js';
 import { memoryCall } from './lore-creator.js';
 import { showToast } from './utils.js';
 import { setupPanelToggle } from './headless-panels.js';
 
 const { webview } = refs;
 
-// --- Memory ---
+// --- Memory (Pinned Facts + Narrative) ---
 
-async function loadMemoryToPanel() {
+let _pinnedFacts = [];
+
+function _renderPinnedFacts() {
+  const list = document.getElementById('memoryPinnedList');
+  if (!list) return;
+  list.innerHTML = '';
+  _pinnedFacts.forEach((fact, i) => {
+    const row = document.createElement('div');
+    row.className = 'memory-pinned-fact';
+    row.innerHTML = `<input type="text" value="${fact.replace(/"/g,'&quot;')}" data-index="${i}"><button class="memory-pinned-remove" data-index="${i}" title="Remove">×</button>`;
+    row.querySelector('input').addEventListener('input', (e) => { _pinnedFacts[i] = e.target.value; });
+    row.querySelector('.memory-pinned-remove').addEventListener('click', () => {
+      _pinnedFacts.splice(i, 1);
+      _renderPinnedFacts();
+    });
+    list.appendChild(row);
+  });
+}
+
+function _addFact() {
+  _pinnedFacts.push('');
+  _renderPinnedFacts();
+  const inputs = document.getElementById('memoryPinnedList')?.querySelectorAll('input');
+  if (inputs?.length) inputs[inputs.length - 1].focus();
+}
+
+function _assembleMemory() {
+  const narrative = document.getElementById('memoryNarrativeTextarea')?.value || '';
+  const facts = _pinnedFacts.filter(f => f.trim());
+  const parts = [];
+  if (facts.length) parts.push(facts.join('\n'));
+  if (narrative.trim()) parts.push(narrative.trim());
+  return parts.join('\n\n');
+}
+
+function _parseMemory(raw) {
+  const sections = raw.split(/\n\n+/);
+  if (sections.length <= 1) return { facts: [], narrative: raw };
+  const firstSection = sections[0];
+  const lines = firstSection.split('\n');
+  const allShort = lines.every(l => l.length < 120);
+  if (allShort && lines.length <= 10) {
+    return { facts: lines.filter(Boolean), narrative: sections.slice(1).join('\n\n') };
+  }
+  return { facts: [], narrative: raw };
+}
+
+export async function loadMemoryToPanel() {
   try {
-    const memory = await memoryCall('getMemory');
-    if (refs.headlessMemoryInput) refs.headlessMemoryInput.value = memory || '';
+    const raw = await memoryCall('getMemory') || '';
+    const { facts, narrative } = _parseMemory(raw);
+    _pinnedFacts = facts;
+    _renderPinnedFacts();
+    const narrativeEl = document.getElementById('memoryNarrativeTextarea');
+    if (narrativeEl) {
+      narrativeEl.value = narrative;
+      _updateNarrativeCounter();
+    }
+    _updateContextPreview();
   } catch (e) {
-    console.error('[HeadlessSync] Failed to load memory:', e);
-    if (refs.headlessMemoryInput) refs.headlessMemoryInput.value = '';
+    console.error('[Memory] Load error:', e);
   }
 }
 
-async function saveMemoryFromPanel() {
-  const text = refs.headlessMemoryInput?.value || '';
+export async function saveMemoryFromPanel() {
   try {
-    await memoryCall('setMemory', text);
+    const assembled = _assembleMemory();
+    await memoryCall('setMemory', assembled);
     showToast('Memory saved');
-    refs.headlessMemoryPanel.classList.remove('active');
+    _updateContextPreview();
   } catch (e) {
-    console.error('[HeadlessSync] Failed to save memory:', e);
-    showToast('Failed to save memory — proxy may not be loaded');
+    console.error('[Memory] Save error:', e);
+    showToast('Save failed', 3000, 'error');
+  }
+}
+
+function _updateNarrativeCounter() {
+  const textarea = document.getElementById('memoryNarrativeTextarea');
+  const counter = document.getElementById('memoryNarrativeCounter');
+  if (textarea && counter) {
+    counter.textContent = `${textarea.value.length} chars`;
+  }
+}
+
+async function _updateContextPreview() {
+  try {
+    const settings = state.currentStoryId
+      ? await window.powertool.storySettingsGet(state.currentStoryId)
+      : {};
+    const preamble = settings?.preamble || '';
+    const pinnedText = _pinnedFacts.filter(f => f.trim()).join('\n');
+    const narrative = document.getElementById('memoryNarrativeTextarea')?.value || '';
+    const assembled = [preamble, pinnedText, narrative].filter(Boolean).join('\n\n');
+    const MODEL_CONTEXT = 8192;
+    const preambleTokens = Math.round(preamble.length / 4);
+    const pinnedTokens = Math.round(pinnedText.length / 4);
+    const narrativeTokens = Math.round(narrative.length / 4);
+    const total = preambleTokens + pinnedTokens + narrativeTokens;
+    const pct = (t) => Math.min(100, Math.round((t / MODEL_CONTEXT) * 100)) + '%';
+
+    const setPct = (id, width) => {
+      const el = document.getElementById(id);
+      if (el) el.style.width = width;
+    };
+    setPct('memoryBudgetPreamble', pct(preambleTokens));
+    setPct('memoryBudgetPinned', pct(pinnedTokens));
+    setPct('memoryBudgetNarrative', pct(narrativeTokens));
+
+    const legend = document.getElementById('memoryBudgetLegend');
+    if (legend) {
+      legend.innerHTML = `
+        <span>● Preamble: ~${preambleTokens}t</span>
+        <span>● Pinned: ~${pinnedTokens}t</span>
+        <span>● Narrative: ~${narrativeTokens}t</span>
+        <span style="margin-left:auto;color:#aaa">Total: ~${total}/${MODEL_CONTEXT}t</span>
+      `;
+    }
+
+    const preview = document.getElementById('memoryPreviewText');
+    if (preview) preview.textContent = assembled;
+  } catch (e) {
+    console.warn('[Memory] Preview error:', e);
   }
 }
 
@@ -167,6 +270,19 @@ async function readAiSettingsFromWebview() {
           if (lenInput) result.outputLength = parseInt(lenInput.value, 10);
         }
 
+        // Stop Sequences
+        result.stopSequences = null;
+        try {
+          var stopLabels = document.querySelectorAll('label, [class*="Label"]');
+          for (var si = 0; si < stopLabels.length; si++) {
+            if (/stop sequence/i.test(stopLabels[si].textContent)) {
+              var stopInput = stopLabels[si].closest('[class*="Field"], [class*="Row"], div')
+                ?.querySelector('input[type="text"], textarea');
+              if (stopInput) { result.stopSequences = stopInput.value; break; }
+            }
+          }
+        } catch(e) {}
+
         return result;
       })()
     `);
@@ -233,6 +349,11 @@ async function loadAiSettingsToPanel() {
   if (data.outputLength != null && refs.headlessLengthSlider) {
     refs.headlessLengthSlider.value = data.outputLength;
     if (refs.headlessLengthValue) refs.headlessLengthValue.textContent = data.outputLength;
+  }
+
+  // Set stop sequences
+  if (data.stopSequences != null && refs.headlessStopInput) {
+    refs.headlessStopInput.value = data.stopSequences;
   }
 
   console.log('[HeadlessSync] AI settings loaded from webview:', {
@@ -409,6 +530,35 @@ async function saveAiSettingsFromPanel() {
     }
   }
 
+  // Write Stop Sequences
+  if (refs.headlessStopInput) {
+    const stopValue = refs.headlessStopInput.value;
+    try {
+      await webview.executeJavaScript(`
+        (function() {
+          var labels = document.querySelectorAll('label, [class*="Label"]');
+          for (var i = 0; i < labels.length; i++) {
+            if (/stop sequence/i.test(labels[i].textContent)) {
+              var input = labels[i].closest('[class*="Field"], [class*="Row"], div')
+                ?.querySelector('input[type="text"], textarea');
+              if (input) {
+                var proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                setter.call(input, ${JSON.stringify(stopValue)});
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+              }
+            }
+          }
+          return false;
+        })()
+      `);
+    } catch (e) {
+      console.warn('[HeadlessSync] Could not set stop sequences:', e);
+    }
+  }
+
   if (changes.length > 0) {
     if (changes.includes('model')) _loadedAiSettings.model = newModel;
     if (changes.includes('preset')) _loadedAiSettings.preset = newPreset;
@@ -428,9 +578,43 @@ export function init({ saveCustomizationToStore, flattenEditorText }) {
   setupPanelToggle(refs.editorNoteBtn, refs.headlessNotePanel, loadNoteToPanel);
   setupPanelToggle(refs.editorSettingsBtn, refs.headlessAiSettingsPanel, loadAiSettingsToPanel);
 
-  if (refs.headlessMemorySaveBtn) {
-    refs.headlessMemorySaveBtn.addEventListener('click', () => saveMemoryFromPanel());
-  }
+  // Memory panel new wiring
+  const addFactBtn = document.getElementById('memoryAddFactBtn');
+  if (addFactBtn) addFactBtn.addEventListener('click', _addFact);
+
+  const narrativeEl = document.getElementById('memoryNarrativeTextarea');
+  if (narrativeEl) narrativeEl.addEventListener('input', () => {
+    _updateNarrativeCounter();
+    _updateContextPreview();
+  });
+
+  const memorySaveBtn = document.getElementById('memorySaveBtn');
+  if (memorySaveBtn) memorySaveBtn.addEventListener('click', saveMemoryFromPanel);
+
+  const summariseBtn = document.getElementById('memorySummariseBtn');
+  if (summariseBtn) summariseBtn.addEventListener('click', async () => {
+    const storyText = refs.storyEditor?.innerText?.slice(-4000) || '';
+    if (!storyText.trim()) { showToast('No story text to summarise', 2000); return; }
+    summariseBtn.textContent = 'Summarising…';
+    summariseBtn.disabled = true;
+    try {
+      const result = await window.powertool.textAction('summarise-memory', storyText, state.currentStoryId);
+      if (result.output && narrativeEl) {
+        narrativeEl.value = result.output;
+        _updateNarrativeCounter();
+        showToast('Summary generated — edit before saving');
+      }
+    } catch (e) {
+      showToast('Summarise failed', 3000, 'error');
+    } finally {
+      summariseBtn.textContent = 'Summarise…';
+      summariseBtn.disabled = false;
+    }
+  });
+
+  // Auto-save memory before generation
+  bus.on('headless:before-generation', saveMemoryFromPanel);
+
   if (refs.headlessNoteSaveBtn) {
     refs.headlessNoteSaveBtn.addEventListener('click', () => saveNoteFromPanel());
   }

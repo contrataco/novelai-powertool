@@ -118,6 +118,15 @@ contextBridge.exposeInMainWorld('powertool', {
   storyTextGet: (storyId) => ipcRenderer.invoke('story-text:get', storyId),
   storyTextSet: (storyId, text, source) => ipcRenderer.invoke('story-text:set', { storyId, text, source }),
 
+  // Story Images
+  storyImagesGet: (storyId) => ipcRenderer.invoke('story-images:get', storyId),
+  storyImagesSet: (img) => ipcRenderer.invoke('story-images:set', img),
+  storyImagesRemove: (id) => ipcRenderer.invoke('story-images:remove', id),
+  storyImagesGetDataUrl: (storyId, imageId) => ipcRenderer.invoke('story-images:get-image-data', storyId, imageId),
+
+  // Text actions
+  textAction: (type, text, storyId) => ipcRenderer.invoke('text-action', { type, text, storyId }),
+
   // Script Manager
   scriptMgrListScripts: () => ipcRenderer.invoke('script-mgr:list-scripts'),
   scriptMgrEnableScript: (name) => ipcRenderer.invoke('script-mgr:enable-script', name),
