@@ -61,6 +61,16 @@ async function handleGenerateVideo() {
   const videoBtn = document.getElementById('sceneVideoBtn');
   if (!videoBtn) return;
 
+  // Stamp with a session ID before any awaits. Re-queries use getOurBtn() so
+  // a concurrent image generation's replacement sceneVideoBtn (no session ID)
+  // is never mistaken for ours.
+  const videoSessionId = Date.now().toString();
+  videoBtn.dataset.videoSession = videoSessionId;
+  const getOurBtn = () => {
+    const btn = document.getElementById('sceneVideoBtn');
+    return btn && btn.dataset.videoSession === videoSessionId ? btn : null;
+  };
+
   try {
     // Get quote first
     videoBtn.disabled = true;
@@ -71,18 +81,15 @@ async function handleGenerateVideo() {
 
     // Confirm with user
     const proceed = confirm(`Video will cost ~$${cost.toFixed(3)}. Generate?`);
-    {
-      // Re-query after await — imageContainer.innerHTML may have been replaced
-      const btn = document.getElementById('sceneVideoBtn');
-      if (!proceed) {
-        if (btn) { btn.disabled = false; btn.innerHTML = '&#9654; Video'; }
-        return;
-      }
+    if (!proceed) {
+      const btn = getOurBtn();
+      if (btn) { btn.disabled = false; btn.innerHTML = '&#9654; Video'; }
+      return;
     }
 
-    // Queue video — re-query before mutating
+    // Queue video
     {
-      const btn = document.getElementById('sceneVideoBtn');
+      const btn = getOurBtn();
       if (btn) { btn.textContent = 'Queuing...'; btn.classList.add('generating'); }
     }
 
@@ -94,9 +101,9 @@ async function handleGenerateVideo() {
     const queueId = queueResult.queue_id;
     const model = queueResult.model;
 
-    // Show progress — re-query after await
+    // Show progress
     {
-      const btn = document.getElementById('sceneVideoBtn');
+      const btn = getOurBtn();
       if (btn) btn.textContent = 'Processing...';
     }
     let progressEl = document.getElementById('videoProgress');
@@ -118,7 +125,7 @@ async function handleGenerateVideo() {
     const cleanupPoll = (errorMsg) => {
       clearInterval(videoPollingTimer);
       videoPollingTimer = null;
-      const btn = document.getElementById('sceneVideoBtn');
+      const btn = getOurBtn();
       if (btn) { btn.disabled = false; btn.innerHTML = '&#9654; Video'; btn.classList.remove('generating'); }
       const prog = document.getElementById('videoProgress');
       if (prog) prog.innerHTML = '';
@@ -142,8 +149,7 @@ async function handleGenerateVideo() {
           clearInterval(videoPollingTimer);
           videoPollingTimer = null;
 
-          // DOM elements may have been destroyed by image regeneration — re-query
-          const btn = document.getElementById('sceneVideoBtn');
+          const btn = getOurBtn();
           if (btn) {
             btn.disabled = false;
             btn.innerHTML = '&#9654; Video';
@@ -180,7 +186,7 @@ async function handleGenerateVideo() {
     // Initial check after 3s
     setTimeout(pollVideo, 3000);
   } catch (e) {
-    const btn = document.getElementById('sceneVideoBtn');
+    const btn = getOurBtn();
     if (btn) { btn.disabled = false; btn.innerHTML = '&#9654; Video'; btn.classList.remove('generating'); }
     showToast('Video error: ' + e.message, 4000, 'error');
   }
