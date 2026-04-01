@@ -50,6 +50,9 @@ export const editorNoteBtn = document.getElementById('editorNoteBtn');
 export const editorSettingsBtn = document.getElementById('editorSettingsBtn');
 export const editorLoreBtn = document.getElementById('editorLoreBtn');
 export const editorContextBtn = document.getElementById('editorContextBtn');
+export const themeBtnManuscript = document.getElementById('themeBtn-manuscript');
+export const themeBtnEditorial = document.getElementById('themeBtn-editorial');
+export const themeBtnGraphicNovel = document.getElementById('themeBtn-graphic-novel');
 
 // Editor loading bar
 export const editorLoadingBar = document.getElementById('editorLoadingBar');

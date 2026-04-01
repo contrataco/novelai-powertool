@@ -16,6 +16,8 @@ import * as lorePanel from './headless-lore-panel.js';
 import * as commandPalette from './headless-command-palette.js';
 import * as autocomplete from './headless-autocomplete.js';
 import * as misc from './headless-misc.js';
+import * as imageEmbed from './headless-image-embed.js';
+import * as theme from './headless-theme.js';
 import * as contextMenu from './context-menu.js';
 
 // Re-export sync functions for use by webview-polling.js and other modules
@@ -60,6 +62,8 @@ export function init() {
   commandPalette.init(editorDeps);
   autocomplete.init({ syncToWebview: editor.syncToWebview });
   misc.init(editorDeps);
+  imageEmbed.init({ syncToWebview: editor.syncToWebview });
+  theme.init();
 
   // Context menu
   contextMenu.init({
@@ -104,6 +108,24 @@ export function init() {
       } else if (e.key === 'p' && e.shiftKey) {
         e.preventDefault();
         commandPalette.showCommandPalette();
+      } else if (e.shiftKey && e.key === '1') {
+        e.preventDefault();
+        theme.setTheme('manuscript');
+      } else if (e.shiftKey && e.key === '2') {
+        e.preventDefault();
+        theme.setTheme('editorial');
+      } else if (e.shiftKey && e.key === '3') {
+        e.preventDefault();
+        theme.setTheme('graphic-novel');
+      } else if (e.shiftKey && e.key === 'L') {
+        e.preventDefault();
+        panels.togglePanel(refs.headlessLorePanel);
+      } else if (e.shiftKey && e.key === 'M') {
+        e.preventDefault();
+        panels.togglePanel(refs.headlessMemoryPanel);
+      } else if (e.shiftKey && e.key === 'T') {
+        e.preventDefault();
+        editor.toggleTypewriterMode?.();
       }
     } else if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
       // Only trigger from body — storyEditor uses Ctrl+Enter so Shift+Enter remains available

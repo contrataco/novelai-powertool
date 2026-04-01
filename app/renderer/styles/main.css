@@ -5665,3 +5665,12 @@
   opacity: 1;
   color: var(--accent, #e94560);
 }
+
+.toolbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border-default, #2a2a3e);
+  margin: 0 4px;
+  flex-shrink: 0;
+  display: inline-block;
+}
