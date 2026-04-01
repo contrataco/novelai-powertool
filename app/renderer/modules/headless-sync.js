@@ -105,6 +105,11 @@ export function init() {
         e.preventDefault();
         commandPalette.showCommandPalette();
       }
+    } else if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      if (document.activeElement === refs.storyEditor || document.activeElement === document.body) {
+        e.preventDefault();
+        generation.triggerGeneration();
+      }
     } else if (e.key === '/') {
       const selection = window.getSelection();
       if (selection.rangeCount > 0) {
