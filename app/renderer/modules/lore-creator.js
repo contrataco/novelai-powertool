@@ -1418,6 +1418,7 @@ async function runLoreScan(scanType = 'all') {
     loreScanBtn.title = '';
     refreshLoreUI();
     buildFamilyTree();
+    refreshLoreKeywords();
     setTimeout(() => {
       loreScanStatus.classList.add('u-hidden');
       loreScanProgressFill.style.setProperty('--progress', '0%');
@@ -2374,6 +2375,7 @@ export function switchPanelTab(tab) {
     loreTab.classList.add('active');
     loreContent.classList.add('active');
     refreshLoreUI();
+    refreshLoreKeywords();
   } else if (tab === 'memory') {
     memoryTab.classList.add('active');
     memoryContent.classList.add('active');
@@ -3031,6 +3033,20 @@ export function init() {
   // Lorebook Optimizer — profile selection, discover, optimize all
   // =========================================================================
 
+  // Scroll to and flash a lore entry card when clicked from editor.
+  // Pending scan result cards use locally-generated IDs; accepted lorebook entries
+  // are not rendered in our panel so we fall back to a toast with the entry name.
+  bus.on('lore:highlight-entry', ({ entryId, displayName } = {}) => {
+    const card = lorePendingList.querySelector(`[data-entry-id="${entryId}"]`);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.add('highlight-flash');
+      setTimeout(() => card.classList.remove('highlight-flash'), 1500);
+    } else if (displayName) {
+      showToast(`Lorebook: ${displayName}`);
+    }
+  });
+
   // Restore optimizer state from story settings on switch
   bus.on('story:changed', () => {
     const profile = state.storySettings?.lorebookProfile || 'general';
@@ -3219,4 +3235,21 @@ export function init() {
     });
   }
 
+}
+
+export async function refreshLoreKeywords() {
+  if (!state.currentStoryId || !state.loreProxyReady) return;
+  try {
+    const entries = await loreCall('getEntries');
+    state.loreKeywords = (entries || [])
+      .filter(e => e.keys && e.keys.length)
+      .flatMap(e => e.keys.map(k => ({
+        text: k.trim(),
+        entryId: e.id,
+        displayName: e.displayName || k,
+      })))
+      .filter(k => k.text.length >= 3);
+  } catch (err) {
+    console.warn('[Lore] Could not refresh keywords:', err);
+  }
 }

@@ -5,6 +5,7 @@ import {
   providerSelect,
   sceneEnableLitrpg, interfaceShowWebview,
   settingsBtn, toggleWebviewBtn, cancelBtn, saveBtn, reloadBtn,
+  storySelectionOverlay,
 } from './dom-refs.js';
 import { state, bus } from './state.js';
 import { refreshRpgUI } from './litrpg-panel.js';
@@ -182,8 +183,16 @@ function updateWebviewModeUI() {
   if (state.headlessMode) {
     mainContainer.classList.remove('webview-active');
     toggleWebviewBtn.textContent = 'Show Webview';
+    // Restore story selector if no story is loaded
+    if (!state.currentStoryId && storySelectionOverlay) {
+      storySelectionOverlay.classList.add('visible');
+    }
   } else {
     mainContainer.classList.add('webview-active');
     toggleWebviewBtn.textContent = 'Hide Webview';
+    // Hide overlay so webview is visible
+    if (storySelectionOverlay) {
+      storySelectionOverlay.classList.remove('visible');
+    }
   }
 }

@@ -3,9 +3,9 @@
 import { state, bus } from './state.js';
 import * as refs from './dom-refs.js';
 import { readStoryTextFromDOM } from './webview-polling.js';
-import { loreCall } from './lore-creator.js';
+import { loreCall, switchPanelTab, refreshLoreKeywords } from './lore-creator.js';
 import { updateVisibility as updateStorySelectorVisibility } from './story-selector.js';
-import { applyDiff } from './diff.js';
+import { applyDiff, annotateEditor, mergeRanges, shiftRangesAfterEdit, diffText } from './diff.js';
 import { showToast } from './utils.js';
 
 const { webview, storyEditor } = refs;
@@ -13,6 +13,20 @@ const { webview, storyEditor } = refs;
 let isSyncingToWebview = false;
 let isSyncingFromWebview = false;
 let lastKnownWebviewText = '';
+
+// Annotation tracking
+let textBeforeGeneration = '';   // snapshot before generation starts (to compute AI range)
+let pendingGenerationSync = false;
+let annotationTimeout = null;
+let lastEditorTextForAnnotation = '';
+
+function scheduleAnnotation() {
+  if (annotationTimeout) clearTimeout(annotationTimeout);
+  annotationTimeout = setTimeout(() => {
+    if (storyEditor) annotateEditor(storyEditor, state.aiTextRanges, state.loreKeywords);
+    annotationTimeout = null;
+  }, 300);
+}
 
 // --- Story text cache ---
 let cacheWriteTimeout = null;
@@ -64,10 +78,18 @@ export async function syncFromWebview(force = false) {
     if (text !== null && text !== storyEditor.innerText) {
       console.log('[HeadlessSync] Syncing text from webview');
 
+      const isPostGen = pendingGenerationSync;
+      pendingGenerationSync = false;
+
       if (force) {
         storyEditor.innerText = text;
       } else {
-        applyDiff(storyEditor, text);
+        const diff = applyDiff(storyEditor, text);
+        // Track newly generated AI text range
+        if (isPostGen && diff.added.length > 0) {
+          const newRange = { start: diff.prefixLen, end: diff.prefixLen + diff.added.length };
+          state.aiTextRanges = mergeRanges([...state.aiTextRanges, newRange]);
+        }
       }
 
       if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Ready';
@@ -78,10 +100,14 @@ export async function syncFromWebview(force = false) {
       updateStatusMetrics();
 
       lastKnownWebviewText = text;
+      lastEditorTextForAnnotation = text;
       state.lastKnownStoryLength = text.length;
 
       // Update cache
       debouncedCacheWrite(text, state._lastTextReadSource || 'webview');
+
+      // Re-annotate after sync
+      scheduleAnnotation();
     }
   } catch (e) {
     console.error('[HeadlessSync] Error syncing from webview:', e);
@@ -446,7 +472,10 @@ export function handleStreamingText(text) {
   try {
     applyDiff(storyEditor, text);
     lastKnownWebviewText = text;
+    lastEditorTextForAnnotation = text;
     updateStatusMetrics();
+    // Keep last-paragraph indicator current during streaming
+    scheduleAnnotation();
   } finally {
     isSyncingFromWebview = false;
   }
@@ -466,14 +495,36 @@ export function init() {
       syncToWebview();
     }, 500);
     updateStatusMetrics();
+
+    // Shift AI text ranges to account for user edits
+    if (state.aiTextRanges.length > 0 && lastEditorTextForAnnotation) {
+      const currentText = storyEditor.innerText;
+      const diff = diffText(lastEditorTextForAnnotation, currentText);
+      if (diff.added.length !== diff.removed.length) {
+        const delta = diff.added.length - diff.removed.length;
+        state.aiTextRanges = shiftRangesAfterEdit(state.aiTextRanges, diff.prefixLen, delta);
+      }
+      lastEditorTextForAnnotation = currentText;
+    }
+
+    scheduleAnnotation();
   });
 
   // Typewriter mode scroll listeners
   storyEditor.addEventListener('input', () => {
     if (refs.editorContainer?.classList.contains('typewriter-mode')) scrollToSelection();
   });
-  storyEditor.addEventListener('click', () => {
+  storyEditor.addEventListener('click', (e) => {
     if (refs.editorContainer?.classList.contains('typewriter-mode')) scrollToSelection();
+    // Lore keyword click — switch to lore tab and highlight entry
+    const kw = e.target.closest('.lore-keyword');
+    if (kw) {
+      const entryId = kw.dataset.entryId;
+      if (entryId) {
+        switchPanelTab('lore');
+        bus.emit('lore:highlight-entry', { entryId, displayName: kw.dataset.displayName || '' });
+      }
+    }
   });
   storyEditor.addEventListener('keyup', (e) => {
     if (refs.editorContainer?.classList.contains('typewriter-mode') && e.key.startsWith('Arrow')) {
@@ -548,6 +599,13 @@ export function init() {
       lastKnownWebviewText = cached.text;
       updateStatusMetrics();
     }
+  });
+
+  // Clear annotation state on story switch
+  bus.on('story:changed', () => {
+    state.aiTextRanges = [];
+    pendingGenerationSync = false;
+    lastEditorTextForAnnotation = '';
   });
 
   // Story change: keep overlay visible with loading status until text is ready
@@ -652,6 +710,7 @@ export function init() {
       hideLoadingBar();
       if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'In Sync';
       if (refs.editorSyncIndicator) refs.editorSyncIndicator.className = 'status-indicator active';
+      refreshLoreKeywords();
     }, 500);
   }
 
@@ -663,11 +722,12 @@ export function init() {
   // Streaming text from generation poll
   bus.on('headless:text-updated', handleStreamingText);
 
-  // Generation complete — re-read and cache
+  // Generation complete — re-read, cache, and mark AI text
   bus.on('headless:generation-complete', async () => {
     if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Ready';
     if (refs.editorAiIndicator) refs.editorAiIndicator.className = 'status-indicator';
-    // Re-sync and cache after generation
+    // Flag the next syncFromWebview as post-generation so it records AI text ranges
+    pendingGenerationSync = true;
     await syncFromWebview(false);
   });
 }

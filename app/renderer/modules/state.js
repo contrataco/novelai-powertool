@@ -56,6 +56,10 @@ export const state = {
   isDashboardActive: false, // true if webview is on dashboard/story list
   availableStories: [],    // list of stories found on dashboard
 
+  // Text annotation state
+  aiTextRanges: [],   // [{start, end}] character offsets of AI-generated text in current editor
+  loreKeywords: [],   // [{text, entryId, displayName}] active lorebook keywords for highlighting
+
   // Backward-compat accessors
   get currentPrompt() { return this.prompt.display; },
   set currentPrompt(v) { this.prompt.display = v; },

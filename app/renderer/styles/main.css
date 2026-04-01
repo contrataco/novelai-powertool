@@ -303,6 +303,35 @@
     .story-editor i, .story-editor em { font-style: italic; }
     .story-editor u { text-decoration: underline; }
 
+    /* Text annotation */
+    .story-editor .ai-text {
+      color: #a8c8f0;
+    }
+
+    .story-editor .lore-keyword {
+      text-decoration: underline dotted rgba(233, 69, 96, 0.5);
+      text-underline-offset: 3px;
+      cursor: pointer;
+    }
+
+    .story-editor .lore-keyword:hover {
+      text-decoration-color: var(--accent);
+    }
+
+    .story-editor .last-paragraph {
+      background: rgba(233, 69, 96, 0.08);
+      border-radius: 2px;
+    }
+
+    /* Flash animation for highlighted lore card */
+    @keyframes highlightFlash {
+      0%, 100% { background: var(--bg-elevated); }
+      30% { background: rgba(233, 69, 96, 0.2); }
+    }
+    .lore-card.highlight-flash {
+      animation: highlightFlash 1.5s ease-out;
+    }
+
     .editor-status-bar {
       padding: 4px 16px;
       background: var(--bg-surface);
@@ -1327,6 +1356,11 @@
     .panel-tab.active {
       color: var(--accent);
       border-bottom-color: var(--accent);
+    }
+
+    /* All panel content hidden by default; shown via .active */
+    .panel-content {
+      display: none;
     }
 
     /* Lore Panel */
