@@ -71,15 +71,20 @@ async function handleGenerateVideo() {
 
     // Confirm with user
     const proceed = confirm(`Video will cost ~$${cost.toFixed(3)}. Generate?`);
-    if (!proceed) {
-      videoBtn.disabled = false;
-      videoBtn.innerHTML = '&#9654; Video';
-      return;
+    {
+      // Re-query after await — imageContainer.innerHTML may have been replaced
+      const btn = document.getElementById('sceneVideoBtn');
+      if (!proceed) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '&#9654; Video'; }
+        return;
+      }
     }
 
-    // Queue video
-    videoBtn.textContent = 'Queuing...';
-    videoBtn.classList.add('generating');
+    // Queue video — re-query before mutating
+    {
+      const btn = document.getElementById('sceneVideoBtn');
+      if (btn) { btn.textContent = 'Queuing...'; btn.classList.add('generating'); }
+    }
 
     const queueResult = await window.powertool.veniceQueueVideo(
       state.currentPrompt, null,
@@ -89,14 +94,17 @@ async function handleGenerateVideo() {
     const queueId = queueResult.queue_id;
     const model = queueResult.model;
 
-    // Show progress
-    videoBtn.textContent = 'Processing...';
+    // Show progress — re-query after await
+    {
+      const btn = document.getElementById('sceneVideoBtn');
+      if (btn) btn.textContent = 'Processing...';
+    }
     let progressEl = document.getElementById('videoProgress');
     if (!progressEl) {
       progressEl = document.createElement('div');
       progressEl.id = 'videoProgress';
       progressEl.className = 'video-progress';
-      videoBtn.parentNode.insertBefore(progressEl, videoBtn.nextSibling);
+      imageContainer.appendChild(progressEl);
     }
     progressEl.innerHTML = '<div class="spinner"></div> <span>Generating video...</span>';
 
@@ -172,9 +180,8 @@ async function handleGenerateVideo() {
     // Initial check after 3s
     setTimeout(pollVideo, 3000);
   } catch (e) {
-    videoBtn.disabled = false;
-    videoBtn.innerHTML = '&#9654; Video';
-    videoBtn.classList.remove('generating');
+    const btn = document.getElementById('sceneVideoBtn');
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#9654; Video'; btn.classList.remove('generating'); }
     showToast('Video error: ' + e.message, 4000, 'error');
   }
 }

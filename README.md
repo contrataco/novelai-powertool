@@ -136,4 +136,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Version History
 
+- **1.1.1**: LitRPG tracker polish — R5 enrich indicator, scan ETA, re-enrich button, orphan tag cleanup, NPC grouping
+- **1.1.0**: Per-story settings, TTS v2 (custom voice seeds, seedmix), scene pipeline v2 (char_captions), lore comprehension v2, lorebook optimizer, portrait manager
 - **1.0.0**: Initial release with Electron app and companion script
