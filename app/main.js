@@ -1358,12 +1358,13 @@ ipcMain.handle('story-images:get-image-data', async (event, storyId, imageId) =>
       'SELECT filename FROM media_items WHERE id = ? AND story_id = ?'
     ).get(imageId, storyId);
     if (!items) return null;
-    const galleryDir = path.join(app.getPath('userData').replace('Electron', '@taco-scripts/scene-visualizer'), 'gallery', storyId);
+    const galleryDir = path.join(app.getPath('userData'), 'gallery', storyId);
     const filePath = path.join(galleryDir, items.filename);
     if (!fs.existsSync(filePath)) return null;
     const data = fs.readFileSync(filePath);
     const ext = path.extname(items.filename).slice(1).toLowerCase();
-    const mime = ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png';
+    const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+    const mime = mimeMap[ext] || 'image/png';
     return `data:${mime};base64,${data.toString('base64')}`;
   } catch (e) {
     console.error('[Main] story-images:get-image-data error:', e);
