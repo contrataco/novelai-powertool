@@ -522,7 +522,7 @@ export function init() {
       const entryId = kw.dataset.entryId;
       if (entryId) {
         switchPanelTab('lore');
-        bus.emit('lore:highlight-entry', entryId);
+        bus.emit('lore:highlight-entry', { entryId, displayName: kw.dataset.displayName || '' });
       }
     }
   });

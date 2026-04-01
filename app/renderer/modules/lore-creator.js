@@ -3033,13 +3033,17 @@ export function init() {
   // Lorebook Optimizer — profile selection, discover, optimize all
   // =========================================================================
 
-  // Scroll to and flash a lore entry card when clicked from editor
-  bus.on('lore:highlight-entry', (entryId) => {
+  // Scroll to and flash a lore entry card when clicked from editor.
+  // Pending scan result cards use locally-generated IDs; accepted lorebook entries
+  // are not rendered in our panel so we fall back to a toast with the entry name.
+  bus.on('lore:highlight-entry', ({ entryId, displayName } = {}) => {
     const card = lorePendingList.querySelector(`[data-entry-id="${entryId}"]`);
     if (card) {
       card.scrollIntoView({ behavior: 'smooth', block: 'center' });
       card.classList.add('highlight-flash');
       setTimeout(() => card.classList.remove('highlight-flash'), 1500);
+    } else if (displayName) {
+      showToast(`Lorebook: ${displayName}`);
     }
   });
 

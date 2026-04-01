@@ -106,7 +106,9 @@ export function init() {
         commandPalette.showCommandPalette();
       }
     } else if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      if (document.activeElement === refs.storyEditor || document.activeElement === document.body) {
+      // Only trigger from body — storyEditor uses Ctrl+Enter so Shift+Enter remains available
+      // for soft line breaks (contenteditable default behavior)
+      if (document.activeElement === document.body) {
         e.preventDefault();
         generation.triggerGeneration();
       }

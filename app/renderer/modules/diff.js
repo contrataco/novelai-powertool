@@ -186,7 +186,7 @@ export function buildAnnotatedHtml(text, aiRanges, keywords) {
       spans.push({
         start: kwStart,
         end: kwEnd,
-        openTag: `<span class="lore-keyword" data-entry-id="${escapeHtml(String(kw.entryId))}">`,
+        openTag: `<span class="lore-keyword" data-entry-id="${escapeHtml(String(kw.entryId))}" data-display-name="${escapeHtml(String(kw.displayName || kw.text))}">`,
         closeTag: '</span>',
         priority: 2,
       });
@@ -235,8 +235,9 @@ export function annotateEditor(el, aiRanges, keywords) {
   const text = el.innerText;
   if (!text) return;
 
-  // If nothing to annotate, clear any existing spans and bail
-  const hasAnnotations = aiRanges.length > 0 || keywords.length > 0;
+  // If nothing to annotate (including no last-paragraph to mark), clear any existing spans and bail
+  const hasLastParagraph = findLastParagraphStart(text) < text.length;
+  const hasAnnotations = aiRanges.length > 0 || keywords.length > 0 || hasLastParagraph;
   if (!hasAnnotations) {
     if (el.querySelector('.ai-text, .lore-keyword, .last-paragraph')) {
       el.innerText = text;
