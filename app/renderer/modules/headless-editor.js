@@ -127,9 +127,9 @@ export async function syncToWebview() {
   isSyncingToWebview = true;
 
   try {
-    imageEmbed.stripFigures();
     const text = storyEditor.innerText;
     if (text === lastKnownWebviewText) return;
+    imageEmbed.stripFigures();
 
     console.log('[HeadlessSync] Syncing text to webview');
     if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'Syncing...';

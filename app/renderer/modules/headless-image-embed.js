@@ -168,9 +168,9 @@ export function init({ syncToWebview }) {
   _syncToWebview = syncToWebview;
 
   // Auto-place images on generation
-  bus.on('image:generated', async ({ imageId, dataUrl, storyId }) => {
+  bus.on('image:generated', async ({ imageData, storyId }) => {
     if (!state.headlessMode || storyId !== state.currentStoryId) return;
-    await autoPlaceImage(imageId, dataUrl);
+    await autoPlaceImage(null, imageData);
   });
 
   // Reset on story change

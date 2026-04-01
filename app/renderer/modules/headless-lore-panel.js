@@ -8,6 +8,7 @@ import { bus } from './state.js';
 import { loreCall } from './lore-creator.js';
 import { showToast } from './utils.js';
 import { parseMetadataClient } from './metadata.js';
+import { setupPanelToggle } from './headless-panels.js';
 
 // Module state
 let _categories = [];
@@ -60,6 +61,9 @@ export function init() {
   $('loreBudgetPriority').addEventListener('input', (e) => {
     $('loreBudgetPriorityVal').textContent = e.target.value;
   });
+
+  // Wire toolbar button
+  setupPanelToggle($('editorLoreBtn'), $('headlessLorePanel'));
 
   // Load on panel open
   const panel = $('headlessLorePanel');
@@ -480,5 +484,8 @@ function _escHtml(s) {
   return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// Expose for use by headless-autocomplete (currentLoreEntries)
+// Expose for use by headless-autocomplete and headless-misc
 export function getCurrentEntries() { return _allEntries; }
+
+// Expose for use by headless-command-palette and headless-misc
+export function selectLoreEntry(id) { _selectEntry(id); }

@@ -5,7 +5,7 @@ import * as refs from './dom-refs.js';
 import { loreCall } from './lore-creator.js';
 import { showToast } from './utils.js';
 import { togglePanel, setupPanelToggle } from './headless-panels.js';
-import { currentLoreEntries, selectLoreEntry } from './headless-lore-panel.js';
+import { getCurrentEntries, selectLoreEntry } from './headless-lore-panel.js';
 
 const { webview, storyEditor } = refs;
 
@@ -26,7 +26,7 @@ function initSelectionToolbar() {
     // Context-aware View Lore button
     let loreMatch = null;
     if (text.length > 2 && text.length < 50) {
-      loreMatch = currentLoreEntries.find(e =>
+      loreMatch = getCurrentEntries().find(e =>
         (e.displayName || '').toLowerCase() === text.toLowerCase() ||
         (e.keys || '').split(',').some(k => k.trim().toLowerCase() === text.toLowerCase())
       );

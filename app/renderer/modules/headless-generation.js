@@ -39,6 +39,9 @@ export async function triggerGeneration() {
 
   showGenerationIndicator();
 
+  // Give modules a chance to flush state before generation (e.g. memory auto-save)
+  bus.emit('headless:before-generation');
+
   // Sync latest text to webview before triggering generation
   if (_syncToWebview) await _syncToWebview();
   state.isWaitingForGeneration = true;

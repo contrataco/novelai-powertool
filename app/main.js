@@ -1387,7 +1387,7 @@ ipcMain.handle('text-action', async (event, { type, text, storyId }) => {
     if (!prompt) throw new Error(`Unknown text-action type: ${type}`);
     const result = await generateFn(
       [{ role: 'user', content: prompt }],
-      { maxTokens: 800, temperature: 0.7, label: `text-action:${type}` }
+      { max_tokens: 800, temperature: 0.7, label: `text-action:${type}` }
     );
     return { output: result.output };
   } catch (e) {
