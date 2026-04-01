@@ -3,6 +3,7 @@
 import { state, bus } from './state.js';
 import * as refs from './dom-refs.js';
 import { showToast } from './utils.js';
+import { mergeRanges } from './diff.js';
 
 const { webview, storyEditor } = refs;
 
@@ -159,38 +160,98 @@ export async function triggerRedo() {
 
 // --- AI Actions (Rewrite, Expand, Summarize, Shorten) ---
 
+/**
+ * Apply an AI text action to the current selection (or end of document for 'expand').
+ * Uses the text-action IPC which calls callLLM directly — no command injection.
+ * @param {'rewrite'|'expand'|'shorten'|'summarize'} type
+ */
 export async function triggerAiAction(type) {
-  const selection = window.getSelection();
-  const selectedText = selection.toString();
+  if (state.llmBusy) { showToast('AI is busy — wait for generation to finish', 2000); return; }
 
-  if (!selectedText && type !== 'expand') {
-    showToast('Please select some text first.');
-    return;
+  const editor = refs.storyEditor;
+  if (!editor) return;
+
+  let selectedText = '';
+  let selectionRange = null;
+
+  if (type !== 'expand') {
+    const sel = window.getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) {
+      showToast('Select some text first', 2000);
+      return;
+    }
+    selectionRange = sel.getRangeAt(0).cloneRange();
+    selectedText = sel.toString().trim();
+    if (!selectedText) { showToast('Select some text first', 2000); return; }
+  } else {
+    // Expand: use last 500 chars of the editor as context
+    selectedText = (editor.innerText || '').slice(-500).trim();
+    if (!selectedText) { showToast('No story text to expand', 2000); return; }
   }
 
-  showToast(`AI is ${type}ing...`, 3000);
+  // Show indicator
+  state.llmBusy = true;
+  if (refs.editorAiStatus) refs.editorAiStatus.textContent = _actionLabel(type) + '…';
+  if (refs.editorAiIndicator) refs.editorAiIndicator.className = 'status-indicator busy';
 
   try {
+    const result = await window.powertool.textAction(type, selectedText, state.currentStoryId);
+    if (result.error) throw new Error(result.error);
+    const output = (result.output || '').trim();
+    if (!output) { showToast('No output received', 2000); return; }
+
+    if (type === 'expand') {
+      // Append to end of editor
+      editor.focus();
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('insertText', false, '\n' + output);
+    } else if (selectionRange) {
+      // Replace selection
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(selectionRange);
+      document.execCommand('insertText', false, output);
+    }
+
+    showToast(`${_actionLabel(type)} applied`);
     if (_syncToWebview) await _syncToWebview();
 
-    const label = type === 'rewrite' ? 'Rewrite' : type === 'summarize' ? 'Summarize' : type === 'expand' ? 'Expand' : 'Shorten';
-    const commandText = `\n[ ${label} the following: ${selectedText} ]\n`;
-
-    await webview.executeJavaScript(`
-      (function() {
-        var editor = document.querySelector('.ProseMirror');
-        var view = editor && editor.pmViewDesc && editor.pmViewDesc.view;
-        if (!view) return false;
-        var tr = view.state.tr;
-        tr.insertText(${JSON.stringify(commandText)});
-        view.dispatch(tr);
-        return true;
-      })()
-    `);
-
-    triggerGeneration();
+    // Track new text as AI-generated range
+    const newStart = selectionRange
+      ? _getCaretOffset(editor, selectionRange.startContainer, selectionRange.startOffset)
+      : (editor.innerText || '').length - output.length;
+    if (newStart >= 0) {
+      state.aiTextRanges = mergeRanges([
+        ...state.aiTextRanges,
+        { start: newStart, end: newStart + output.length },
+      ]);
+    }
   } catch (e) {
-    console.error(`[HeadlessSync] AI Action ${type} failed:`, e);
-    showToast(`Failed to ${type}.`);
+    console.error('[Generation] AI action error:', e);
+    showToast(`${_actionLabel(type)} failed`, 3000, 'error');
+  } finally {
+    state.llmBusy = false;
+    if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Ready';
+    if (refs.editorAiIndicator) refs.editorAiIndicator.className = 'status-indicator';
   }
+}
+
+function _actionLabel(type) {
+  return { rewrite: 'Rewrite', expand: 'Expand', shorten: 'Shorten', summarize: 'Summarize' }[type] || type;
+}
+
+function _getCaretOffset(root, node, offset) {
+  let charOffset = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+  let current;
+  while ((current = walker.nextNode())) {
+    if (current === node) { charOffset += offset; break; }
+    charOffset += current.textContent.length;
+  }
+  return charOffset;
 }
