@@ -5272,3 +5272,396 @@
     .editor-context-menu.is-open { display: block; }
     .media-lightbox.is-open { display: flex; }
     .rpg-album-lightbox.is-open { display: flex; }
+
+/* ============================================================
+   Inline Image Embedding — headless editor
+   ============================================================ */
+
+.story-editor figure.editor-image {
+  margin: 0;
+  padding: 0;
+  cursor: default;
+  user-select: none;
+  position: relative;
+}
+
+.story-editor figure.editor-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+/* Layout: Break — full column width, scene break */
+.story-editor figure.editor-image.layout-break {
+  width: 100%;
+  margin: 1.5em 0;
+}
+
+.story-editor figure.editor-image.layout-break img {
+  width: 100%;
+  object-fit: cover;
+}
+
+/* Theme-specific framing for break */
+.theme-manuscript .story-editor figure.editor-image.layout-break img {
+  border: 1px solid #444;
+}
+
+.theme-editorial .story-editor figure.editor-image.layout-break img {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+.theme-graphic-novel .story-editor figure.editor-image.layout-break img {
+  border-radius: 0;
+}
+
+/* Layout: Float — wraps text around it */
+.story-editor figure.editor-image.layout-float {
+  margin: 0.5em 0 0.5em 1em;
+  width: 40%;
+  max-width: 320px;
+}
+
+.story-editor figure.editor-image.layout-float.float-left {
+  float: left;
+  margin: 0.5em 1em 0.5em 0;
+}
+
+.story-editor figure.editor-image.layout-float.float-right {
+  float: right;
+}
+
+.story-editor figure.editor-image.layout-float img {
+  width: 100%;
+}
+
+/* Layout: Margin — fixed right column, text stays in lane */
+.story-editor figure.editor-image.layout-margin {
+  float: right;
+  clear: right;
+  width: 160px;
+  margin: 0 0 8px 16px;
+}
+
+.story-editor figure.editor-image.layout-margin img {
+  width: 100%;
+  border-radius: 3px;
+}
+
+/* Layout: Bleed — full editor width, edge to edge */
+.story-editor figure.editor-image.layout-bleed {
+  width: calc(100% + var(--editor-h-padding, 48px) * 2);
+  margin: 1em calc(var(--editor-h-padding, 48px) * -1);
+  position: relative;
+}
+
+.story-editor figure.editor-image.layout-bleed img {
+  width: 100%;
+  border-radius: 0;
+  display: block;
+}
+
+.story-editor figure.editor-image.layout-bleed figcaption {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 8px 16px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.8));
+  font-style: italic;
+  color: rgba(255,255,255,0.85);
+  font-size: 0.85em;
+}
+
+/* Figcaption (non-bleed) */
+.story-editor figure.editor-image:not(.layout-bleed) figcaption {
+  font-size: 0.8em;
+  color: #888;
+  text-align: center;
+  margin-top: 4px;
+  font-style: italic;
+}
+
+/* Hover toolbar */
+.story-editor figure.editor-image .image-hover-toolbar {
+  display: none;
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10,10,18,0.92);
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 4px 8px;
+  gap: 6px;
+  align-items: center;
+  z-index: 100;
+  white-space: nowrap;
+}
+
+.story-editor figure.editor-image:hover .image-hover-toolbar {
+  display: flex;
+}
+
+.image-toolbar-btn {
+  background: none;
+  border: 1px solid #333;
+  border-radius: 3px;
+  color: #aaa;
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 12px;
+  line-height: 1;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.image-toolbar-btn:hover,
+.image-toolbar-btn.active {
+  border-color: var(--accent, #e94560);
+  color: var(--accent, #e94560);
+}
+
+.image-toolbar-btn.remove:hover {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
+.image-toolbar-modes {
+  display: flex;
+  gap: 3px;
+  border-right: 1px solid #333;
+  padding-right: 6px;
+  margin-right: 2px;
+}
+
+/* Break strip */
+.story-editor figure.editor-image.layout-break .image-break-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.image-strip-pill {
+  background: none;
+  border: 1px solid #333;
+  border-radius: 12px;
+  color: #666;
+  cursor: pointer;
+  padding: 2px 10px;
+  font-size: 11px;
+  transition: all 0.15s;
+}
+
+.image-strip-pill.active {
+  border-color: var(--accent, #e94560);
+  color: var(--accent, #e94560);
+}
+
+.image-strip-pill.remove:hover {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
+.image-strip-sep {
+  flex: 1;
+}
+
+/* Popover */
+.story-editor figure.editor-image .image-popover {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #0d0d1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 12px;
+  z-index: 200;
+  min-width: 240px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+}
+
+.popover-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.popover-row label {
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.popover-caption {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #ddd;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.popover-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.popover-toggle button {
+  flex: 1;
+  padding: 4px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.popover-toggle button.active {
+  border-color: var(--accent, #e94560);
+  color: var(--accent, #e94560);
+}
+
+/* ============================================================
+   Editor Themes — manuscript / editorial / graphic-novel
+   ============================================================ */
+
+/* Base editor container needs relative positioning for bleed images */
+#editorContainer {
+  position: relative;
+}
+
+/* --- Scene Breaks --- */
+.story-editor .scene-break {
+  display: block;
+  text-align: center;
+  user-select: none;
+  cursor: default;
+  margin: 1.5em 0;
+  overflow: hidden;
+}
+
+/* --- Manuscript (default) --- */
+.theme-manuscript .story-editor {
+  font-family: 'Courier New', 'Courier', monospace;
+  font-size: 14px;
+  line-height: 1.9;
+  --editor-h-padding: 32px;
+}
+
+.theme-manuscript .story-editor p,
+.theme-manuscript .story-editor div {
+  text-indent: 2em;
+  margin: 0;
+}
+
+.theme-manuscript .story-editor .scene-break::before {
+  content: '# # #';
+  color: #555;
+  letter-spacing: 6px;
+  font-size: 0.9em;
+}
+
+/* AI text: dotted underline only */
+.theme-manuscript .story-editor .ai-text {
+  background: none;
+  border-left: none;
+  text-decoration: underline dotted rgba(140, 180, 220, 0.5);
+  text-underline-offset: 3px;
+}
+
+/* Lore keyword (all themes) */
+.story-editor .lore-keyword {
+  text-decoration: underline dotted var(--accent, #e94560);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Last paragraph tint (all themes) */
+.story-editor .last-paragraph {
+  background: rgba(255, 0, 0, 0.035);
+}
+
+/* --- Editorial --- */
+.theme-editorial .story-editor {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 15px;
+  line-height: 1.8;
+  --editor-h-padding: 40px;
+}
+
+.theme-editorial .story-editor p,
+.theme-editorial .story-editor div {
+  margin-bottom: 0.6em;
+}
+
+.theme-editorial .story-editor .scene-break::before {
+  content: '✦  ✦  ✦';
+  color: #666;
+  letter-spacing: 4px;
+  font-size: 0.8em;
+}
+
+/* AI text: left border + cool blue tint */
+.theme-editorial .story-editor .ai-text {
+  background: rgba(140, 170, 220, 0.07);
+  border-left: 2px solid rgba(140, 170, 220, 0.4);
+  padding-left: 6px;
+  margin-left: -8px;
+  border-radius: 0 2px 2px 0;
+}
+
+/* --- Graphic Novel --- */
+.theme-graphic-novel .story-editor {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  line-height: 1.7;
+  --editor-h-padding: 28px;
+}
+
+.theme-graphic-novel .story-editor p,
+.theme-graphic-novel .story-editor div {
+  margin-bottom: 0.5em;
+}
+
+.theme-graphic-novel .story-editor .scene-break {
+  height: 2px;
+  background: linear-gradient(to right, var(--accent, #e94560), transparent);
+  margin: 1.2em 0;
+}
+
+.theme-graphic-novel .story-editor .scene-break::before {
+  content: none;
+}
+
+/* AI text: faint violet tint with thin border */
+.theme-graphic-novel .story-editor .ai-text {
+  background: rgba(180, 160, 255, 0.06);
+  border: 1px solid rgba(180, 160, 255, 0.15);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+/* Theme toggle toolbar group */
+.editor-theme-toggle {
+  display: flex;
+  gap: 2px;
+}
+
+.theme-btn {
+  font-weight: 600;
+  font-size: 11px;
+  padding: 2px 7px;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+
+.theme-btn.active {
+  opacity: 1;
+  color: var(--accent, #e94560);
+}
