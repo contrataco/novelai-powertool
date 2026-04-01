@@ -130,49 +130,85 @@
       </div>
       
       <!-- Headless Panels -->
-      <div id="headlessLorePanel" class="headless-panel wide">
-        <div class="headless-panel-header">
-          <h3>Lorebook Entries</h3>
-          <div class="header-actions">
-            <button id="headlessLoreCreateBtn" class="btn-sm primary">+ New Entry</button>
-            <button class="close-btn">&times;</button>
+      <div id="headlessLorePanel" class="headless-panel wide lore-two-pane">
+        <div class="lore-sidebar">
+          <div class="lore-sidebar-top">
+            <input type="text" id="loreSearchInput" class="lore-search-input" placeholder="Search entries...">
+            <button id="loreBulkToggleBtn" class="btn-sm tertiary" title="Bulk select">☑</button>
+          </div>
+          <div id="loreCategoryTree" class="lore-category-tree"></div>
+          <div class="lore-sidebar-footer">
+            <button id="loreNewCategoryBtn" class="btn-sm tertiary">+ Category</button>
+          </div>
+          <div id="loreBulkBar" class="lore-bulk-bar u-hidden">
+            <span id="loreBulkCount">0 selected</span>
+            <button id="loreBulkMoveBtn" class="btn-sm tertiary">Move to…</button>
+            <button id="loreBulkDeleteBtn" class="btn-sm tertiary danger">Delete</button>
+            <button id="loreBulkExportBtn" class="btn-sm tertiary">Export JSON</button>
           </div>
         </div>
-        <div class="headless-panel-body">
-          <div class="lore-editor-grid">
-            <div class="lore-sidebar">
-              <div class="lore-search-box">
-                <input type="text" id="headlessLoreSearch" placeholder="Search entries...">
-              </div>
-              <div id="headlessLoreList" class="lore-entry-list">
-                <!-- Entries populated here -->
-                <p class="text-xs color-dim" style="text-align: center; padding: 20px;">Loading entries...</p>
-              </div>
+        <div class="lore-editor-pane">
+          <div class="headless-panel-header">
+            <h3 id="loreEditorTitle">Lorebook</h3>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <button id="loreNewEntryBtn" class="btn-sm tertiary">+ Entry</button>
+              <button class="close-btn" onclick="togglePanel(headlessLorePanel)">&times;</button>
             </div>
-            <div id="headlessLoreEditor" class="lore-main-editor u-hidden">
-              <div class="form-group">
+          </div>
+          <div id="loreEditorBody" class="headless-panel-body lore-editor-body">
+            <div id="loreEditorEmpty" class="lore-editor-empty">
+              Select an entry to edit, or click <strong>+ Entry</strong> to create one.
+            </div>
+            <div id="loreEditorForm" class="u-hidden">
+              <div class="lore-field-group">
                 <label>Display Name</label>
-                <input type="text" id="headlessLoreNameInput" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
+                <input type="text" id="loreEntryName" class="lore-input" placeholder="Entry name...">
               </div>
-              <div class="form-group">
-                <label>Keys (comma-separated)</label>
-                <input type="text" id="headlessLoreKeysInput" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px;">
+              <div class="lore-field-group">
+                <label>Keys</label>
+                <div id="loreKeyChips" class="lore-key-chips"></div>
+                <input type="text" id="loreKeyInput" class="lore-input lore-key-raw" placeholder="Add key, press Enter…">
               </div>
-              <div class="form-group" style="flex: 1; display: flex; flex-direction: column;">
-                <label>Entry Text</label>
-                <textarea id="headlessLoreTextInput" style="flex: 1; min-height: 150px; font-size: 12px;"></textarea>
+              <div class="lore-field-group">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <label>Content</label>
+                  <span id="loreContentCounter" class="lore-counter">0 chars · ~0 tokens</span>
+                </div>
+                <div id="loreTypeBadges" class="lore-badge-row"></div>
+                <textarea id="loreEntryContent" class="lore-textarea" rows="10" placeholder="Entry content…"></textarea>
               </div>
-              <div class="form-group">
-                <button id="headlessLoreDeleteBtn" class="btn-sm tertiary" style="color: var(--error);">Delete Entry</button>
-              </div>
-            </div>
-            <div id="headlessLoreEmpty" class="color-dim" style="display: flex; align-items: center; justify-content: center; text-align: center; padding: 40px;">
-              Select an entry to edit or create a new one.
+              <details class="lore-advanced-details">
+                <summary>Advanced Settings</summary>
+                <div class="lore-advanced-body">
+                  <div class="lore-field-group">
+                    <label>Search Range</label>
+                    <input type="number" id="loreSearchRange" class="lore-input lore-input-sm" value="1000" min="0">
+                  </div>
+                  <div class="lore-field-group lore-toggle-row">
+                    <label>Force Activation</label>
+                    <input type="checkbox" id="loreForceActivation">
+                  </div>
+                  <div class="lore-field-group">
+                    <label>Budget Priority</label>
+                    <input type="range" id="loreBudgetPriority" min="0" max="3" step="1" value="0">
+                    <span id="loreBudgetPriorityVal">0</span>
+                  </div>
+                  <div class="lore-field-group">
+                    <label>Prefix</label>
+                    <input type="text" id="lorePrefix" class="lore-input" placeholder="Text before entry…">
+                  </div>
+                  <div class="lore-field-group">
+                    <label>Suffix</label>
+                    <input type="text" id="loreSuffix" class="lore-input" placeholder="Text after entry…">
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
-        </div>
-        <div class="headless-panel-footer">
-          <button id="headlessLoreSaveBtn" class="btn primary" disabled>Save Entry</button>
+          <div id="loreEditorFooter" class="headless-panel-footer u-hidden">
+            <button id="loreSaveBtn" class="btn-sm primary">Save</button>
+            <button id="loreDeleteBtn" class="btn-sm tertiary danger">Delete</button>
+          </div>
         </div>
       </div>
 
