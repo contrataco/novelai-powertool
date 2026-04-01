@@ -6020,3 +6020,17 @@
   overflow-y: auto;
   font-family: 'Courier New', monospace;
 }
+
+/* =============================================
+   History panel items
+   ============================================= */
+.history-item-row {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #aaa;
+  cursor: pointer;
+  border-bottom: 1px solid #1a1a2e;
+  transition: background 0.1s;
+}
+.history-item-row:hover { background: rgba(255,255,255,0.04); color: #ddd; }
+.history-item-label { font-size: 12px; }
