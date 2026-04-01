@@ -88,11 +88,14 @@
           <button id="editorBoldBtn" class="btn-sm tertiary" title="Bold (Ctrl+B)"><b>B</b></button>
           <button id="editorItalicBtn" class="btn-sm tertiary" title="Italic (Ctrl+I)"><i>I</i></button>
           <button id="editorUnderlineBtn" class="btn-sm tertiary" title="Underline (Ctrl+U)"><u>U</u></button>
-          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
-          <button id="editorLoreBtn" class="btn-sm tertiary" title="Edit Lorebook">Lore</button>
-          <button id="editorMemoryBtn" class="btn-sm tertiary" title="Edit Memory">Memory</button>
-          <button id="editorNoteBtn" class="btn-sm tertiary" title="Edit Author's Note">Note</button>
-          <button id="editorPreambleBtn" class="btn-sm tertiary" title="Preamble &amp; AI Instructions (Ctrl+Shift+I)">Preamble</button>
+          <div class="toolbar-divider"></div>
+          <!-- Context tools -->
+          <button id="editorMemoryBtn" class="btn-sm tertiary" title="Memory (Ctrl+Shift+M)">Memory</button>
+          <button id="editorPreambleBtn" class="btn-sm tertiary" title="Preamble &amp; Author's Note (Ctrl+Shift+I)">Preamble</button>
+          <div class="toolbar-divider"></div>
+          <!-- Lore tools -->
+          <button id="editorLoreBtn" class="btn-sm tertiary" title="Lorebook (Ctrl+Shift+L)">Lore</button>
+          <button id="editorNoteBtn" class="btn-sm tertiary u-hidden" title="Author's Note (legacy)" aria-hidden="true"></button>
         </div>
         <div class="editor-toolbar-right">
           <div class="editor-theme-toggle" title="Presentation style">
@@ -102,13 +105,12 @@
           </div>
           <div class="toolbar-divider"></div>
           <button id="editorContextBtn" class="btn-sm tertiary" title="View AI Context">Context</button>
-          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
           <button id="editorSettingsBtn" class="btn-sm tertiary" title="AI Generation Settings">AI Settings</button>
-          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
+          <div class="toolbar-divider"></div>
           <button id="editorGenerateBtn" class="btn-sm primary" title="Generate next text (Ctrl+Enter)">Generate</button>
           <button id="editorUndoBtn" class="btn-sm tertiary" title="Undo (Ctrl+Z)">Undo</button>
           <button id="editorRedoBtn" class="btn-sm tertiary" title="Redo (Ctrl+Shift+Z)">Redo</button>
-          <div style="width: 1px; height: 16px; background: var(--border-default); margin: 0 4px;"></div>
+          <div class="toolbar-divider"></div>
           <button id="editorHistoryBtn" class="btn-sm tertiary" title="Story History">History</button>
           <button id="editorLockBtn" class="btn-sm tertiary" title="Toggle Read-Only Mode">Lock</button>
         </div>
