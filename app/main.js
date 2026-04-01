@@ -1372,6 +1372,30 @@ ipcMain.handle('story-images:get-image-data', async (event, storyId, imageId) =>
   }
 });
 
+// Text actions — AI-powered text operations for the headless editor
+ipcMain.handle('text-action', async (event, { type, text, storyId }) => {
+  try {
+    const generateFn = makeLoreGenerateTextFn();
+    const prompts = {
+      rewrite: `Rewrite the following passage to improve clarity and flow while preserving meaning and style:\n\n${text}`,
+      expand: `Continue and expand the following passage, maintaining the established tone and style:\n\n${text}`,
+      shorten: `Shorten the following passage while preserving its core meaning and voice:\n\n${text}`,
+      summarize: `Summarise the following passage in 2-3 concise sentences:\n\n${text}`,
+      'summarise-memory': `You are helping a writer maintain a story memory file. Summarise the following recent story text as a concise narrative memory (3-5 sentences, past tense, factual):\n\n${text}`,
+    };
+    const prompt = prompts[type];
+    if (!prompt) throw new Error(`Unknown text-action type: ${type}`);
+    const result = await generateFn(
+      [{ role: 'user', content: prompt }],
+      { maxTokens: 800, temperature: 0.7, label: `text-action:${type}` }
+    );
+    return { output: result.output };
+  } catch (e) {
+    console.error('[Main] text-action error:', e);
+    return { error: e.message };
+  }
+});
+
 // Scene settings (prompt generation, suggestions)
 const SCENE_SETTINGS_DEFAULTS = {
   autoGeneratePrompts: true,

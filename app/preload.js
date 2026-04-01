@@ -124,6 +124,9 @@ contextBridge.exposeInMainWorld('powertool', {
   storyImagesRemove: (id) => ipcRenderer.invoke('story-images:remove', id),
   storyImagesGetDataUrl: (storyId, imageId) => ipcRenderer.invoke('story-images:get-image-data', storyId, imageId),
 
+  // Text actions
+  textAction: (type, text, storyId) => ipcRenderer.invoke('text-action', { type, text, storyId }),
+
   // Script Manager
   scriptMgrListScripts: () => ipcRenderer.invoke('script-mgr:list-scripts'),
   scriptMgrEnableScript: (name) => ipcRenderer.invoke('script-mgr:enable-script', name),

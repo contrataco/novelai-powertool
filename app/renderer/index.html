@@ -215,15 +215,44 @@
 
       <div id="headlessMemoryPanel" class="headless-panel">
         <div class="headless-panel-header">
-          <h3>Story Memory</h3>
-          <button class="close-btn">&times;</button>
+          <h3>Memory</h3>
+          <button class="close-btn" onclick="togglePanel(headlessMemoryPanel)">&times;</button>
         </div>
         <div class="headless-panel-body">
-          <p class="text-xs color-dim">Context that is always sent to the AI (e.g., core premise, important rules).</p>
-          <textarea id="headlessMemoryInput" placeholder="Enter memory text..."></textarea>
+          <div class="memory-section">
+            <div class="preamble-label-row">
+              <label>Pinned Facts</label>
+              <button id="memoryAddFactBtn" class="btn-sm tertiary" title="Add a fact">+ Add</button>
+            </div>
+            <p class="preamble-hint">Always-true facts prepended at full priority — protagonist name, world rules, etc.</p>
+            <div id="memoryPinnedList" class="memory-pinned-list"></div>
+          </div>
+          <div class="preamble-divider"></div>
+          <div class="memory-section">
+            <div class="preamble-label-row">
+              <label>Narrative Memory</label>
+              <span id="memoryNarrativeCounter" class="lore-counter">0 chars</span>
+              <button id="memorySummariseBtn" class="btn-sm tertiary" title="Auto-summarise from story text">Summarise…</button>
+            </div>
+            <p class="preamble-hint">What has happened recently that the AI needs to remember.</p>
+            <textarea id="memoryNarrativeTextarea" class="lore-textarea" rows="7" placeholder="Recent events, discoveries, character states…"></textarea>
+          </div>
+          <div class="preamble-divider"></div>
+          <details id="memoryContextPreview" class="memory-context-preview">
+            <summary>Context Preview</summary>
+            <div class="memory-preview-body">
+              <div class="memory-budget-bar">
+                <div id="memoryBudgetPreamble" class="budget-segment segment-preamble" style="width:0%"></div>
+                <div id="memoryBudgetPinned" class="budget-segment segment-pinned" style="width:0%"></div>
+                <div id="memoryBudgetNarrative" class="budget-segment segment-narrative" style="width:0%"></div>
+              </div>
+              <div id="memoryBudgetLegend" class="memory-budget-legend"></div>
+              <pre id="memoryPreviewText" class="memory-preview-text"></pre>
+            </div>
+          </details>
         </div>
         <div class="headless-panel-footer">
-          <button id="headlessMemorySaveBtn" class="btn primary">Save Memory</button>
+          <button id="memorySaveBtn" class="btn-sm primary">Save</button>
         </div>
       </div>
 

@@ -5953,3 +5953,70 @@
   cursor: pointer;
 }
 .preamble-template-item:hover { background: rgba(255,255,255,0.05); color: #ddd; }
+
+/* =============================================
+   Memory panel
+   ============================================= */
+.memory-section { padding: 0 0 4px; }
+.memory-pinned-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+.memory-pinned-fact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.memory-pinned-fact input {
+  flex: 1;
+  background: #111;
+  border: 1px solid #2a2a3e;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #ddd;
+  font-size: 12px;
+}
+.memory-pinned-remove {
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+.memory-context-preview summary {
+  font-size: 11px;
+  color: #666;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+.memory-preview-body { padding: 8px 0; }
+.memory-budget-bar {
+  height: 6px;
+  background: #1a1a2e;
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+  margin-bottom: 6px;
+}
+.budget-segment { height: 100%; transition: width 0.3s; }
+.segment-preamble { background: #4a8; }
+.segment-pinned { background: #e94560; }
+.segment-narrative { background: #4d96ff; }
+.memory-budget-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 10px;
+  color: #666;
+  margin-bottom: 8px;
+}
+.memory-preview-text {
+  background: #0d0d18;
+  border: 1px solid #1a1a2e;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #888;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: 'Courier New', monospace;
+}
