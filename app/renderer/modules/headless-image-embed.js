@@ -268,7 +268,11 @@ function _attachBreakStrip(fig, record) {
 
 function _togglePopover(fig, record) {
   let popover = fig.querySelector('.image-popover');
-  if (popover) { popover.remove(); return; }
+  if (popover) {
+    if (fig._popoverClose) { document.removeEventListener('click', fig._popoverClose); delete fig._popoverClose; }
+    popover.remove();
+    return;
+  }
 
   popover = document.createElement('div');
   popover.className = 'image-popover';
@@ -301,6 +305,7 @@ function _togglePopover(fig, record) {
     }
     if (cap) cap.textContent = record.caption;
     if (!record.caption && cap) cap.remove();
+    if (fig._popoverClose) { document.removeEventListener('click', fig._popoverClose); delete fig._popoverClose; }
     popover.remove();
   };
 
@@ -314,7 +319,14 @@ function _togglePopover(fig, record) {
 
   fig.appendChild(popover);
 
-  const close = (e) => { if (!fig.contains(e.target)) { popover.remove(); document.removeEventListener('click', close); } };
+  const close = (e) => {
+    if (!fig.contains(e.target)) {
+      popover.remove();
+      document.removeEventListener('click', close);
+      delete fig._popoverClose;
+    }
+  };
+  fig._popoverClose = close;
   setTimeout(() => document.addEventListener('click', close), 50);
 }
 
@@ -337,6 +349,7 @@ function _setLayout(fig, record, mode) {
 }
 
 function _removeImage(fig, record) {
+  if (fig._popoverClose) { document.removeEventListener('click', fig._popoverClose); delete fig._popoverClose; }
   window.powertool.storyImagesRemove(record.id);
   _storyImages = _storyImages.filter(r => r.id !== record.id);
   fig.remove();
