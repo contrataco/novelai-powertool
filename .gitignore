@@ -30,7 +30,7 @@ CLAUDE.local.md
 .superpowers/
 .junie/
 AGENTS.md
-docs/superpowers/
+docs/superpowers/brainstorm/
 
 # Logs
 *.log
