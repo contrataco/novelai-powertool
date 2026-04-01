@@ -18,6 +18,7 @@ import * as autocomplete from './headless-autocomplete.js';
 import * as misc from './headless-misc.js';
 import * as imageEmbed from './headless-image-embed.js';
 import * as theme from './headless-theme.js';
+import * as preamble from './headless-preamble.js';
 import * as contextMenu from './context-menu.js';
 
 // Re-export sync functions for use by webview-polling.js and other modules
@@ -64,6 +65,7 @@ export function init() {
   misc.init(editorDeps);
   imageEmbed.init({ syncToWebview: editor.syncToWebview });
   theme.init();
+  preamble.init();
 
   // Context menu
   contextMenu.init({
@@ -126,6 +128,9 @@ export function init() {
       } else if (e.shiftKey && e.key === 'T') {
         e.preventDefault();
         editor.toggleTypewriterMode?.();
+      } else if (e.shiftKey && e.key === 'I') {
+        e.preventDefault();
+        panels.togglePanel(refs.headlessPreamblePanel);
       }
     } else if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
       // Only trigger from body — storyEditor uses Ctrl+Enter so Shift+Enter remains available

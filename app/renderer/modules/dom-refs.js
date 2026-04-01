@@ -93,6 +93,16 @@ export const headlessLoreCreateBtn = document.getElementById('headlessLoreCreate
 export const headlessLoreDeleteBtn = document.getElementById('headlessLoreDeleteBtn');
 export const headlessLoreSaveBtn = document.getElementById('headlessLoreSaveBtn');
 
+export const headlessPreamblePanel = document.getElementById('headlessPreamblePanel');
+export const preambleTextarea = document.getElementById('preambleTextarea');
+export const preambleCounter = document.getElementById('preambleCounter');
+export const authorNoteTextarea = document.getElementById('authorNoteTextarea');
+export const authorNoteCounter = document.getElementById('authorNoteCounter');
+export const authorNoteDepth = document.getElementById('authorNoteDepth');
+export const authorNoteDepthVal = document.getElementById('authorNoteDepthVal');
+export const preambleSaveBtn = document.getElementById('preambleSaveBtn');
+export const editorPreambleBtn = document.getElementById('editorPreambleBtn');
+
 export const headlessMemoryPanel = document.getElementById('headlessMemoryPanel');
 export const headlessMemoryInput = document.getElementById('headlessMemoryInput');
 export const headlessMemorySaveBtn = document.getElementById('headlessMemorySaveBtn');

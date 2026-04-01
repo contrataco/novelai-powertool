@@ -92,6 +92,7 @@
           <button id="editorLoreBtn" class="btn-sm tertiary" title="Edit Lorebook">Lore</button>
           <button id="editorMemoryBtn" class="btn-sm tertiary" title="Edit Memory">Memory</button>
           <button id="editorNoteBtn" class="btn-sm tertiary" title="Edit Author's Note">Note</button>
+          <button id="editorPreambleBtn" class="btn-sm tertiary" title="Preamble &amp; AI Instructions (Ctrl+Shift+I)">Preamble</button>
         </div>
         <div class="editor-toolbar-right">
           <div class="editor-theme-toggle" title="Presentation style">
@@ -237,6 +238,42 @@
         </div>
         <div class="headless-panel-footer">
           <button id="headlessNoteSaveBtn" class="btn primary">Save Note</button>
+        </div>
+      </div>
+
+      <div id="headlessPreamblePanel" class="headless-panel">
+        <div class="headless-panel-header">
+          <h3>Preamble &amp; Instructions</h3>
+          <button class="close-btn" onclick="togglePanel(headlessPreamblePanel)">&times;</button>
+        </div>
+        <div class="headless-panel-body">
+          <div class="preamble-section">
+            <div class="preamble-label-row">
+              <label>Preamble</label>
+              <span id="preambleCounter" class="lore-counter">0 chars · ~0 tokens</span>
+              <button id="preambleTemplateBtn" class="btn-sm tertiary preamble-template-btn" title="Load a template">Templates ▾</button>
+              <div id="preambleTemplateMenu" class="preamble-template-menu u-hidden"></div>
+            </div>
+            <p class="preamble-hint">Text prepended before your story in the AI context. Use it to establish POV, genre, tone, or writing style rules.</p>
+            <textarea id="preambleTextarea" class="lore-textarea" rows="8" placeholder="e.g. Write in a dark, atmospheric style. The story is told in close third person…"></textarea>
+          </div>
+          <div class="preamble-divider"></div>
+          <div class="preamble-section">
+            <div class="preamble-label-row">
+              <label>Author's Note / AI Instructions</label>
+              <span id="authorNoteCounter" class="lore-counter">0 chars · ~0 tokens</span>
+            </div>
+            <p class="preamble-hint">Injected at a configurable depth from the end of the context. Strong short-term influence on style and tone.</p>
+            <div class="preamble-depth-row">
+              <label>Injection depth (tokens from end)</label>
+              <input type="range" id="authorNoteDepth" min="0" max="200" step="4" value="208">
+              <span id="authorNoteDepthVal">208</span>
+            </div>
+            <textarea id="authorNoteTextarea" class="lore-textarea" rows="5" placeholder="e.g. [ Write in the style of Cormac McCarthy. Use short, punchy sentences. ]"></textarea>
+          </div>
+        </div>
+        <div class="headless-panel-footer">
+          <button id="preambleSaveBtn" class="btn-sm primary">Save</button>
         </div>
       </div>
 
