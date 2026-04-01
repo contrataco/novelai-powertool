@@ -341,13 +341,16 @@ export function showHelpDialog() {
   showModal('Keyboard Shortcuts', `
     <table style="width:100%;border-collapse:collapse;font-size:13px;">
       <tr><td style="padding:4px 8px;"><kbd>Ctrl+Enter</kbd></td><td>Generate / Continue</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+S</kbd></td><td>Save & Sync to NovelAI</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Z</kbd></td><td>Undo</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+Z</kbd></td><td>Redo</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+P</kbd></td><td>Command Palette</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+F</kbd></td><td>Find & Replace</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+F</kbd></td><td>Focus Mode</td></tr>
-      <tr><td style="padding:4px 8px;"><kbd>/</kbd></td><td>Command Palette (at line start)</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+S</kbd></td><td>Save &amp; Sync to NovelAI</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Z / Ctrl+Shift+Z</kbd></td><td>Undo / Redo</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+F</kbd></td><td>Focus mode</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+T</kbd></td><td>Typewriter mode</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+F</kbd></td><td>Search &amp; Replace</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+P or /</kbd></td><td>Command palette</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+L</kbd></td><td>Toggle Lorebook</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+M</kbd></td><td>Toggle Memory</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+I</kbd></td><td>Toggle Preamble</td></tr>
+      <tr><td style="padding:4px 8px;"><kbd>Ctrl+Shift+1/2/3</kbd></td><td>Switch theme (Manuscript / Editorial / Graphic Novel)</td></tr>
     </table>
   `);
 }
