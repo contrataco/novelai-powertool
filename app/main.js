@@ -1337,6 +1337,40 @@ ipcMain.handle('story-text:set', (_, { storyId, text, source }) => {
   return { success: true };
 });
 
+// Story Images
+ipcMain.handle('story-images:get', async (event, storyId) => {
+  return db.getStoryImages(storyId);
+});
+
+ipcMain.handle('story-images:set', async (event, img) => {
+  db.setStoryImage(img);
+  return { ok: true };
+});
+
+ipcMain.handle('story-images:remove', async (event, id) => {
+  db.removeStoryImage(id);
+  return { ok: true };
+});
+
+ipcMain.handle('story-images:get-image-data', async (event, storyId, imageId) => {
+  try {
+    const items = db.getDb().prepare(
+      'SELECT filename FROM media_items WHERE id = ? AND story_id = ?'
+    ).get(imageId, storyId);
+    if (!items) return null;
+    const galleryDir = path.join(app.getPath('userData').replace('Electron', '@taco-scripts/scene-visualizer'), 'gallery', storyId);
+    const filePath = path.join(galleryDir, items.filename);
+    if (!fs.existsSync(filePath)) return null;
+    const data = fs.readFileSync(filePath);
+    const ext = path.extname(items.filename).slice(1).toLowerCase();
+    const mime = ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png';
+    return `data:${mime};base64,${data.toString('base64')}`;
+  } catch (e) {
+    console.error('[Main] story-images:get-image-data error:', e);
+    return null;
+  }
+});
+
 // Scene settings (prompt generation, suggestions)
 const SCENE_SETTINGS_DEFAULTS = {
   autoGeneratePrompts: true,
