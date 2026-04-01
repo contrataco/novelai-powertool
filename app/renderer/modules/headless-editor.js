@@ -7,6 +7,7 @@ import { loreCall, switchPanelTab, refreshLoreKeywords } from './lore-creator.js
 import { updateVisibility as updateStorySelectorVisibility } from './story-selector.js';
 import { applyDiff, annotateEditor, mergeRanges, shiftRangesAfterEdit, diffText } from './diff.js';
 import { showToast } from './utils.js';
+import * as imageEmbed from './headless-image-embed.js';
 
 const { webview, storyEditor } = refs;
 
@@ -108,6 +109,8 @@ export async function syncFromWebview(force = false) {
 
       // Re-annotate after sync
       scheduleAnnotation();
+      await imageEmbed.restoreFigures();
+      bus.emit('headless:synced-from-webview');
     }
   } catch (e) {
     console.error('[HeadlessSync] Error syncing from webview:', e);
@@ -124,6 +127,7 @@ export async function syncToWebview() {
   isSyncingToWebview = true;
 
   try {
+    imageEmbed.stripFigures();
     const text = storyEditor.innerText;
     if (text === lastKnownWebviewText) return;
 
@@ -689,6 +693,8 @@ export function init() {
           updateStatusMetrics();
           window.powertool.storyTextSet(storyId, fullText, 'scroll-to-load');
           finishStoryLoad(storyId);
+          await imageEmbed.loadStoryImages(state.currentStoryId);
+          await imageEmbed.restoreFigures();
         } else {
           bus.emit('story:loading-phase', 'error', 'Could not load story text. Try again.');
         }
