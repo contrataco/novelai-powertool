@@ -2,7 +2,7 @@
 
 import { state, bus } from './state.js';
 import * as refs from './dom-refs.js';
-import { currentLoreEntries, selectLoreEntry } from './headless-lore-panel.js';
+import { getCurrentEntries, selectLoreEntry } from './headless-lore-panel.js';
 import { togglePanel } from './headless-panels.js';
 import { showToast } from './utils.js';
 
@@ -27,7 +27,22 @@ const COMMANDS = [
   { id: 'lock', name: 'Lock/Unlock Editor', description: 'Toggle read-only mode', shortcut: '' },
   { id: 'stats', name: 'Show Stats', description: 'Show detailed story statistics', shortcut: '' },
   { id: 'help', name: 'Help', description: 'List all commands and shortcuts', shortcut: '/help' },
-  { id: 'context', name: 'View AI Context', description: 'Open AI context viewer', shortcut: '' }
+  { id: 'context', name: 'View AI Context', description: 'Open AI context viewer', shortcut: '' },
+  // Image
+  { id: 'insert-image', name: 'Insert Image', description: 'Place a generated image at cursor position', shortcut: '' },
+  // Theme
+  { id: 'theme-manuscript', name: 'Theme: Manuscript', description: 'Switch to monospace manuscript style', shortcut: 'Ctrl+Shift+1' },
+  { id: 'theme-editorial', name: 'Theme: Editorial', description: 'Switch to serif editorial style', shortcut: 'Ctrl+Shift+2' },
+  { id: 'theme-graphic-novel', name: 'Theme: Graphic Novel', description: 'Switch to cinematic graphic novel style', shortcut: 'Ctrl+Shift+3' },
+  // Preamble
+  { id: 'open-preamble', name: 'Open Preamble', description: 'Edit preamble and AI instructions', shortcut: 'Ctrl+Shift+I' },
+  // Memory
+  { id: 'summarise-memory', name: 'Summarise Memory', description: 'Auto-draft a memory summary from recent story text', shortcut: '' },
+  // AI text actions
+  { id: 'rewrite-selection', name: 'Rewrite Selection', description: 'Rewrite the selected text using AI', shortcut: '' },
+  { id: 'expand-selection', name: 'Expand', description: 'Expand the story from the current point', shortcut: '' },
+  { id: 'shorten-selection', name: 'Shorten Selection', description: 'Shorten the selected text', shortcut: '' },
+  { id: 'summarize-selection', name: 'Summarize Selection', description: 'Summarize the selected text', shortcut: '' },
 ];
 
 let selectedCommandIndex = 0;
@@ -68,7 +83,7 @@ function renderCommandList() {
 
   let loreResults = [];
   if (filter.length >= 2) {
-    loreResults = currentLoreEntries.filter(e =>
+    loreResults = getCurrentEntries().filter(e =>
       (e.displayName || '').toLowerCase().includes(filter) ||
       (e.keys || '').toLowerCase().includes(filter)
     ).slice(0, 5).map(e => ({
@@ -106,7 +121,7 @@ function getItemCount() {
   const filter = (refs.editorCommandInput?.value || '').toLowerCase();
   const cmdCount = COMMANDS.filter(c => c.name.toLowerCase().includes(filter) || c.description.toLowerCase().includes(filter)).length;
   const storyCount = filter.length >= 2 ? state.availableStories.filter(s => (s.title || '').toLowerCase().includes(filter)).slice(0, 3).length : 0;
-  const loreCount = filter.length >= 2 ? currentLoreEntries.filter(e => (e.displayName || '').toLowerCase().includes(filter) || (e.keys || '').toLowerCase().includes(filter)).slice(0, 5).length : 0;
+  const loreCount = filter.length >= 2 ? getCurrentEntries().filter(e => (e.displayName || '').toLowerCase().includes(filter) || (e.keys || '').toLowerCase().includes(filter)).slice(0, 5).length : 0;
   return cmdCount + storyCount + loreCount;
 }
 
@@ -136,7 +151,7 @@ async function executeSelectedCommand() {
     : [];
 
   let loreResults = filter.length >= 2
-    ? currentLoreEntries.filter(e => (e.displayName || '').toLowerCase().includes(filter) || (e.keys || '').toLowerCase().includes(filter)).slice(0, 5).map(e => ({ id: `lore-${e.id}`, name: e.displayName, type: 'lore', loreId: e.id }))
+    ? getCurrentEntries().filter(e => (e.displayName || '').toLowerCase().includes(filter) || (e.keys || '').toLowerCase().includes(filter)).slice(0, 5).map(e => ({ id: `lore-${e.id}`, name: e.displayName, type: 'lore', loreId: e.id }))
     : [];
 
   const allItems = [...filteredCommands, ...storyResults, ...loreResults];
@@ -165,6 +180,36 @@ async function executeSelectedCommand() {
       case 'stats': if (d.showStoryStats) d.showStoryStats(); break;
       case 'help': if (d.showHelpDialog) d.showHelpDialog(); break;
       case 'context': togglePanel(refs.headlessContextPanel); break;
+      case 'insert-image':
+        showToast('Click an image in the gallery to insert it here', 3000);
+        break;
+      case 'theme-manuscript':
+        import('./headless-theme.js').then(t => t.setTheme('manuscript'));
+        break;
+      case 'theme-editorial':
+        import('./headless-theme.js').then(t => t.setTheme('editorial'));
+        break;
+      case 'theme-graphic-novel':
+        import('./headless-theme.js').then(t => t.setTheme('graphic-novel'));
+        break;
+      case 'open-preamble':
+        togglePanel(refs.headlessPreamblePanel);
+        break;
+      case 'summarise-memory': {
+        const storyText = (refs.storyEditor?.innerText || '').slice(-4000).trim();
+        if (!storyText) { showToast('No story text', 2000); break; }
+        const result = await window.powertool.textAction('summarise-memory', storyText, state.currentStoryId);
+        if (result?.output) {
+          const ta = document.getElementById('memoryNarrativeTextarea');
+          if (ta) { ta.value = result.output; showToast('Summary ready in Memory panel'); }
+          else showToast('Open the Memory panel to see the result');
+        }
+        break;
+      }
+      case 'rewrite-selection': if (d.triggerAiAction) d.triggerAiAction('rewrite'); break;
+      case 'expand-selection': if (d.triggerAiAction) d.triggerAiAction('expand'); break;
+      case 'shorten-selection': if (d.triggerAiAction) d.triggerAiAction('shorten'); break;
+      case 'summarize-selection': if (d.triggerAiAction) d.triggerAiAction('summarize'); break;
     }
   } else if (item.type === 'story') {
     bus.emit('headless:select-story', { storyId: item.storyId, title: item.name });
