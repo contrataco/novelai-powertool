@@ -270,6 +270,19 @@ async function readAiSettingsFromWebview() {
           if (lenInput) result.outputLength = parseInt(lenInput.value, 10);
         }
 
+        // Stop Sequences
+        result.stopSequences = null;
+        try {
+          var stopLabels = document.querySelectorAll('label, [class*="Label"]');
+          for (var si = 0; si < stopLabels.length; si++) {
+            if (/stop sequence/i.test(stopLabels[si].textContent)) {
+              var stopInput = stopLabels[si].closest('[class*="Field"], [class*="Row"], div')
+                ?.querySelector('input[type="text"], textarea');
+              if (stopInput) { result.stopSequences = stopInput.value; break; }
+            }
+          }
+        } catch(e) {}
+
         return result;
       })()
     `);
@@ -336,6 +349,11 @@ async function loadAiSettingsToPanel() {
   if (data.outputLength != null && refs.headlessLengthSlider) {
     refs.headlessLengthSlider.value = data.outputLength;
     if (refs.headlessLengthValue) refs.headlessLengthValue.textContent = data.outputLength;
+  }
+
+  // Set stop sequences
+  if (data.stopSequences != null && refs.headlessStopInput) {
+    refs.headlessStopInput.value = data.stopSequences;
   }
 
   console.log('[HeadlessSync] AI settings loaded from webview:', {
@@ -509,6 +527,35 @@ async function saveAiSettingsFromPanel() {
       if (lenOk) changes.push('output length');
     } catch (e) {
       console.error('[HeadlessSync] Failed to set output length:', e);
+    }
+  }
+
+  // Write Stop Sequences
+  if (refs.headlessStopInput) {
+    const stopValue = refs.headlessStopInput.value;
+    try {
+      await webview.executeJavaScript(`
+        (function() {
+          var labels = document.querySelectorAll('label, [class*="Label"]');
+          for (var i = 0; i < labels.length; i++) {
+            if (/stop sequence/i.test(labels[i].textContent)) {
+              var input = labels[i].closest('[class*="Field"], [class*="Row"], div')
+                ?.querySelector('input[type="text"], textarea');
+              if (input) {
+                var proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                setter.call(input, ${JSON.stringify(stopValue)});
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+              }
+            }
+          }
+          return false;
+        })()
+      `);
+    } catch (e) {
+      console.warn('[HeadlessSync] Could not set stop sequences:', e);
     }
   }
 
