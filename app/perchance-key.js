@@ -339,7 +339,7 @@ async function extractPerchanceKeyViaElectron(store) {
         console.log('[PerchanceKey] Electron extraction timed out');
         finish(null);
       }
-    }, 120000);
+    }, 60000);
 
     win.webContents.on('did-finish-load', () => {
       win.show();
@@ -349,9 +349,18 @@ async function extractPerchanceKeyViaElectron(store) {
           var banner = document.createElement('div');
           banner.id = 'sv-extract-banner';
           banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:#e94560;color:white;padding:14px 20px;font-family:sans-serif;font-size:15px;text-align:center;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,0.3);line-height:1.5;';
-          banner.innerHTML = 'PowerTool — Key Extraction<br><span style="font-weight:normal;font-size:13px;">1. Wait for the page to fully load &nbsp; 2. Click <b>Generate</b> &nbsp; 3. This window closes automatically</span>';
+          var TIMEOUT_S = 60;
+          banner.innerHTML = 'PowerTool — Key Extraction<br><span style="font-weight:normal;font-size:13px;">1. Wait for the page to fully load &nbsp; 2. Click <b>Generate</b> &nbsp; 3. This window closes automatically &nbsp;<span id="sv-countdown" style="opacity:0.8;">(' + TIMEOUT_S + 's)</span></span>';
           document.body.appendChild(banner);
           document.body.style.paddingTop = '64px';
+
+          var _svCount = TIMEOUT_S;
+          var _svTimer = setInterval(function() {
+            _svCount--;
+            var el = document.getElementById('sv-countdown');
+            if (el) el.textContent = '(' + _svCount + 's)';
+            if (_svCount <= 0) clearInterval(_svTimer);
+          }, 1000);
 
           function tryFillPrompt() {
             var ta = document.querySelector('textarea[placeholder*="prompt"], textarea[placeholder*="Prompt"], textarea.prompt');

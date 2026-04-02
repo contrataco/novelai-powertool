@@ -1,6 +1,6 @@
 {
   "name": "@taco-scripts/scene-visualizer",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Electron companion app for NovelAI — image generation, lore management, LitRPG tracking, TTS, and more",
   "main": "main.js",
   "scripts": {

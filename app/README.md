@@ -479,4 +479,7 @@ Without the script, you can:
 
 ## Version History
 
+- **1.2.0**: Native headless editor with image embedding, presentation themes, two-pane lorebook manager, command palette, AI text actions, history panel, AI settings sync, auto portrait generation, Script Manager, video generation, SQLite/memory performance pass
+- **1.1.1**: LitRPG tracker polish — R5 indicator, scan ETA, re-enrich, orphan tags, NPC grouping
+- **1.1.0**: Per-story settings, TTS v2, scene pipeline v2, lore comprehension improvements
 - **1.0.0**: Initial release with V3/V4/V4.5 model support, settings UI, and script integration
