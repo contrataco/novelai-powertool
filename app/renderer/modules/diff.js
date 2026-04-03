@@ -132,26 +132,21 @@ function findLastParagraphStart(text) {
 export function buildAnnotatedHtml(text, aiRanges, keywords) {
   if (!text) return '';
 
-  // Each span: {start, end, openTag, closeTag, priority}
-  // Lower priority = outer span (opens first, closes last at same position)
-  const spans = [];
-
-  // 1. Last paragraph indicator (outermost, priority 0)
-  const lastParaStart = findLastParagraphStart(text);
-  if (lastParaStart < text.length) {
-    spans.push({
-      start: lastParaStart,
-      end: text.length,
-      openTag: '<span class="last-paragraph">',
-      closeTag: '</span>',
-      priority: 0,
-    });
+  // Split into paragraphs; track each paragraph's absolute start offset
+  const paragraphs = [];
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    paragraphs.push({ text: line, start: offset });
+    offset += line.length + 1; // +1 for the '\n' separator
   }
 
-  // 2. AI text ranges (priority 1)
+  // Collect annotation spans (last-paragraph is now a <p> class, not a span)
+  const allSpans = [];
+
+  // AI text ranges (priority 1)
   for (const { start, end } of aiRanges) {
     if (start >= 0 && end <= text.length && start < end) {
-      spans.push({
+      allSpans.push({
         start, end,
         openTag: '<span class="ai-text">',
         closeTag: '</span>',
@@ -160,7 +155,7 @@ export function buildAnnotatedHtml(text, aiRanges, keywords) {
     }
   }
 
-  // 3. Lorebook keyword matches (priority 2, innermost)
+  // Lorebook keyword matches (priority 2, innermost)
   const lowerText = text.toLowerCase();
   for (const kw of keywords) {
     if (!kw.text || kw.text.length < 3) continue;
@@ -170,20 +165,15 @@ export function buildAnnotatedHtml(text, aiRanges, keywords) {
       const kwStart = idx;
       const kwEnd = idx + lowerKw.length;
       idx = kwEnd;
-
-      // Word boundary check (char before/after should not be a word char)
       const charBefore = kwStart > 0 ? lowerText[kwStart - 1] : ' ';
       const charAfter = kwEnd < lowerText.length ? lowerText[kwEnd] : ' ';
       if (/\w/.test(charBefore) || /\w/.test(charAfter)) continue;
-
-      // Skip keyword if it partially overlaps any AI range (fully contained is OK)
       const hasPartialOverlap = aiRanges.some(ar =>
         kwStart < ar.end && kwEnd > ar.start &&
         !(kwStart >= ar.start && kwEnd <= ar.end)
       );
       if (hasPartialOverlap) continue;
-
-      spans.push({
+      allSpans.push({
         start: kwStart,
         end: kwEnd,
         openTag: `<span class="lore-keyword" data-entry-id="${escapeHtml(String(kw.entryId))}" data-display-name="${escapeHtml(String(kw.displayName || kw.text))}">`,
@@ -193,38 +183,61 @@ export function buildAnnotatedHtml(text, aiRanges, keywords) {
     }
   }
 
-  // Build open/close events
-  const events = [];
-  for (const span of spans) {
-    events.push({ pos: span.start, type: 'open', tag: span.openTag, priority: span.priority });
-    events.push({ pos: span.end, type: 'close', tag: span.closeTag, priority: span.priority });
-  }
+  const lastParaIndex = paragraphs.length - 1;
 
-  // Sort: by position, then opens before closes, then by priority (outer first for opens, inner first for closes)
-  events.sort((a, b) => {
-    if (a.pos !== b.pos) return a.pos - b.pos;
-    if (a.type !== b.type) return a.type === 'open' ? -1 : 1;
-    if (a.type === 'open') return a.priority - b.priority;   // lower priority = outer, opens first
-    return b.priority - a.priority;                           // higher priority = inner, closes first
+  const parts = paragraphs.map((para, i) => {
+    const { text: paraText, start: paraStart } = para;
+    const paraEnd = paraStart + paraText.length;
+    const isLast = i === lastParaIndex;
+
+    // Empty paragraph — <br> placeholder prevents height collapse in contenteditable
+    if (!paraText) {
+      return isLast ? '<p class="last-paragraph"><br></p>' : '<p><br></p>';
+    }
+
+    // Collect spans that overlap this paragraph, clamped to paragraph-local offsets
+    const localSpans = [];
+    for (const span of allSpans) {
+      if (span.end <= paraStart || span.start >= paraEnd) continue;
+      localSpans.push({
+        ...span,
+        start: Math.max(span.start, paraStart) - paraStart,
+        end: Math.min(span.end, paraEnd) - paraStart,
+      });
+    }
+
+    // Build open/close events for this paragraph
+    const events = [];
+    for (const span of localSpans) {
+      events.push({ pos: span.start, type: 'open',  tag: span.openTag,  priority: span.priority });
+      events.push({ pos: span.end,   type: 'close', tag: span.closeTag, priority: span.priority });
+    }
+    events.sort((a, b) => {
+      if (a.pos !== b.pos) return a.pos - b.pos;
+      if (a.type !== b.type) return a.type === 'close' ? -1 : 1;
+      if (a.type === 'open') return a.priority - b.priority;
+      return b.priority - a.priority;
+    });
+
+    let inner = '';
+    let textPos = 0;
+    for (const ev of events) {
+      if (ev.pos > textPos) {
+        inner += escapeHtml(paraText.slice(textPos, ev.pos));
+        textPos = ev.pos;
+      }
+      inner += ev.tag;
+    }
+    if (textPos < paraText.length) {
+      inner += escapeHtml(paraText.slice(textPos));
+    }
+
+    return isLast
+      ? `<p class="last-paragraph">${inner}</p>`
+      : `<p>${inner}</p>`;
   });
 
-  // Build HTML
-  let html = '';
-  let textPos = 0;
-
-  for (const ev of events) {
-    if (ev.pos > textPos) {
-      html += escapeHtml(text.slice(textPos, ev.pos));
-      textPos = ev.pos;
-    }
-    html += ev.tag;
-  }
-
-  if (textPos < text.length) {
-    html += escapeHtml(text.slice(textPos));
-  }
-
-  return html;
+  return parts.join('');
 }
 
 /**
