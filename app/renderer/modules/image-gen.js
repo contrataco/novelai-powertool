@@ -158,10 +158,10 @@ async function handleGenerateVideo() {
 
           const prog = document.getElementById('videoProgress');
           if (prog) {
-            prog.innerHTML = `<video controls autoplay muted style="width:100%;border-radius:8px;margin-top:4px;">
+            prog.innerHTML = `<video class="video-result-player" controls autoplay muted>
               <source src="${result.videoDataUrl}" type="video/mp4">
             </video>
-            <a href="${result.videoDataUrl}" download="scene-video.mp4" style="font-size:11px;color:var(--accent);margin-top:4px;display:inline-block;">Download</a>`;
+            <a href="${result.videoDataUrl}" download="scene-video.mp4" class="video-result-download">Download</a>`;
           }
           showToast('Video generated!', 3000);
           bus.emit('video:generated', {
@@ -275,7 +275,7 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
       } else {
         errorMsg = friendlyApiError(result.error, state.currentProvider || '');
       }
-      status.innerHTML = errorMsg + ' <a href="#" class="status-retry" style="color:var(--accent);text-decoration:underline;margin-left:6px;">Retry</a>';
+      status.innerHTML = errorMsg + ' <a href="#" class="status-retry">Retry</a>';
       status.className = 'status error';
       const retryLink = status.querySelector('.status-retry');
       if (retryLink) {
@@ -290,7 +290,7 @@ export async function generateImage(prompt, negativePrompt, opts = {}) {
   } catch (e) {
     wasError = true;
     const errorMsg = friendlyApiError(e, state.currentProvider || '');
-    status.innerHTML = errorMsg + ' <a href="#" class="status-retry" style="color:var(--accent);text-decoration:underline;margin-left:6px;">Retry</a>';
+    status.innerHTML = errorMsg + ' <a href="#" class="status-retry">Retry</a>';
     status.className = 'status error';
     const retryLink = status.querySelector('.status-retry');
     if (retryLink) {
