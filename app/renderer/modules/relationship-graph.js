@@ -7,6 +7,8 @@ const RINGS = {
   hostile:  { r: 330, color: '#e57373', edgeColor: '#e57373' },
 };
 
+let panAbort = null;
+
 const CENTER_X = 300;
 const CENTER_Y = 300;
 const VIEWBOX = '0 0 600 600';
@@ -92,7 +94,7 @@ export function renderRelationshipGraph(container, litrpgState) {
 
   const chars = Object.values(litrpgState.characters || {});
   if (!chars.length) {
-    container.innerHTML = '<p style="color:#666;font-size:12px;padding:16px;text-align:center;">No characters found. Run a LitRPG scan first.</p>';
+    container.innerHTML = '<p class="rg-empty">No characters found. Run a LitRPG scan first.</p>';
     return;
   }
 
@@ -101,7 +103,6 @@ export function renderRelationshipGraph(container, litrpgState) {
   svg.setAttribute('viewBox', VIEWBOX);
   svg.setAttribute('width', '100%');
   svg.setAttribute('height', '100%');
-  svg.style.cssText = 'display:block;user-select:none;';
 
   // Inner transform group (for pan/zoom)
   const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -179,7 +180,6 @@ export function renderRelationshipGraph(container, litrpgState) {
     circle.setAttribute('fill', node.color);
     circle.setAttribute('stroke', '#1a1a2e');
     circle.setAttribute('stroke-width', '2');
-    circle.style.cursor = 'pointer';
     circle.dataset.nodeId = node.id;
     circle.classList.add('rg-node');
     nodeGroup.appendChild(circle);
@@ -299,6 +299,10 @@ export function renderRelationshipGraph(container, litrpgState) {
   });
 
   // --- Pan + Zoom ---
+  if (panAbort) panAbort.abort();
+  panAbort = new AbortController();
+  const { signal } = panAbort;
+
   let panActive = false;
   let panStart = { x: 0, y: 0 };
   let translate = { x: 0, y: 0 };
@@ -309,22 +313,22 @@ export function renderRelationshipGraph(container, litrpgState) {
     panActive = true;
     panStart = { x: e.clientX - translate.x, y: e.clientY - translate.y };
     svg.style.cursor = 'grabbing';
-  });
+  }, { signal });
   window.addEventListener('mousemove', (e) => {
     if (!panActive) return;
     translate.x = e.clientX - panStart.x;
     translate.y = e.clientY - panStart.y;
     applyTransform(g, translate, scale);
-  });
+  }, { signal });
   window.addEventListener('mouseup', () => {
     if (panActive) { panActive = false; svg.style.cursor = ''; }
-  });
+  }, { signal });
   svg.addEventListener('wheel', (e) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? -0.1 : 0.1;
     scale = Math.max(0.5, Math.min(2.0, scale + delta));
     applyTransform(g, translate, scale);
-  }, { passive: false });
+  }, { passive: false, signal });
 }
 
 function applyTransform(g, translate, scale) {
@@ -359,5 +363,6 @@ function clearHighlight(edgeGroup, nodeGroup) {
 }
 
 export function clearRelationshipGraph(container) {
+  if (panAbort) { panAbort.abort(); panAbort = null; }
   container.innerHTML = '';
 }

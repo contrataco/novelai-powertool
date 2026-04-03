@@ -2,17 +2,33 @@
 
 import { state, bus } from './state.js';
 import { showToast, timeAgo } from './utils.js';
-import { promptDisplay, historyFavFilterBtn, historyList, storyboardSubTab, historySubTab, historyView, storyboardView, timelineView } from './dom-refs.js';
+import { promptDisplay, negativePromptDisplay, historyFavFilterBtn, historyList, storyboardSubTab, historySubTab, historyView, storyboardView, timelineView } from './dom-refs.js';
 
 let favoritesOnly = false;
+let currentEntries = [];
 
 export function init() {
+  // Hide history tab in webview mode
+  if (!state.headlessMode && historySubTab) {
+    historySubTab.classList.add('u-hidden');
+  }
+
   bus.on('image:generated', ({ storyId, meta }) => autoSave(storyId, meta));
 
   historyFavFilterBtn?.addEventListener('click', () => {
     favoritesOnly = !favoritesOnly;
     historyFavFilterBtn.classList.toggle('active', favoritesOnly);
     renderHistory();
+  });
+
+  // Event delegation for all card actions
+  historyList?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const { action, id } = btn.dataset;
+    if (action === 'star') onToggleFavorite(id);
+    else if (action === 'reuse') onReuse(id);
+    else if (action === 'delete') onDelete(id);
   });
 }
 
@@ -40,7 +56,7 @@ export async function renderHistory() {
   if (!historyList) return;
   const storyId = state.currentStoryId;
   if (!storyId) {
-    historyList.innerHTML = '<p style="color:#666;font-size:12px;padding:8px 0;">No story loaded.</p>';
+    historyList.innerHTML = '<p class="history-empty">No story loaded.</p>';
     return;
   }
 
@@ -48,28 +64,20 @@ export async function renderHistory() {
   try {
     entries = await window.powertool.promptHistoryList(storyId);
   } catch (e) {
-    historyList.innerHTML = '<p style="color:#666;font-size:12px;padding:8px 0;">Failed to load history.</p>';
+    historyList.innerHTML = '<p class="history-empty">Failed to load history.</p>';
     return;
   }
 
   if (favoritesOnly) entries = entries.filter(e => e.is_favorite);
 
+  currentEntries = entries;
+
   if (!entries.length) {
-    historyList.innerHTML = '<p style="color:#666;font-size:12px;padding:8px 0;">No history yet. Generate an image to start.</p>';
+    historyList.innerHTML = '<p class="history-empty">No history yet. Generate an image to start.</p>';
     return;
   }
 
   historyList.innerHTML = entries.map(entry => buildCard(entry)).join('');
-
-  historyList.querySelectorAll('.history-star').forEach(btn => {
-    btn.addEventListener('click', () => onToggleFavorite(btn.dataset.id));
-  });
-  historyList.querySelectorAll('.history-reuse-btn').forEach(btn => {
-    btn.addEventListener('click', () => onReuse(btn.dataset.id, entries));
-  });
-  historyList.querySelectorAll('.history-del-btn').forEach(btn => {
-    btn.addEventListener('click', () => onDelete(btn.dataset.id));
-  });
 }
 
 function buildCard(entry) {
@@ -84,12 +92,12 @@ function buildCard(entry) {
     <div class="history-card" data-id="${entry.id}">
       <div class="history-card-header">
         <span class="history-prompt-text">${escapeHtml(truncated)}</span>
-        <button class="${starClass}" data-id="${entry.id}" title="Toggle favorite">${starGlyph}</button>
+        <button class="${starClass}" data-action="star" data-id="${entry.id}" title="Toggle favorite">${starGlyph}</button>
       </div>
       <div class="history-card-footer">
         <span class="history-meta">${escapeHtml(meta)}${meta ? ' · ' : ''}${age}</span>
-        <button class="history-reuse-btn" data-id="${entry.id}">Reuse</button>
-        <button class="history-del-btn" data-id="${entry.id}">Delete</button>
+        <button class="history-reuse-btn" data-action="reuse" data-id="${entry.id}">Reuse</button>
+        <button class="history-del-btn" data-action="delete" data-id="${entry.id}">Delete</button>
       </div>
     </div>`;
 }
@@ -113,14 +121,15 @@ async function onToggleFavorite(id) {
   }
 }
 
-function onReuse(id, entries) {
-  const entry = entries.find(e => e.id === id);
+function onReuse(id) {
+  const entry = currentEntries.find(e => e.id === id);
   if (!entry) return;
-  // Load prompt into state and the display textarea
+  // Load prompt into state and the display textareas
   state.prompt.display = entry.prompt;
   state.prompt.negativeEdited = false;
-  if (entry.negativePrompt) {
-    state.prompt.negative = entry.negativePrompt;
+  if (entry.negative_prompt) {
+    state.prompt.negative = entry.negative_prompt;
+    if (negativePromptDisplay) negativePromptDisplay.value = entry.negative_prompt;
   }
   if (promptDisplay) promptDisplay.value = entry.prompt;
 

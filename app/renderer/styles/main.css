@@ -4094,6 +4094,14 @@
     .rpg-action-bar-v2 .rpg-action-btn:hover { background: #3a3a6e; color: #e0e0e0; }
 
     /* Relationship Graph */
+    .relationship-graph-container svg { display: block; user-select: none; }
+    .rg-node { cursor: pointer; }
+    .rg-empty {
+      color: #666;
+      font-size: 12px;
+      padding: 16px;
+      text-align: center;
+    }
     .relationship-graph-container {
       width: 100%;
       height: 420px;
@@ -5205,6 +5213,12 @@
     .history-del-btn:hover {
       border-color: #e94560;
       color: #e94560;
+    }
+
+    .history-empty {
+      color: #666;
+      font-size: 12px;
+      padding: 8px 0;
     }
 
     /* Timeline cards */
