@@ -581,6 +581,8 @@ export const dynamicCategoriesStyle = document.getElementById('dynamic-categorie
 
 // Portrait settings elements
 export const rpgGenerateAllPortraits = document.getElementById('rpgGenerateAllPortraits');
+export const graphToggleBtn = document.getElementById('graphToggleBtn');
+export const relationshipGraphContainer = document.getElementById('relationshipGraphContainer');
 export const autoGeneratePortraitsCheckbox = document.getElementById('autoGeneratePortraits');
 export const portraitProviderSelect = document.getElementById('portraitProvider');
 export const portraitProviderCostWarning = document.getElementById('portraitProviderCostWarning');

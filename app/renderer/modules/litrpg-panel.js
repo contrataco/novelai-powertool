@@ -31,6 +31,7 @@ import {
   rpgAlbumLightbox, rpgAlbumLightboxImg, rpgAlbumPrev, rpgAlbumNext,
   rpgAlbumCounter, rpgAlbumSetActive, rpgAlbumDelete, rpgAlbumClose,
   rpgGenerateAllPortraits,
+  graphToggleBtn, relationshipGraphContainer,
   webview,
 } from './dom-refs.js';
 import { escapeHtml, showToast } from './utils.js';
@@ -137,6 +138,8 @@ function applyChangeToChar(char, scoredChange) {
 // STATE HELPERS
 // =========================================================================
 
+let graphViewActive = false;
+
 function getRpgState() {
   return state.litrpgState || {};
 }
@@ -189,6 +192,13 @@ export function refreshRpgUI() {
   if (rpgSyncLorebookBtn) rpgSyncLorebookBtn.disabled = !rpg.enabled;
   if (rpgReverseSyncBtn) rpgReverseSyncBtn.disabled = !rpg.enabled;
 
+  // Graph toggle button — only visible when LitRPG is enabled with characters
+  if (graphToggleBtn) {
+    const hasChars = Object.keys(rpg.characters || {}).length > 0;
+    graphToggleBtn.classList.toggle('u-hidden', !(rpg.enabled && hasChars));
+    graphToggleBtn.textContent = graphViewActive ? 'List' : 'Graph';
+  }
+
   // Settings persistence (Phase 5A)
   if (rpgAutoScan) rpgAutoScan.checked = rpg.autoScan !== false;
   if (rpgAutoSync) rpgAutoSync.checked = !!rpg.autoSync;
@@ -201,10 +211,14 @@ export function refreshRpgUI() {
     rpgInventorySection, rpgCurrencySection, rpgStatusSection,
     rpgFactionsSection, rpgClassesSection, rpgRacesSection,
   ];
+  const hideRpgSections = !isLitRPG || graphViewActive;
   for (const el of rpgOnlySections) {
-    if (el) el.classList.toggle('u-hidden', !isLitRPG);
+    if (el) el.classList.toggle('u-hidden', hideRpgSections);
   }
-  if (rpgCastView) rpgCastView.classList.toggle('u-hidden', isLitRPG);
+  if (rpgCastView) rpgCastView.classList.toggle('u-hidden', isLitRPG || graphViewActive);
+  if (relationshipGraphContainer) {
+    relationshipGraphContainer.classList.toggle('u-hidden', !graphViewActive);
+  }
 
   if (isLitRPG) {
     // Party view
@@ -2432,6 +2446,11 @@ function setupIPCListeners() {
     state.litrpgState = newState;
     state.litrpgEnabled = newState.enabled;
     refreshRpgUI();
+    if (graphViewActive && relationshipGraphContainer) {
+      import('./relationship-graph.js').then(({ renderRelationshipGraph }) => {
+        renderRelationshipGraph(relationshipGraphContainer, newState);
+      });
+    }
 
     // Emit events for portrait queue
     const updatedChars = getRpgState()?.characters;
@@ -2491,6 +2510,7 @@ function setupIPCListeners() {
 // =========================================================================
 
 function onStorySwitch() {
+  graphViewActive = false;
   const rpg = state.litrpgState || {};
   state.litrpgEnabled = !!rpg.enabled;
   refreshRpgUI();
@@ -2629,6 +2649,24 @@ export function init() {
         rpgData: char,
       }));
       enqueuePortraits(chars, { regenerate });
+    });
+  }
+
+  // Graph toggle
+  if (graphToggleBtn) {
+    graphToggleBtn.addEventListener('click', () => {
+      graphViewActive = !graphViewActive;
+      graphToggleBtn.textContent = graphViewActive ? 'List' : 'Graph';
+      if (graphViewActive && relationshipGraphContainer) {
+        import('./relationship-graph.js').then(({ renderRelationshipGraph }) => {
+          renderRelationshipGraph(relationshipGraphContainer, getRpgState());
+        });
+      } else if (relationshipGraphContainer) {
+        import('./relationship-graph.js').then(({ clearRelationshipGraph }) => {
+          clearRelationshipGraph(relationshipGraphContainer);
+        });
+      }
+      refreshRpgUI();
     });
   }
 
