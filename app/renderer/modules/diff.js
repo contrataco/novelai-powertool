@@ -114,15 +114,6 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function findLastParagraphStart(text) {
-  const trimmed = text.trimEnd();
-  if (!trimmed) return 0;
-  const lastDoubleNl = trimmed.lastIndexOf('\n\n');
-  if (lastDoubleNl !== -1) return lastDoubleNl + 2;
-  const lastNl = trimmed.lastIndexOf('\n');
-  if (lastNl !== -1) return lastNl + 1;
-  return 0;
-}
 
 /**
  * Builds an annotated HTML string from plain text + annotation data.
