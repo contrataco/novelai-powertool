@@ -83,8 +83,8 @@ function renderGrid(items) {
 
   if (!items || items.length === 0) {
     mediaGrid.innerHTML = `<div class="media-empty-state">
-      <span style="font-size:24px;opacity:0.3;">&#128247;</span>
-      <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">Generated images will appear here</div>
+      <span class="media-empty-state-icon">&#128247;</span>
+      <div class="media-empty-state-hint">Generated images will appear here</div>
     </div>`;
     return;
   }
@@ -97,7 +97,7 @@ function renderGrid(items) {
 
     if (item.type === 'video') {
       cell.innerHTML = `
-        <div style="width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;">
+        <div class="media-video-overlay">
           <span class="media-video-icon">&#9654;</span>
         </div>
         <span class="media-badge">${item.provider || 'video'}</span>`;
@@ -105,7 +105,7 @@ function renderGrid(items) {
       // Load thumbnail async
       const img = document.createElement('img');
       img.alt = 'thumbnail';
-      img.style.background = 'rgba(0,0,0,0.3)';
+      img.classList.add('media-thumbnail-loading');
       cell.appendChild(img);
 
       loadThumbnail(item, img);
@@ -141,7 +141,7 @@ async function loadThumbnail(item, imgEl) {
 async function openLightbox(item) {
   if (!mediaLightbox || !mediaLightboxContent) return;
 
-  mediaLightboxContent.innerHTML = '<div style="text-align:center;padding:20px;"><div class="spinner"></div></div>';
+  mediaLightboxContent.innerHTML = '<div class="media-lightbox-loading"><div class="spinner"></div></div>';
   mediaLightbox.classList.remove('u-hidden');
 
   try {
@@ -149,7 +149,7 @@ async function openLightbox(item) {
     if (item.type === 'video') {
       const videoDataUrl = await window.powertool.mediaGetVideo(state.currentStoryId, item.id);
       if (videoDataUrl) {
-        mediaHtml = `<div class="media-lightbox-media"><video controls autoplay muted style="max-width:100%;max-height:50vh;border-radius:6px;display:block;margin:0 auto 12px;"><source src="${videoDataUrl}" type="video/mp4"></video></div>`;
+        mediaHtml = `<div class="media-lightbox-media"><video controls autoplay muted><source src="${videoDataUrl}" type="video/mp4"></video></div>`;
       }
     } else {
       const fullDataUrl = await window.powertool.mediaGetFull(state.currentStoryId, item.id);
@@ -167,7 +167,7 @@ async function openLightbox(item) {
       ? `<div class="media-lightbox-prompt"><span class="meta-label">Prompt:</span> ${escapeHtml(item.prompt)}</div>`
       : '';
     const negPromptHtml = item.negative_prompt
-      ? `<div class="media-lightbox-prompt" style="opacity:0.7;"><span class="meta-label">Negative:</span> ${escapeHtml(item.negative_prompt)}</div>`
+      ? `<div class="media-lightbox-prompt media-lightbox-prompt--muted"><span class="meta-label">Negative:</span> ${escapeHtml(item.negative_prompt)}</div>`
       : '';
 
     mediaLightboxContent.innerHTML = `
@@ -253,7 +253,7 @@ async function openLightbox(item) {
       });
     }
   } catch (e) {
-    mediaLightboxContent.innerHTML = `<div style="color:var(--error);padding:16px;">Failed to load: ${escapeHtml(e.message)}</div>`;
+    mediaLightboxContent.innerHTML = `<div class="media-lightbox-error">Failed to load: ${escapeHtml(e.message)}</div>`;
   }
 }
 
