@@ -277,6 +277,8 @@ export function annotateEditor(el, aiRanges, keywords) {
   }
 }
 
+const BLOCK_ELEMENTS = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE']);
+
 function restoreCursor(el, offset) {
   const selection = window.getSelection();
   const range = document.createRange();
@@ -296,7 +298,22 @@ function restoreCursor(el, offset) {
       } else {
         currentOffset += len;
       }
-    } else {
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      // Block elements following another block sibling contribute an implicit '\n'
+      // to innerText / Range.toString() — account for it in the offset count.
+      if (BLOCK_ELEMENTS.has(node.tagName) &&
+          node.previousElementSibling &&
+          BLOCK_ELEMENTS.has(node.previousElementSibling.tagName)) {
+        if (currentOffset + 1 > offset) {
+          // Cursor sits exactly at the block boundary — place at start of this element
+          const target = node.firstChild || node;
+          range.setStart(target, 0);
+          range.setEnd(target, 0);
+          found = true;
+          return;
+        }
+        currentOffset += 1;
+      }
       for (let i = 0; i < node.childNodes.length; i++) {
         traverse(node.childNodes[i]);
       }
