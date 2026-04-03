@@ -975,6 +975,7 @@
           <button id="rpgGenerateAllPortraits" class="rpg-action-btn" title="Generate portraits for characters without one. Shift+click to regenerate all.">
             Generate Portraits
           </button>
+          <button id="graphToggleBtn" class="rpg-action-btn u-hidden" title="Character relationship graph">Graph</button>
         </div>
         <label class="rpg-option-label"><input type="checkbox" id="rpgForceReEnrich"> Re-enrich all descriptions</label>
 
@@ -997,6 +998,9 @@
 
         <!-- Persona Cast View (non-LitRPG) -->
         <div class="u-hidden" id="rpgCastView"></div>
+
+        <!-- Relationship Graph -->
+        <div id="relationshipGraphContainer" class="u-hidden relationship-graph-container"></div>
 
         <!-- Party View -->
         <details class="lore-section" id="rpgPartySection" open>
