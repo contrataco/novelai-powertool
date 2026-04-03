@@ -248,12 +248,11 @@ export function annotateEditor(el, aiRanges, keywords) {
   const text = el.innerText;
   if (!text) return;
 
-  // If nothing to annotate (including no last-paragraph to mark), clear any existing spans and bail
-  const hasLastParagraph = findLastParagraphStart(text) < text.length;
-  const hasAnnotations = aiRanges.length > 0 || keywords.length > 0 || hasLastParagraph;
+  // If nothing to annotate, rebuild paragraph structure and bail
+  const hasAnnotations = aiRanges.length > 0 || keywords.length > 0;
   if (!hasAnnotations) {
     if (el.querySelector('.ai-text, .lore-keyword, .last-paragraph')) {
-      el.innerText = text;
+      el.innerHTML = buildAnnotatedHtml(text, [], []);
     }
     return;
   }
