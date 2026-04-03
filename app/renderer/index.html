@@ -566,6 +566,7 @@
         <div class="scene-sub-tabs" id="sceneSubTabs">
           <button class="scene-sub-tab active" id="storyboardSubTab">Storyboard</button>
           <button class="scene-sub-tab" id="timelineSubTab">Timeline</button>
+          <button class="scene-sub-tab" id="historySubTab">History</button>
         </div>
         <div id="storyboardView">
         <div id="imageContainer">
@@ -626,6 +627,13 @@
             <span id="timelineScanStatus" class="scan-status" style="color:#888;font-size:11px;margin-left:8px;"></span>
           </div>
           <div id="timelineList" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="u-hidden" id="historyView">
+          <div class="history-toolbar">
+            <button id="historyFavFilterBtn" class="history-filter-btn">&#9733; Favorites</button>
+          </div>
+          <div id="historyList" class="history-list"></div>
         </div>
 
       </div>
