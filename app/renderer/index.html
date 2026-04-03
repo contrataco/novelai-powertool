@@ -566,6 +566,7 @@
         <div class="scene-sub-tabs" id="sceneSubTabs">
           <button class="scene-sub-tab active" id="storyboardSubTab">Storyboard</button>
           <button class="scene-sub-tab" id="timelineSubTab">Timeline</button>
+          <button class="scene-sub-tab" id="historySubTab">History</button>
         </div>
         <div id="storyboardView">
         <div id="imageContainer">
@@ -626,6 +627,13 @@
             <span id="timelineScanStatus" class="scan-status" style="color:#888;font-size:11px;margin-left:8px;"></span>
           </div>
           <div id="timelineList" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="u-hidden" id="historyView">
+          <div class="history-toolbar">
+            <button id="historyFavFilterBtn" class="history-filter-btn">&#9733; Favorites</button>
+          </div>
+          <div id="historyList" class="history-list"></div>
         </div>
 
       </div>
@@ -967,6 +975,7 @@
           <button id="rpgGenerateAllPortraits" class="rpg-action-btn" title="Generate portraits for characters without one. Shift+click to regenerate all.">
             Generate Portraits
           </button>
+          <button id="graphToggleBtn" class="rpg-action-btn u-hidden" title="Character relationship graph">Graph</button>
         </div>
         <label class="rpg-option-label"><input type="checkbox" id="rpgForceReEnrich"> Re-enrich all descriptions</label>
 
@@ -989,6 +998,9 @@
 
         <!-- Persona Cast View (non-LitRPG) -->
         <div class="u-hidden" id="rpgCastView"></div>
+
+        <!-- Relationship Graph -->
+        <div id="relationshipGraphContainer" class="u-hidden relationship-graph-container"></div>
 
         <!-- Party View -->
         <details class="lore-section" id="rpgPartySection" open>
@@ -1687,6 +1699,7 @@
     import { init as initMediaGallery } from './modules/media-gallery.js';
     import { init as initHeadlessSync } from './modules/headless-sync.js';
     import { init as initTimeline } from './modules/scene-timeline.js';
+    import { init as initPromptHistory } from './modules/prompt-history.js';
     import { init as initPortraitQueue } from './modules/portrait-queue.js';
     import { init as initStorySelector } from './modules/story-selector.js';
     import { init as initScriptPanel } from './modules/script-panel.js';
@@ -1707,6 +1720,7 @@
     initMediaGallery();
     initHeadlessSync();
     initTimeline();
+    initPromptHistory();
   </script>
 
   <!-- Old inline script removed; code moved to ./modules/ -->

@@ -28,7 +28,7 @@ import {
   loreAddCategoryForm, loreNewCategoryName, loreNewCategoryColor,
   loreAddCategoryConfirm, loreAddCategoryCancel, dynamicCategoriesStyle,
   loreOptProfile, loreOptimizeAllBtn, loreDiscoverFieldsBtn, loreOptStatus,
-  storyboardSubTab, timelineSubTab, storyboardView, timelineView,
+  storyboardSubTab, timelineSubTab, historySubTab, storyboardView, timelineView, historyView,
 } from './dom-refs.js';
 import { escapeHtml, showToast, timeAgo } from './utils.js';
 import { parseMetadataClient } from './metadata.js';
@@ -2409,15 +2409,28 @@ export function init() {
   storyboardSubTab?.addEventListener('click', () => {
     storyboardSubTab.classList.add('active');
     timelineSubTab.classList.remove('active');
+    historySubTab.classList.remove('active');
     storyboardView.classList.remove('u-hidden');
     timelineView.classList.add('u-hidden');
+    historyView.classList.add('u-hidden');
   });
   timelineSubTab?.addEventListener('click', () => {
     timelineSubTab.classList.add('active');
     storyboardSubTab.classList.remove('active');
+    historySubTab.classList.remove('active');
     storyboardView.classList.add('u-hidden');
     timelineView.classList.remove('u-hidden');
+    historyView.classList.add('u-hidden');
     import('./scene-timeline.js').then(m => m.refreshTimelineUI && m.refreshTimelineUI());
+  });
+  historySubTab?.addEventListener('click', () => {
+    historySubTab.classList.add('active');
+    storyboardSubTab.classList.remove('active');
+    timelineSubTab.classList.remove('active');
+    storyboardView.classList.add('u-hidden');
+    timelineView.classList.add('u-hidden');
+    historyView.classList.remove('u-hidden');
+    import('./prompt-history.js').then(m => m.renderHistory && m.renderHistory());
   });
 
   // --- Delegated event listeners for lore card lists ---

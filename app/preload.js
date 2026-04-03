@@ -127,6 +127,12 @@ contextBridge.exposeInMainWorld('powertool', {
   // Text actions
   textAction: (type, text, storyId) => ipcRenderer.invoke('text-action', { type, text, storyId }),
 
+  // Prompt History
+  promptHistorySave:           (storyId, entry) => ipcRenderer.invoke('prompt-history:save', { storyId, entry }),
+  promptHistoryList:           (storyId)        => ipcRenderer.invoke('prompt-history:list', { storyId }),
+  promptHistoryToggleFavorite: (storyId, id)    => ipcRenderer.invoke('prompt-history:toggle-favorite', { storyId, id }),
+  promptHistoryDelete:         (storyId, id)    => ipcRenderer.invoke('prompt-history:delete', { storyId, id }),
+
   // Script Manager
   scriptMgrListScripts: () => ipcRenderer.invoke('script-mgr:list-scripts'),
   scriptMgrEnableScript: (name) => ipcRenderer.invoke('script-mgr:enable-script', name),

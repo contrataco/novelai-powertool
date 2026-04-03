@@ -581,6 +581,8 @@ export const dynamicCategoriesStyle = document.getElementById('dynamic-categorie
 
 // Portrait settings elements
 export const rpgGenerateAllPortraits = document.getElementById('rpgGenerateAllPortraits');
+export const graphToggleBtn = document.getElementById('graphToggleBtn');
+export const relationshipGraphContainer = document.getElementById('relationshipGraphContainer');
 export const autoGeneratePortraitsCheckbox = document.getElementById('autoGeneratePortraits');
 export const portraitProviderSelect = document.getElementById('portraitProvider');
 export const portraitProviderCostWarning = document.getElementById('portraitProviderCostWarning');
@@ -588,8 +590,12 @@ export const portraitProviderCostWarning = document.getElementById('portraitProv
 // Scene sub-tab elements
 export const storyboardSubTab = document.getElementById('storyboardSubTab');
 export const timelineSubTab = document.getElementById('timelineSubTab');
+export const historySubTab = document.getElementById('historySubTab');
 export const storyboardView = document.getElementById('storyboardView');
 export const timelineView = document.getElementById('timelineView');
+export const historyView = document.getElementById('historyView');
+export const historyFavFilterBtn = document.getElementById('historyFavFilterBtn');
+export const historyList = document.getElementById('historyList');
 export const timelineScanBtn = document.getElementById('timelineScanBtn');
 export const timelineScanStatus = document.getElementById('timelineScanStatus');
 export const timelineList = document.getElementById('timelineList');

@@ -129,6 +129,19 @@ function createTables() {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_story_images_story ON story_images(story_id, paragraph_index);
+
+    CREATE TABLE IF NOT EXISTS prompt_history (
+      id TEXT PRIMARY KEY,
+      story_id TEXT NOT NULL,
+      prompt TEXT NOT NULL DEFAULT '',
+      negative_prompt TEXT DEFAULT '',
+      provider TEXT DEFAULT '',
+      model TEXT DEFAULT '',
+      is_favorite INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_prompt_history_story
+      ON prompt_history(story_id, created_at DESC);
   `);
   console.log(`${LOG_PREFIX} Tables verified`);
 }
@@ -387,6 +400,51 @@ function resetVisualProfiles(storyId) {
   db.prepare('DELETE FROM visual_profiles WHERE story_id = ?').run(storyId);
 }
 
+// --- Prompt History ---
+
+function savePromptHistoryEntry(storyId, { id, prompt, negativePrompt, provider, model }) {
+  upsertStory(storyId, '');
+  const now = Date.now();
+  db.prepare(`
+    INSERT OR REPLACE INTO prompt_history
+      (id, story_id, prompt, negative_prompt, provider, model, is_favorite, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+  `).run(id, storyId, prompt || '', negativePrompt || '', provider || '', model || '', now);
+
+  // Prune oldest non-favorites beyond 50 per story
+  const excess = db.prepare(`
+    SELECT id FROM prompt_history
+    WHERE story_id = ? AND is_favorite = 0
+    ORDER BY created_at DESC
+    LIMIT -1 OFFSET 50
+  `).all(storyId);
+  if (excess.length > 0) {
+    const ids = excess.map(r => r.id);
+    db.prepare(`DELETE FROM prompt_history WHERE id IN (${ids.map(() => '?').join(',')})`)
+      .run(...ids);
+  }
+}
+
+function listPromptHistory(storyId) {
+  return db.prepare(`
+    SELECT * FROM prompt_history
+    WHERE story_id = ?
+    ORDER BY is_favorite DESC, created_at DESC
+  `).all(storyId);
+}
+
+function togglePromptFavorite(storyId, id) {
+  db.prepare(`
+    UPDATE prompt_history
+    SET is_favorite = CASE WHEN is_favorite = 1 THEN 0 ELSE 1 END
+    WHERE story_id = ? AND id = ?
+  `).run(storyId, id);
+}
+
+function deletePromptHistoryEntry(storyId, id) {
+  db.prepare('DELETE FROM prompt_history WHERE story_id = ? AND id = ?').run(storyId, id);
+}
+
 function close() {
   if (db) {
     console.log(`${LOG_PREFIX} Closing database`);
@@ -409,5 +467,6 @@ module.exports = {
   getTimelineState, setTimelineState,
   getStoryText, setStoryText,
   getStoryImages, setStoryImage, removeStoryImage, removeAllStoryImages,
+  savePromptHistoryEntry, listPromptHistory, togglePromptFavorite, deletePromptHistoryEntry,
   loadAllStoryData, migrateFromStore,
 };
