@@ -444,12 +444,12 @@ export function init() {
     if (show) {
       state.headlessMode = false;
       window.powertool.setSceneSettings({ interfaceShowWebview: true, headlessMode: false });
-      // Toggle webview visibility CSS
       const mainContainer = document.querySelector('.main-container');
-      if (mainContainer) {
-        mainContainer.classList.remove('headless-mode');
-        mainContainer.classList.add('webview-mode');
-      }
+      if (mainContainer) mainContainer.classList.add('webview-active');
+      const toggleBtn = document.getElementById('toggleWebviewBtn');
+      if (toggleBtn) toggleBtn.textContent = 'Hide Webview';
+      const overlay = document.getElementById('storySelectionOverlay');
+      if (overlay) overlay.classList.remove('visible');
       bus.emit('settings:saved');
     }
   });
