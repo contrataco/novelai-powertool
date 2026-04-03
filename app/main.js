@@ -1372,6 +1372,19 @@ ipcMain.handle('story-images:get-image-data', async (event, storyId, imageId) =>
   }
 });
 
+// Prompt History
+ipcMain.handle('prompt-history:save', (_, { storyId, entry }) =>
+  db.savePromptHistoryEntry(storyId, entry));
+
+ipcMain.handle('prompt-history:list', (_, { storyId }) =>
+  db.listPromptHistory(storyId));
+
+ipcMain.handle('prompt-history:toggle-favorite', (_, { storyId, id }) =>
+  db.togglePromptFavorite(storyId, id));
+
+ipcMain.handle('prompt-history:delete', (_, { storyId, id }) =>
+  db.deletePromptHistoryEntry(storyId, id));
+
 // Text actions — AI-powered text operations for the headless editor
 ipcMain.handle('text-action', async (event, { type, text, storyId }) => {
   try {
