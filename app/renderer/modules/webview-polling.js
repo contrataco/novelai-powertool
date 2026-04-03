@@ -1,7 +1,6 @@
 // webview-polling.js — Story context detection, DOM relay, webview events, story change polling
 
 import { state, bus } from './state.js';
-import { updateWebviewModeUI } from './settings-modal.js';
 import { updateVisibility as updateStorySelectorVisibility } from './story-selector.js';
 import {
   webview, status,
@@ -445,7 +444,12 @@ export function init() {
     if (show) {
       state.headlessMode = false;
       window.powertool.setSceneSettings({ interfaceShowWebview: true, headlessMode: false });
-      updateWebviewModeUI();
+      const mainContainer = document.querySelector('.main-container');
+      if (mainContainer) mainContainer.classList.add('webview-active');
+      const toggleBtn = document.getElementById('toggleWebviewBtn');
+      if (toggleBtn) toggleBtn.textContent = 'Hide Webview';
+      const overlay = document.getElementById('storySelectionOverlay');
+      if (overlay) overlay.classList.remove('visible');
       bus.emit('settings:saved');
     }
   });

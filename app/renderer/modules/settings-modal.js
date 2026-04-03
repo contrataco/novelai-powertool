@@ -178,7 +178,7 @@ export function init() {
   });
 }
 
-export function updateWebviewModeUI() {
+function updateWebviewModeUI() {
   const mainContainer = document.querySelector('.main-container');
   if (state.headlessMode) {
     mainContainer.classList.remove('webview-active');
