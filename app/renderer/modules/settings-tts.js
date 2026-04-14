@@ -10,6 +10,7 @@ import {
   ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence,
   ttsDialogueStyle, ttsDialogueIntonation, ttsDialogueCadence,
   ttsNarratorCustomSeed, ttsDialogueCustomSeed, ttsAddCharCustomSeed,
+  veniceTtsModelSelect, veniceTtsModelGroup,
 } from './dom-refs.js';
 import { state } from './state.js';
 import { refreshVoiceMapUI } from './tts.js';
@@ -123,7 +124,11 @@ async function loadTtsVoices() {
   ttsNarratorVoiceSelect.innerHTML = '<option disabled selected>Loading voices...</option>';
   ttsDialogueVoiceSelect.innerHTML = '<option disabled selected>Loading voices...</option>';
   try {
-    const voices = await window.powertool.ttsGetVoices();
+    const opts = {};
+    if (ttsProviderSelect.value === 'venice' && veniceTtsModelSelect?.value) {
+      opts.ttsModel = veniceTtsModelSelect.value;
+    }
+    const voices = await window.powertool.ttsGetVoices(opts);
     for (const sel of [ttsNarratorVoiceSelect, ttsDialogueVoiceSelect, ttsAddCharVoice]) {
       if (!sel) continue;
       const addCustom = sel === ttsNarratorVoiceSelect || sel === ttsDialogueVoiceSelect || sel === ttsAddCharVoice;
@@ -196,6 +201,24 @@ function renderSettingsVoiceList(voices) {
   }
 }
 
+// Load Venice TTS models into the TTS model dropdown
+async function loadVeniceTtsModels(show) {
+  if (veniceTtsModelGroup) veniceTtsModelGroup.classList.toggle('u-hidden', !show);
+  if (!show || !veniceTtsModelSelect) return;
+  try {
+    const models = await window.powertool.veniceGetTtsModels();
+    veniceTtsModelSelect.innerHTML = '';
+    for (const m of models) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.name;
+      veniceTtsModelSelect.appendChild(opt);
+    }
+  } catch (e) {
+    console.error('Failed to load Venice TTS models:', e);
+  }
+}
+
 // --- Load TTS settings into the modal ---
 
 export async function loadTtsSettings(storySettings) {
@@ -207,6 +230,16 @@ export async function loadTtsSettings(storySettings) {
     ttsSpeedValue.textContent = ttsSettings.ttsSpeed || 1.0;
     ttsFirstPersonCheckbox.checked = !!ttsSettings.ttsFirstPerson;
     document.getElementById('ttsSpeedGroup').classList.toggle('u-hidden', ttsProviderSelect.value !== 'venice');
+    await loadVeniceTtsModels(ttsProviderSelect.value === 'venice');
+    // Restore stored TTS model from Venice settings
+    if (ttsProviderSelect.value === 'venice' && veniceTtsModelSelect) {
+      try {
+        const veniceSettings = await window.powertool.getVeniceSettings();
+        if (veniceSettings.ttsModel) veniceTtsModelSelect.value = veniceSettings.ttsModel;
+      } catch (e) {
+        console.log('[Settings] Could not restore Venice TTS model:', e.message);
+      }
+    }
     const voices = await loadTtsVoices();
     // Load narrator voice — handle object values (v2 custom) or custom seed strings
     const narVoice = ttsSettings.ttsNarratorVoice;
@@ -252,6 +285,10 @@ export async function saveTtsSettings() {
       ttsSpeed: parseFloat(ttsSpeedSlider.value),
       ttsFirstPerson: ttsFirstPersonCheckbox.checked,
     });
+    // Save Venice TTS model selection
+    if (ttsProviderSelect.value === 'venice' && veniceTtsModelSelect?.value) {
+      await window.powertool.setVeniceSettings({ ttsModel: veniceTtsModelSelect.value });
+    }
   } catch (e) {
     console.error('[Settings] TTS save error:', e);
   }
@@ -301,12 +338,30 @@ export function initTtsEvents() {
     });
   }
 
-  // TTS provider change — refresh voice lists and toggle speed slider
+  // TTS provider change — refresh voice lists, toggle speed slider, load TTS models
   ttsProviderSelect.addEventListener('change', async () => {
+    const isVenice = ttsProviderSelect.value === 'venice';
+    await loadVeniceTtsModels(isVenice);
+    // Restore saved TTS model before loading voices so the correct voice set is fetched
+    if (isVenice && veniceTtsModelSelect) {
+      try {
+        const veniceSettings = await window.powertool.getVeniceSettings();
+        if (veniceSettings.ttsModel) veniceTtsModelSelect.value = veniceSettings.ttsModel;
+      } catch (e) {
+        console.log('[Settings] Could not restore Venice TTS model:', e.message);
+      }
+    }
     await loadTtsVoices();
-    document.getElementById('ttsSpeedGroup').classList.toggle('u-hidden', ttsProviderSelect.value !== 'venice');
+    document.getElementById('ttsSpeedGroup').classList.toggle('u-hidden', !isVenice);
     updateTtsV2Visibility();
   });
+
+  // Venice TTS model change — reload voices for the selected model
+  if (veniceTtsModelSelect) {
+    veniceTtsModelSelect.addEventListener('change', async () => {
+      await loadTtsVoices();
+    });
+  }
 
   // TTS version change — toggle v2 fields
   ttsVersionSelect.addEventListener('change', () => {

@@ -80,6 +80,8 @@ const store = new Store({
     veniceVideoModel: { type: 'string', default: '' },
     veniceVideoDuration: { type: 'string', default: '5s' },
     veniceVideoResolution: { type: 'string', default: '1080p' },
+    veniceVideoAspectRatio: { type: 'string', default: '' },
+    veniceTtsModel: { type: 'string', default: 'tts-kokoro' },
     imageSettings: {
       type: 'object',
       default: {
@@ -757,6 +759,8 @@ ipcMain.handle('get-venice-settings', () => {
     videoModel: store.get('veniceVideoModel') || '',
     videoDuration: store.get('veniceVideoDuration') || '5s',
     videoResolution: store.get('veniceVideoResolution') || '1080p',
+    videoAspectRatio: store.get('veniceVideoAspectRatio') || '',
+    ttsModel: store.get('veniceTtsModel') || 'tts-kokoro',
   };
 });
 
@@ -770,6 +774,8 @@ ipcMain.handle('set-venice-settings', (event, settings) => {
   if (settings.videoModel !== undefined) store.set('veniceVideoModel', settings.videoModel);
   if (settings.videoDuration !== undefined) store.set('veniceVideoDuration', settings.videoDuration);
   if (settings.videoResolution !== undefined) store.set('veniceVideoResolution', settings.videoResolution);
+  if (settings.videoAspectRatio !== undefined) store.set('veniceVideoAspectRatio', settings.videoAspectRatio);
+  if (settings.ttsModel !== undefined) store.set('veniceTtsModel', settings.ttsModel);
   return { success: true };
 });
 
@@ -1136,10 +1142,17 @@ ipcMain.handle('tts:set-settings', (_, settings) => {
   return { success: true };
 });
 
-ipcMain.handle('tts:get-voices', () => {
-  const provider = store.get('ttsProvider');
-  if (provider === 'venice') return veniceProvider.getVoices();
+ipcMain.handle('tts:get-voices', (_, opts) => {
+  const provider = opts?.provider || store.get('ttsProvider');
+  if (provider === 'venice') {
+    const ttsModel = opts?.ttsModel || store.get('veniceTtsModel') || 'tts-kokoro';
+    return veniceProvider.getVoices(ttsModel);
+  }
   return novelaiProvider.getVoiceSeeds();
+});
+
+ipcMain.handle('venice:get-tts-models', () => {
+  return veniceProvider.getTtsModels();
 });
 
 ipcMain.handle('tts:generate-speech', async (_, { text, voice, storyId }) => {

@@ -1423,16 +1423,19 @@
           <div class="form-group">
             <label>Duration</label>
             <select id="veniceVideoDuration">
-              <option value="5s">5 seconds</option>
-              <option value="10s">10 seconds</option>
+              <option value="">Select a model first</option>
             </select>
           </div>
           <div class="form-group">
             <label>Resolution</label>
             <select id="veniceVideoResolution">
-              <option value="1080p">1080p</option>
-              <option value="1440p">1440p</option>
-              <option value="2160p">2160p</option>
+              <option value="">Select a model first</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Aspect Ratio</label>
+            <select id="veniceVideoAspectRatio">
+              <option value="">Select a model first</option>
             </select>
           </div>
         </div>
@@ -1595,6 +1598,10 @@
             <option value="novelai">NovelAI</option>
             <option value="venice">Venice AI</option>
           </select>
+        </div>
+        <div class="form-group u-hidden" id="veniceTtsModelGroup">
+          <label>TTS Model</label>
+          <select id="veniceTtsModel"></select>
         </div>
         <div class="form-group" id="ttsVersionGroup">
           <label>TTS Version</label>
