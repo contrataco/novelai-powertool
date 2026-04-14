@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('powertool', {
     ipcRenderer.on('venice:balance-update', (_, data) => callback(data));
   },
   veniceGetVideoModels: () => ipcRenderer.invoke('venice:get-video-models'),
+  veniceGetTtsModels: () => ipcRenderer.invoke('venice:get-tts-models'),
   veniceQuoteVideo: (prompt, opts) => ipcRenderer.invoke('venice:quote-video', { prompt, opts }),
   veniceQueueVideo: (prompt, imageData, opts) => ipcRenderer.invoke('venice:queue-video', { prompt, imageData, opts }),
   veniceRetrieveVideo: (queueId, model) => ipcRenderer.invoke('venice:retrieve-video', { queueId, model }),
@@ -277,7 +278,7 @@ contextBridge.exposeInMainWorld('powertool', {
   // TTS
   ttsGetSettings: () => ipcRenderer.invoke('tts:get-settings'),
   ttsSetSettings: (settings) => ipcRenderer.invoke('tts:set-settings', settings),
-  ttsGetVoices: () => ipcRenderer.invoke('tts:get-voices'),
+  ttsGetVoices: (opts) => ipcRenderer.invoke('tts:get-voices', opts),
   ttsGenerateSpeech: (text, voice, storyId) => ipcRenderer.invoke('tts:generate-speech', { text, voice, storyId }),
   ttsNarrateScene: (text, storyId, protagonistName) => ipcRenderer.invoke('tts:narrate-scene', { text, storyId, protagonistName }),
   ttsGetState: (storyId) => ipcRenderer.invoke('tts:get-state', storyId),

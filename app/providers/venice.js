@@ -53,10 +53,13 @@ async function fetchModels(apiKey) {
       return modelsCache || [];
     }
     const data = await res.json();
-    modelsCache = (data.data || []).map(m => ({
-      id: m.id,
-      name: m.id,
-    }));
+    modelsCache = (data.data || [])
+      .filter(m => !m.offline)
+      .map(m => ({
+        id: m.id,
+        name: m.name || m.id,
+        constraints: m.model_spec?.constraints || {},
+      }));
     modelsCacheTime = now;
     console.log(`[Venice] Fetched ${modelsCache.length} image models`);
     return modelsCache;
@@ -117,10 +120,13 @@ async function fetchVideoModels(apiKey) {
       return videoModelsCache || [];
     }
     const data = await res.json();
-    videoModelsCache = (data.data || []).map(m => ({
-      id: m.id,
-      name: m.id,
-    }));
+    videoModelsCache = (data.data || [])
+      .filter(m => !m.offline)
+      .map(m => ({
+        id: m.id,
+        name: m.name || m.id,
+        constraints: m.model_spec?.constraints || {},
+      }));
     videoModelsCacheTime = now;
     console.log(`[Venice] Fetched ${videoModelsCache.length} video models`);
     return videoModelsCache;
@@ -129,6 +135,53 @@ async function fetchVideoModels(apiKey) {
     return videoModelsCache || [];
   }
 }
+
+// Kokoro TTS voices (tts-kokoro)
+const KOKORO_VOICES = [
+  { id: 'af_heart', name: 'Heart (American Female)' },
+  { id: 'af_alloy', name: 'Alloy (American Female)' },
+  { id: 'af_aoede', name: 'Aoede (American Female)' },
+  { id: 'af_bella', name: 'Bella (American Female)' },
+  { id: 'af_jadzia', name: 'Jadzia (American Female)' },
+  { id: 'af_jessica', name: 'Jessica (American Female)' },
+  { id: 'af_kore', name: 'Kore (American Female)' },
+  { id: 'af_nicole', name: 'Nicole (American Female)' },
+  { id: 'af_nova', name: 'Nova (American Female)' },
+  { id: 'af_river', name: 'River (American Female)' },
+  { id: 'af_sarah', name: 'Sarah (American Female)' },
+  { id: 'af_sky', name: 'Sky (American Female)' },
+  { id: 'am_adam', name: 'Adam (American Male)' },
+  { id: 'am_echo', name: 'Echo (American Male)' },
+  { id: 'am_eric', name: 'Eric (American Male)' },
+  { id: 'am_fenrir', name: 'Fenrir (American Male)' },
+  { id: 'am_liam', name: 'Liam (American Male)' },
+  { id: 'am_michael', name: 'Michael (American Male)' },
+  { id: 'am_onyx', name: 'Onyx (American Male)' },
+  { id: 'am_puck', name: 'Puck (American Male)' },
+  { id: 'am_santa', name: 'Santa (American Male)' },
+  { id: 'bf_alice', name: 'Alice (British Female)' },
+  { id: 'bf_emma', name: 'Emma (British Female)' },
+  { id: 'bf_lily', name: 'Lily (British Female)' },
+  { id: 'bm_daniel', name: 'Daniel (British Male)' },
+  { id: 'bm_fable', name: 'Fable (British Male)' },
+  { id: 'bm_george', name: 'George (British Male)' },
+  { id: 'bm_lewis', name: 'Lewis (British Male)' },
+  { id: 'em_alex', name: 'Alex (Expressive)' },
+  { id: 'em_santa', name: 'Santa (Expressive)' },
+];
+
+// Qwen3 TTS voices (tts-qwen3-0-6b, tts-qwen3-1-7b)
+const QWEN3_VOICES = [
+  { id: 'Vivian', name: 'Vivian' },
+  { id: 'Serena', name: 'Serena' },
+  { id: 'Ono_Anna', name: 'Ono Anna' },
+  { id: 'Sohee', name: 'Sohee' },
+  { id: 'Uncle_Fu', name: 'Uncle Fu' },
+  { id: 'Dylan', name: 'Dylan' },
+  { id: 'Eric', name: 'Eric' },
+  { id: 'Ryan', name: 'Ryan' },
+  { id: 'Aiden', name: 'Aiden' },
+];
 
 module.exports = {
   id: 'venice',
@@ -284,7 +337,7 @@ module.exports = {
       prompt,
       duration,
       resolution,
-      aspect_ratio: opts.aspect_ratio || '16:9',
+      aspect_ratio: opts.aspect_ratio || store.get('veniceVideoAspectRatio') || '16:9',
     };
     if (imageDataUrl) body.image_url = imageDataUrl;
     if (opts.negative_prompt) body.negative_prompt = opts.negative_prompt;
@@ -315,37 +368,19 @@ module.exports = {
   // Text-to-Speech
   // ---------------------------------------------------------------------------
 
-  getVoices() {
+  getTtsModels() {
     return [
-      { id: 'af_heart', name: 'Heart (American Female)' },
-      { id: 'af_alloy', name: 'Alloy (American Female)' },
-      { id: 'af_aoede', name: 'Aoede (American Female)' },
-      { id: 'af_bella', name: 'Bella (American Female)' },
-      { id: 'af_jessica', name: 'Jessica (American Female)' },
-      { id: 'af_kore', name: 'Kore (American Female)' },
-      { id: 'af_nicole', name: 'Nicole (American Female)' },
-      { id: 'af_nova', name: 'Nova (American Female)' },
-      { id: 'af_river', name: 'River (American Female)' },
-      { id: 'af_sarah', name: 'Sarah (American Female)' },
-      { id: 'af_sky', name: 'Sky (American Female)' },
-      { id: 'am_adam', name: 'Adam (American Male)' },
-      { id: 'am_echo', name: 'Echo (American Male)' },
-      { id: 'am_eric', name: 'Eric (American Male)' },
-      { id: 'am_fenrir', name: 'Fenrir (American Male)' },
-      { id: 'am_liam', name: 'Liam (American Male)' },
-      { id: 'am_michael', name: 'Michael (American Male)' },
-      { id: 'am_onyx', name: 'Onyx (American Male)' },
-      { id: 'am_puck', name: 'Puck (American Male)' },
-      { id: 'am_santa', name: 'Santa (American Male)' },
-      { id: 'bf_alice', name: 'Alice (British Female)' },
-      { id: 'bf_emma', name: 'Emma (British Female)' },
-      { id: 'bf_isabella', name: 'Isabella (British Female)' },
-      { id: 'bf_lily', name: 'Lily (British Female)' },
-      { id: 'bm_daniel', name: 'Daniel (British Male)' },
-      { id: 'bm_fable', name: 'Fable (British Male)' },
-      { id: 'bm_george', name: 'George (British Male)' },
-      { id: 'bm_lewis', name: 'Lewis (British Male)' },
+      { id: 'tts-kokoro', name: 'Kokoro' },
+      { id: 'tts-qwen3-0-6b', name: 'Qwen3 0.6B' },
+      { id: 'tts-qwen3-1-7b', name: 'Qwen3 1.7B' },
     ];
+  },
+
+  getVoices(ttsModel) {
+    if (ttsModel === 'tts-qwen3-0-6b' || ttsModel === 'tts-qwen3-1-7b') {
+      return QWEN3_VOICES;
+    }
+    return KOKORO_VOICES;
   },
 
   async generateSpeech(text, voice, store) {
@@ -353,6 +388,7 @@ module.exports = {
     if (!apiKey) throw new Error('No Venice AI API key configured.');
 
     const speed = store.get('ttsSpeed') || 1.0;
+    const ttsModel = store.get('veniceTtsModel') || 'tts-kokoro';
 
     const res = await fetch(`${API_BASE}/audio/speech`, {
       method: 'POST',
@@ -362,7 +398,7 @@ module.exports = {
       },
       body: JSON.stringify({
         input: text,
-        model: 'tts-kokoro',
+        model: ttsModel,
         voice,
         response_format: 'mp3',
         speed,

@@ -8,7 +8,7 @@ import {
   veniceKeyDot, veniceKeyText, veniceApiKeyInput, saveVeniceKeyBtn,
   veniceModelSelect, veniceStepsInput, veniceCfgScaleInput,
   veniceStylePresetSelect, veniceSafeModeCheckbox, veniceHideWatermarkCheckbox,
-  veniceVideoModelSelect, veniceVideoDurationSelect, veniceVideoResolutionSelect,
+  veniceVideoModelSelect, veniceVideoDurationSelect, veniceVideoResolutionSelect, veniceVideoAspectRatioSelect,
   veniceSettingsBalance, veniceSettingsBalanceText,
   puterModelSelect, puterQualitySelect, puterQualityGroup,
   novelaiTokenDot, novelaiTokenText,
@@ -71,10 +71,13 @@ async function loadVeniceModels() {
   }
 }
 
+let videoModelsData = [];
+
 async function loadVeniceVideoModels() {
   veniceVideoModelSelect.innerHTML = '<option disabled selected>Loading models...</option>';
   try {
     const models = await window.powertool.veniceGetVideoModels();
+    videoModelsData = models;
     veniceVideoModelSelect.innerHTML = '<option value="">Select a model</option>';
     for (const model of models) {
       const opt = document.createElement('option');
@@ -84,9 +87,39 @@ async function loadVeniceVideoModels() {
     }
   } catch (e) {
     console.error('Failed to load Venice video models:', e);
+    videoModelsData = [];
     veniceVideoModelSelect.innerHTML = '<option disabled selected>Failed to load models</option>';
     showToast('Failed to load Venice video models', null, 'warn');
   }
+}
+
+const DEFAULT_DURATIONS = ['5s', '10s'];
+const DEFAULT_RESOLUTIONS = ['1080p', '720p', '480p'];
+const DEFAULT_ASPECT_RATIOS = ['16:9', '9:16', '1:1'];
+
+function populateSelect(selectEl, values, defaultLabel) {
+  selectEl.innerHTML = '';
+  if (!values || values.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = defaultLabel || 'N/A';
+    selectEl.appendChild(opt);
+    return;
+  }
+  for (const val of values) {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = val;
+    selectEl.appendChild(opt);
+  }
+}
+
+function updateVideoConstraints(modelId) {
+  const model = videoModelsData.find(m => m.id === modelId);
+  const c = model?.constraints || {};
+  populateSelect(veniceVideoDurationSelect, c.durations?.length ? c.durations : DEFAULT_DURATIONS, 'Select a model first');
+  populateSelect(veniceVideoResolutionSelect, c.resolutions?.length ? c.resolutions : DEFAULT_RESOLUTIONS, 'Select a model first');
+  populateSelect(veniceVideoAspectRatioSelect, c.aspect_ratios?.length ? c.aspect_ratios : DEFAULT_ASPECT_RATIOS, 'Select a model first');
 }
 
 async function showVeniceSettingsBalance() {
@@ -226,8 +259,10 @@ export async function loadProviderSettings(effectiveProvider) {
   veniceStylePresetSelect.value = veniceSettings.stylePreset || '';
   await loadVeniceVideoModels();
   veniceVideoModelSelect.value = veniceSettings.videoModel || '';
+  updateVideoConstraints(veniceVideoModelSelect.value);
   veniceVideoDurationSelect.value = veniceSettings.videoDuration || '5s';
   veniceVideoResolutionSelect.value = veniceSettings.videoResolution || '1080p';
+  if (veniceSettings.videoAspectRatio) veniceVideoAspectRatioSelect.value = veniceSettings.videoAspectRatio;
   showVeniceSettingsBalance();
 
   // Puter.js settings
@@ -303,6 +338,7 @@ export async function saveProviderSettings() {
     videoModel: veniceVideoModelSelect.value,
     videoDuration: veniceVideoDurationSelect.value,
     videoResolution: veniceVideoResolutionSelect.value,
+    videoAspectRatio: veniceVideoAspectRatioSelect.value,
   });
 
   // Venice API key (only if entered)
@@ -324,6 +360,7 @@ export async function saveProviderSettings() {
 export function initProviderEvents() {
   providerSelect.addEventListener('change', updateProviderSections);
   puterModelSelect.addEventListener('change', updatePuterQualityVisibility);
+  veniceVideoModelSelect.addEventListener('change', () => updateVideoConstraints(veniceVideoModelSelect.value));
 
   // Perchance guidance scale slider
   perchanceGuidanceSlider.addEventListener('input', () => {
