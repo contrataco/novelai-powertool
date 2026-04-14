@@ -303,7 +303,7 @@ module.exports = {
     const resolution = opts.resolution || store.get('veniceVideoResolution') || '1080p';
 
     const body = { model, duration, resolution };
-    if (opts.aspect_ratio) body.aspect_ratio = opts.aspect_ratio;
+    body.aspect_ratio = opts.aspect_ratio || store.get('veniceVideoAspectRatio') || '16:9';
 
     const res = await fetch(`${API_BASE}/video/quote`, {
       method: 'POST',

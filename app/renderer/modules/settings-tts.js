@@ -236,7 +236,9 @@ export async function loadTtsSettings(storySettings) {
       try {
         const veniceSettings = await window.powertool.getVeniceSettings();
         if (veniceSettings.ttsModel) veniceTtsModelSelect.value = veniceSettings.ttsModel;
-      } catch { /* ignore */ }
+      } catch (e) {
+        console.log('[Settings] Could not restore Venice TTS model:', e.message);
+      }
     }
     const voices = await loadTtsVoices();
     // Load narrator voice — handle object values (v2 custom) or custom seed strings
@@ -340,6 +342,15 @@ export function initTtsEvents() {
   ttsProviderSelect.addEventListener('change', async () => {
     const isVenice = ttsProviderSelect.value === 'venice';
     await loadVeniceTtsModels(isVenice);
+    // Restore saved TTS model before loading voices so the correct voice set is fetched
+    if (isVenice && veniceTtsModelSelect) {
+      try {
+        const veniceSettings = await window.powertool.getVeniceSettings();
+        if (veniceSettings.ttsModel) veniceTtsModelSelect.value = veniceSettings.ttsModel;
+      } catch (e) {
+        console.log('[Settings] Could not restore Venice TTS model:', e.message);
+      }
+    }
     await loadTtsVoices();
     document.getElementById('ttsSpeedGroup').classList.toggle('u-hidden', !isVenice);
     updateTtsV2Visibility();
