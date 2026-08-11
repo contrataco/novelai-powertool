@@ -24,17 +24,14 @@ const DEFAULT_API_URL = 'http://127.0.0.1:8730';
 // art-style parameter, so style words go in the prompt (see ART_STYLES).
 const IMAGE_MODEL = 'perchance-image';
 
-// The four sizes Perchance's text-to-image-plugin accepts. This is the
-// plugin's own limit, not the local API's: `resolution: "99x99"` makes the
-// plugin return the plain string "(text-to-image-plugin: Currently, the only
-// valid resolutions are 512x512, 768x768, 512x768 and 768x512)". Anything
-// outside this set is a 400 from the local API, so we snap before sending.
-const VALID_RESOLUTIONS = [
-  { w: 512, h: 512 },
-  { w: 768, h: 768 },
-  { w: 512, h: 768 },
-  { w: 768, h: 512 },
-];
+// Perchance's text-to-image-plugin only generates at 512x512, 768x768,
+// 512x768 or 768x512 - its own limit, not the local API's, and not one our
+// generator can lift: `width`/`height` are accepted and silently ignored
+// (probed live). The local API therefore generates at the closest native
+// aspect and resamples to whatever size we ask for, so nothing here needs to
+// know that list. What it does need is the API's own ceiling, since a size
+// over this is a 400.
+const MAX_SIDE = 4096;
 
 // A generation runs in a real browser and queues behind any other image
 // request, so this is generous relative to the app's other providers.
@@ -132,34 +129,21 @@ function getApiUrl(store) {
 }
 
 /**
- * Snap requested dimensions onto one of the four resolutions the plugin
- * accepts, preferring the closest aspect ratio and breaking ties on area.
+ * The output size to ask the local API for, as "WxH".
  *
- * The app's imageSettings default is 832x1216, which is not a valid Perchance
- * resolution, so this runs on essentially every call. It exists because the
- * limit lives in Perchance's text-to-image-plugin rather than in our
- * generator - if that ever stops being true, delete this and pass the
- * requested size straight through.
+ * No snapping. The API now accepts any size within its bounds: it generates at
+ * the closest native aspect Perchance offers and resamples to exactly what was
+ * asked for, so the app can request whatever its imageSettings say. Note that
+ * resampling changes geometry, not detail - anything above the native 768px is
+ * interpolated, not generated at that resolution.
  */
-function pickResolution(width, height) {
-  const w = Number(width) > 0 ? Number(width) : 512;
-  const h = Number(height) > 0 ? Number(height) : 512;
-  const wantAspect = w / h;
-
-  let best = VALID_RESOLUTIONS[0];
-  let bestScore = Infinity;
-  for (const cand of VALID_RESOLUTIONS) {
-    const aspectDelta = Math.abs((cand.w / cand.h) - wantAspect);
-    // Area is the tie-breaker, scaled small enough that it never outweighs
-    // a genuinely closer aspect ratio.
-    const areaDelta = Math.abs((cand.w * cand.h) - (w * h)) / 1e9;
-    const score = aspectDelta + areaDelta;
-    if (score < bestScore) {
-      bestScore = score;
-      best = cand;
-    }
-  }
-  return { resolution: `${best.w}x${best.h}`, snapped: best.w !== w || best.h !== h };
+function requestedSize(width, height) {
+  const clamp = (v) => {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n) || n < 1) return 512;
+    return Math.min(n, MAX_SIDE);
+  };
+  return `${clamp(width)}x${clamp(height)}`;
 }
 
 /**
@@ -315,13 +299,7 @@ module.exports = {
       finalNegative = [negativePrompt, artStyle.negative].filter(Boolean).join(', ');
     }
 
-    const { resolution, snapped } = pickResolution(settings.width, settings.height);
-    if (snapped) {
-      console.log(
-        `${LOG_PREFIX} Requested ${settings.width}x${settings.height} is not a valid ` +
-        `Perchance resolution; using ${resolution}`
-      );
-    }
+    const size = requestedSize(settings.width, settings.height);
 
     const perchanceOpts = {
       guidance_scale: store.get('perchanceGuidanceScale') || 7,
@@ -335,12 +313,12 @@ module.exports = {
       model: IMAGE_MODEL,
       prompt: finalPrompt,
       n: 1,
-      size: resolution,
+      size,
       perchance: perchanceOpts,
     };
 
     const url = `${getApiUrl(store)}/v1/images/generations`;
-    console.log(`${LOG_PREFIX} Generating at ${resolution} via ${url}`);
+    console.log(`${LOG_PREFIX} Generating at ${size} via ${url}`);
 
     let res;
     try {
