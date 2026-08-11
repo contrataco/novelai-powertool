@@ -1316,7 +1316,7 @@
           <label>Image Generation Provider</label>
           <select id="provider">
             <option value="novelai">NovelAI (requires API token)</option>
-            <option value="perchance">Perchance (free, lower resolution)</option>
+            <option value="perchance">Perchance (free, local API, max 768px)</option>
             <option value="venice">Venice AI (API key)</option>
             <option value="puter">Puter.js (35+ models, no API key)</option>
           </select>
@@ -1352,22 +1352,27 @@
 
       <!-- Perchance Key Section -->
       <div class="settings-section" data-provider="perchance">
-        <h3>Perchance Key</h3>
+        <h3>Perchance Local API</h3>
         <div class="key-status">
           <span class="dot inactive" id="perchanceKeyDot"></span>
-          <span id="perchanceKeyText">No key extracted</span>
+          <span id="perchanceKeyText">Not checked</span>
         </div>
-        <button class="key-extract-btn" id="extractKeyBtn">Extract Key (Auto)</button>
+        <button class="key-extract-btn" id="perchanceCheckBtn">Check Server</button>
         <div class="form-group" style="margin-top: 12px;">
-          <label>Or paste key manually (from browser DevTools → Network tab → userKey param)</label>
-          <div style="display:flex;gap:8px;">
-            <input type="text" id="perchanceManualKey" placeholder="64-character hex key" style="flex:1;font-family:monospace;font-size:12px;">
-            <button class="key-extract-btn" id="saveManualKeyBtn">Save</button>
-          </div>
+          <label>Server URL</label>
+          <input type="text" id="perchanceApiUrl" placeholder="http://127.0.0.1:8730" style="width:100%;font-family:monospace;font-size:12px;">
+          <small style="color:#888;display:block;margin-top:4px;">
+            Started with <code>perchance-chat serve start</code>. Image generation
+            additionally needs <code>perchance-chat publish --image</code>, run once.
+          </small>
         </div>
         <div class="form-group" style="margin-top: 8px;">
           <label>Art Style</label>
           <select id="perchanceArtStyle"></select>
+          <small style="color:#888;display:block;margin-top:4px;">
+            Perchance has no art-style parameter, so the style is applied as
+            prompt keywords.
+          </small>
         </div>
         <div class="form-group">
           <label>Guidance Scale</label>

@@ -221,9 +221,10 @@ export const v3Options = document.getElementById('v3Options');
 export const novelaiArtStyleSelect = document.getElementById('novelaiArtStyle');
 
 // Settings elements -- Perchance
-export const extractKeyBtn = document.getElementById('extractKeyBtn');
+export const perchanceCheckBtn = document.getElementById('perchanceCheckBtn');
 export const perchanceKeyDot = document.getElementById('perchanceKeyDot');
 export const perchanceKeyText = document.getElementById('perchanceKeyText');
+export const perchanceApiUrlInput = document.getElementById('perchanceApiUrl');
 export const perchanceArtStyleSelect = document.getElementById('perchanceArtStyle');
 export const perchanceGuidanceSlider = document.getElementById('perchanceGuidance');
 export const perchanceGuidanceValue = document.getElementById('perchanceGuidanceValue');
@@ -425,10 +426,6 @@ export const memoryTokenLimitValue = document.getElementById('memoryTokenLimitVa
 export const memoryCompression = document.getElementById('memoryCompression');
 export const memoryCompressionValue = document.getElementById('memoryCompressionValue');
 export const memoryKeywords = document.getElementById('memoryKeywords');
-
-// Perchance manual key elements
-export const saveManualKeyBtn = document.getElementById('saveManualKeyBtn');
-export const perchanceManualKeyInput = document.getElementById('perchanceManualKey');
 
 // Family tree elements
 export const familyTreeSection = document.getElementById('familyTreeSection');

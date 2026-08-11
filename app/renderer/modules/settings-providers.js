@@ -3,7 +3,7 @@
 import {
   providerSelect,
   imgWidth, imgHeight,
-  extractKeyBtn, perchanceKeyDot, perchanceKeyText,
+  perchanceCheckBtn, perchanceKeyDot, perchanceKeyText, perchanceApiUrlInput,
   perchanceArtStyleSelect, perchanceGuidanceSlider, perchanceGuidanceValue,
   veniceKeyDot, veniceKeyText, veniceApiKeyInput, saveVeniceKeyBtn,
   veniceModelSelect, veniceStepsInput, veniceCfgScaleInput,
@@ -13,7 +13,6 @@ import {
   puterModelSelect, puterQualitySelect, puterQualityGroup,
   novelaiTokenDot, novelaiTokenText,
   novelaiEmailInput, novelaiPasswordInput,
-  saveManualKeyBtn, perchanceManualKeyInput,
 } from './dom-refs.js';
 import { showToast } from './utils.js';
 
@@ -210,11 +209,38 @@ export function updatePuterQualityVisibility() {
   }
 }
 
+/**
+ * Paint the Perchance status dot and label from a getPerchanceStatus() result.
+ *
+ * "Server down" and "server up but no image generator" are different problems
+ * with different fixes, so they get different messages rather than one
+ * "not ready" - publishing is a one-time manual step the user has to run.
+ */
+function renderPerchanceStatus(status) {
+  if (!status || !status.running) {
+    perchanceKeyDot.className = 'dot inactive';
+    perchanceKeyText.textContent =
+      `Server not reachable at ${status?.url || 'the configured URL'}` +
+      `${status?.error ? ` (${status.error})` : ''} — run: perchance-chat serve start`;
+    return;
+  }
+  if (!status.configured) {
+    perchanceKeyDot.className = 'dot inactive';
+    perchanceKeyText.textContent =
+      'Server up, but no image generator published — run: perchance-chat publish --image';
+    return;
+  }
+  perchanceKeyDot.className = 'dot active';
+  perchanceKeyText.textContent =
+    `Ready${status.generator ? ` (generator ${status.generator})` : ''}` +
+    `${status.busy ? ' — busy generating' : ''}`;
+}
+
 // --- Load all provider settings into the modal ---
 
 export async function loadProviderSettings(effectiveProvider) {
-  const [keyStatus, perchanceSettings, veniceSettings, veniceKeyStatus, puterSettings] = await Promise.all([
-    window.powertool.getPerchanceKeyStatus(),
+  const [perchanceStatus, perchanceSettings, veniceSettings, veniceKeyStatus, puterSettings] = await Promise.all([
+    window.powertool.getPerchanceStatus(),
     window.powertool.getPerchanceSettings(),
     window.powertool.getVeniceSettings(),
     window.powertool.getVeniceApiKeyStatus(),
@@ -225,16 +251,11 @@ export async function loadProviderSettings(effectiveProvider) {
   providerSelect.value = effectiveProvider || 'novelai';
   updateProviderSections();
 
-  // Perchance key status
-  if (keyStatus.hasKey) {
-    perchanceKeyDot.className = 'dot active';
-    perchanceKeyText.textContent = 'Key active: ' + keyStatus.preview;
-  } else {
-    perchanceKeyDot.className = 'dot inactive';
-    perchanceKeyText.textContent = keyStatus.expired ? 'Key expired — extract a new one' : 'No key extracted';
-  }
+  // Perchance local API status
+  renderPerchanceStatus(perchanceStatus);
 
   // Perchance settings
+  perchanceApiUrlInput.value = perchanceSettings.apiUrl || 'http://127.0.0.1:8730';
   perchanceArtStyleSelect.value = perchanceSettings.artStyle || 'no-style';
   perchanceGuidanceSlider.value = perchanceSettings.guidanceScale || 7;
   perchanceGuidanceValue.textContent = perchanceSettings.guidanceScale || 7;
@@ -325,6 +346,7 @@ export async function saveProviderSettings() {
   await window.powertool.setPerchanceSettings({
     artStyle: perchanceArtStyleSelect.value,
     guidanceScale: parseFloat(perchanceGuidanceSlider.value),
+    apiUrl: perchanceApiUrlInput.value.trim() || 'http://127.0.0.1:8730',
   });
 
   // Venice AI settings
@@ -367,46 +389,22 @@ export function initProviderEvents() {
     perchanceGuidanceValue.textContent = perchanceGuidanceSlider.value;
   });
 
-  // Perchance key extraction
-  extractKeyBtn.addEventListener('click', async () => {
-    extractKeyBtn.disabled = true;
-    extractKeyBtn.textContent = 'Extracting...';
-    perchanceKeyText.textContent = 'Extracting key (a browser window may appear)...';
+  // Perchance local API check
+  perchanceCheckBtn.addEventListener('click', async () => {
+    perchanceCheckBtn.disabled = true;
+    perchanceKeyDot.className = 'dot inactive';
+    perchanceKeyText.textContent = 'Checking server...';
     try {
-      const result = await window.powertool.extractPerchanceKey();
-      if (result.success) {
-        perchanceKeyDot.className = 'dot active';
-        perchanceKeyText.textContent = 'Key extracted successfully';
-      } else {
-        perchanceKeyDot.className = 'dot inactive';
-        perchanceKeyText.textContent = result.error || 'Extraction failed or timed out';
-      }
+      // Persist the URL first so the probe tests what the field says.
+      await window.powertool.setPerchanceSettings({
+        apiUrl: perchanceApiUrlInput.value.trim() || 'http://127.0.0.1:8730',
+      });
+      renderPerchanceStatus(await window.powertool.getPerchanceStatus());
     } catch (e) {
       perchanceKeyDot.className = 'dot inactive';
       perchanceKeyText.textContent = 'Error: ' + e.message;
     } finally {
-      extractKeyBtn.disabled = false;
-      extractKeyBtn.textContent = 'Extract Key';
-    }
-  });
-
-  // Manual key entry
-  saveManualKeyBtn.addEventListener('click', async () => {
-    const key = perchanceManualKeyInput.value.trim();
-    if (!/^[a-f0-9]{64}$/i.test(key)) {
-      perchanceKeyDot.className = 'dot inactive';
-      perchanceKeyText.textContent = 'Invalid key — must be 64 hex characters';
-      return;
-    }
-    try {
-      const result = await window.powertool.setPerchanceKey(key);
-      if (result.success) {
-        perchanceKeyDot.className = 'dot active';
-        perchanceKeyText.textContent = 'Key saved: ' + key.substring(0, 10) + '...';
-        perchanceManualKeyInput.value = '';
-      }
-    } catch (e) {
-      perchanceKeyText.textContent = 'Error saving key: ' + e.message;
+      perchanceCheckBtn.disabled = false;
     }
   });
 

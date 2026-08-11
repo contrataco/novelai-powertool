@@ -14,7 +14,6 @@ const veniceProvider = require('./providers/venice');
 const puterProvider = require('./providers/puter');
 const openaiTextProvider = require('./providers/openai-text');
 const anthropicTextProvider = require('./providers/anthropic-text');
-const { extractPerchanceKey, verifyPerchanceKey } = require('./perchance-key');
 const storyboard = require('./storyboard');
 const loreCreator = require('./lore-creator');
 const scenePromptPipeline = require('./scene-prompt-pipeline');
@@ -65,11 +64,10 @@ const store = new Store({
     novelaiEmail: { type: 'string', default: '' },
     novelaiPassword: { type: 'string', default: '' },
     provider: { type: 'string', default: 'novelai' },
-    perchanceUserKey: { type: 'string', default: '' },
     novelaiArtStyle: { type: 'string', default: 'no-style' },
     perchanceArtStyle: { type: 'string', default: 'no-style' },
     perchanceGuidanceScale: { type: 'number', default: 7 },
-    perchanceKeyAcquiredAt: { type: 'number', default: 0 },
+    perchanceApiUrl: { type: 'string', default: 'http://127.0.0.1:8730' },
     veniceApiKey: { type: 'string', default: '' },
     veniceModel: { type: 'string', default: 'flux-2-max' },
     veniceSteps: { type: 'number', default: 25 },
@@ -681,35 +679,12 @@ ipcMain.handle('get-providers', () => {
 });
 
 // IPC Handlers — Perchance key extraction
-ipcMain.handle('extract-perchance-key', async () => {
-  try {
-    const key = await extractPerchanceKey(store);
-    return { success: !!key, hasKey: !!key };
-  } catch (error) {
-    console.error('[Main] Perchance key extraction failed:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('get-perchance-key-status', async () => {
-  const key = store.get('perchanceUserKey');
-  if (!key) return { hasKey: false, preview: '' };
-  const status = await verifyPerchanceKey(key);
-  if (status === 'not_verified') {
-    // Only clear on definitive "not_verified" from the API (not CF blocks)
-    store.set('perchanceUserKey', '');
-    store.set('perchanceKeyAcquiredAt', 0);
-    return { hasKey: false, preview: '', expired: true };
-  }
-  // 'valid' or 'unknown' (CF blocked) — keep the key
-  return { hasKey: true, preview: key.substring(0, 10) + '...' };
-});
-
-ipcMain.handle('set-perchance-key', (event, key) => {
-  store.set('perchanceUserKey', key);
-  store.set('perchanceKeyAcquiredAt', Date.now());
-  console.log(`[Main] Perchance key set manually: ${key.substring(0, 10)}...`);
-  return { success: true };
+// Liveness of the local perchance-chat server. Replaces the old key
+// extraction/verification handlers: there is no key any more, so what the
+// settings UI needs to show is whether the server is up and whether an image
+// generator has been published to it.
+ipcMain.handle('get-perchance-status', async () => {
+  return perchanceProvider.getStatus(store);
 });
 
 // IPC Handlers — Perchance settings
@@ -721,12 +696,14 @@ ipcMain.handle('get-perchance-settings', () => {
   return {
     artStyle: store.get('perchanceArtStyle') || 'no-style',
     guidanceScale: store.get('perchanceGuidanceScale') || 7,
+    apiUrl: store.get('perchanceApiUrl') || 'http://127.0.0.1:8730',
   };
 });
 
 ipcMain.handle('set-perchance-settings', (event, settings) => {
   if (settings.artStyle !== undefined) store.set('perchanceArtStyle', settings.artStyle);
   if (settings.guidanceScale !== undefined) store.set('perchanceGuidanceScale', settings.guidanceScale);
+  if (settings.apiUrl !== undefined) store.set('perchanceApiUrl', settings.apiUrl);
   return { success: true };
 });
 

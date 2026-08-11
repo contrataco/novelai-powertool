@@ -24,9 +24,7 @@ contextBridge.exposeInMainWorld('powertool', {
   setNovelaiArtStyle: (styleId) => ipcRenderer.invoke('set-novelai-art-style', styleId),
 
   // Perchance
-  extractPerchanceKey: () => ipcRenderer.invoke('extract-perchance-key'),
-  setPerchanceKey: (key) => ipcRenderer.invoke('set-perchance-key', key),
-  getPerchanceKeyStatus: () => ipcRenderer.invoke('get-perchance-key-status'),
+  getPerchanceStatus: () => ipcRenderer.invoke('get-perchance-status'),
   getPerchanceArtStyles: () => ipcRenderer.invoke('get-perchance-art-styles'),
   getPerchanceSettings: () => ipcRenderer.invoke('get-perchance-settings'),
   setPerchanceSettings: (settings) => ipcRenderer.invoke('set-perchance-settings', settings),

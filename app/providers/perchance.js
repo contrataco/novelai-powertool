@@ -1,8 +1,44 @@
-const { BrowserWindow, session } = require('electron');
-const path = require('path');
-const { extractPerchanceKey } = require('../perchance-key');
+/**
+ * Perchance image generation via the local perchance-chat API.
+ *
+ * Backed by ~/git/perchance-experiment, which publishes its own Perchance
+ * generator and drives it through a real Chrome, exposing an
+ * OpenAI-compatible HTTP API on loopback. That replaces the previous
+ * approach here (extracting a userKey via Chrome CDP and calling
+ * image-generation.perchance.org directly), which was fragile because
+ * Cloudflare Turnstile only ever solved in system Chrome.
+ *
+ * The server sends no CORS headers and checks the Host header, so it can
+ * only be called from the main process - never from the renderer.
+ *
+ * See ~/git/perchance-experiment/docs/integrating.md for the contract.
+ */
 
-const CHROME_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const LOG_PREFIX = '[Perchance]';
+
+// Electron's main-process fetch can fail resolving `localhost` over IPv6,
+// so the default is spelled as a loopback literal.
+const DEFAULT_API_URL = 'http://127.0.0.1:8730';
+
+// The image model id the local API exposes. One only: the plugin has no
+// art-style parameter, so style words go in the prompt (see ART_STYLES).
+const IMAGE_MODEL = 'perchance-image';
+
+// The four sizes Perchance's text-to-image-plugin accepts. This is the
+// plugin's own limit, not the local API's: `resolution: "99x99"` makes the
+// plugin return the plain string "(text-to-image-plugin: Currently, the only
+// valid resolutions are 512x512, 768x768, 512x768 and 768x512)". Anything
+// outside this set is a 400 from the local API, so we snap before sending.
+const VALID_RESOLUTIONS = [
+  { w: 512, h: 512 },
+  { w: 768, h: 768 },
+  { w: 512, h: 768 },
+  { w: 768, h: 512 },
+];
+
+// A generation runs in a real browser and queues behind any other image
+// request, so this is generous relative to the app's other providers.
+const REQUEST_TIMEOUT_MS = 180000;
 
 // Art styles: prompt/negative prompt modifiers
 const ART_STYLES = {
@@ -83,262 +119,134 @@ const ART_STYLES = {
   },
 };
 
-const MAX_DIMENSION = 768;
-
-// Rate limiting: Perchance enforces ~15-20s cooldown between generations
-const RATE_LIMIT_COOLDOWN_MS = 20000;
-let lastGenerationTime = 0;
-
-// Refresh key every N generations (Perchance keys expire quickly)
-const KEY_REFRESH_EVERY_N = 2;
-let generationsSinceKeyRefresh = 0;
-
-// Persistent hidden BrowserWindow for making API calls through Cloudflare
-let apiWindow = null;
-let cfReady = false;
-
 /**
- * Get or create a hidden BrowserWindow that has Cloudflare clearance
- * for image-generation.perchance.org. Uses stealth patches and persistent
- * session so CF clearance survives across requests.
+ * Base URL of the local perchance-chat server, without a trailing slash.
+ *
+ * `localhost` is rewritten to the loopback literal: Electron's main-process
+ * fetch can fail to resolve `localhost` over IPv6, the same trap `getOllamaUrl`
+ * works around in main.js.
  */
-async function getApiWindow() {
-  if (apiWindow && !apiWindow.isDestroyed()) {
-    if (cfReady) return apiWindow;
-  }
-
-  const ses = session.fromPartition('persist:perchance-api');
-  ses.setUserAgent(CHROME_UA);
-
-  // Window must be visible for Turnstile to solve; hidden after clearance
-  apiWindow = new BrowserWindow({
-    show: true,
-    width: 500,
-    height: 400,
-    title: 'Perchance — Clearing Cloudflare...',
-    webPreferences: {
-      partition: 'persist:perchance-api',
-      nodeIntegration: false,
-      contextIsolation: false,
-      preload: path.join(__dirname, '..', 'perchance-stealth.js'),
-    }
-  });
-
-  apiWindow.on('closed', () => {
-    apiWindow = null;
-    cfReady = false;
-  });
-
-  console.log('[Perchance] Navigating window to clear Cloudflare...');
-
-  // Navigate to the API domain to trigger CF challenge and clear it
-  await apiWindow.loadURL('https://image-generation.perchance.org/', {
-    userAgent: CHROME_UA,
-  });
-
-  // Wait for Cloudflare to auto-solve (managed challenge)
-  const cleared = await waitForCfClearance(apiWindow, 30000);
-  if (!cleared) {
-    console.log('[Perchance] Cloudflare did not auto-clear, may need manual clearance');
-  } else {
-    console.log('[Perchance] Cloudflare cleared for API domain');
-  }
-
-  cfReady = cleared;
-  if (!cleared) {
-    console.log('[Perchance] WARNING: CF clearance may have failed, API calls may not work');
-  }
-  // Hide window after clearance — it only needs to be visible for Turnstile
-  apiWindow.hide();
-  return apiWindow;
+function getApiUrl(store) {
+  const raw = (store.get('perchanceApiUrl') || DEFAULT_API_URL).trim();
+  return raw.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
 }
 
 /**
- * Wait for Cloudflare challenge to auto-solve by checking multiple signals.
- * Returns true if cleared, false if still challenging after maxWait.
+ * Snap requested dimensions onto one of the four resolutions the plugin
+ * accepts, preferring the closest aspect ratio and breaking ties on area.
+ *
+ * The app's imageSettings default is 832x1216, which is not a valid Perchance
+ * resolution, so this runs on essentially every call. It exists because the
+ * limit lives in Perchance's text-to-image-plugin rather than in our
+ * generator - if that ever stops being true, delete this and pass the
+ * requested size straight through.
  */
-async function waitForCfClearance(win, maxWait) {
-  const start = Date.now();
-  while (Date.now() - start < maxWait) {
-    try {
-      const isChallenging = await win.webContents.executeJavaScript(`
-        (function() {
-          var title = document.title || '';
-          if (title.includes('Just a moment')) return true;
-          if (document.querySelector('iframe[src*="challenges.cloudflare.com"]')) return true;
-          if (document.querySelector('#challenge-running, #challenge-stage')) return true;
-          if (document.querySelector('meta[http-equiv="refresh"][content*="challenge"]')) return true;
-          return false;
-        })()
-      `);
-      if (!isChallenging) return true;
-    } catch {}
-    await new Promise(r => setTimeout(r, 1000));
-  }
-  return false;
-}
+function pickResolution(width, height) {
+  const w = Number(width) > 0 ? Number(width) : 512;
+  const h = Number(height) > 0 ? Number(height) : 512;
+  const wantAspect = w / h;
 
-/**
- * Execute a fetch request inside the hidden BrowserWindow.
- * This routes through the browser's session which has CF cookies.
- * Supports GET (default) and POST with JSON body.
- */
-async function browserFetch(url, options = {}) {
-  const win = await getApiWindow();
-
-  const fetchOptions = JSON.stringify({
-    method: options.method || 'GET',
-    headers: options.headers || {},
-    body: options.body || undefined,
-  });
-
-  // Use executeJavaScript to run fetch in the browser context (with CF cookies)
-  const result = await win.webContents.executeJavaScript(`
-    (async () => {
-      const opts = ${fetchOptions};
-      if (!opts.body) delete opts.body;
-      const res = await fetch(${JSON.stringify(url)}, opts);
-      const text = await res.text();
-      return { ok: res.ok, status: res.status, body: text };
-    })()
-  `);
-
-  if (!result.ok) {
-    // If CF challenge again, reset and retry once
-    if (result.body.includes('Just a moment') || result.body.includes('cf_chl_opt')) {
-      console.log('[Perchance] CF challenge on API request, re-clearing...');
-      cfReady = false;
-      await getApiWindow();
-
-      const retry = await win.webContents.executeJavaScript(`
-        (async () => {
-          const opts = ${fetchOptions};
-          if (!opts.body) delete opts.body;
-          const res = await fetch(${JSON.stringify(url)}, opts);
-          const text = await res.text();
-          return { ok: res.ok, status: res.status, body: text };
-        })()
-      `);
-      return retry;
+  let best = VALID_RESOLUTIONS[0];
+  let bestScore = Infinity;
+  for (const cand of VALID_RESOLUTIONS) {
+    const aspectDelta = Math.abs((cand.w / cand.h) - wantAspect);
+    // Area is the tie-breaker, scaled small enough that it never outweighs
+    // a genuinely closer aspect ratio.
+    const areaDelta = Math.abs((cand.w * cand.h) - (w * h)) / 1e9;
+    const score = aspectDelta + areaDelta;
+    if (score < bestScore) {
+      bestScore = score;
+      best = cand;
     }
   }
-
-  return result;
+  return { resolution: `${best.w}x${best.h}`, snapped: best.w !== w || best.h !== h };
 }
 
 /**
- * Fetch binary data (image) via the browser and return as base64.
- * Includes a 60s timeout to prevent infinite hangs.
+ * Derive the data-URI mime type from the payload's magic bytes.
+ *
+ * The old implementation hardcoded image/jpeg. The local API returns whatever
+ * the plugin produced, so sniff rather than assume - a PNG mislabelled as JPEG
+ * renders in Chromium but breaks anything that trusts the declared type.
  */
-async function browserFetchBase64(url) {
-  const win = await getApiWindow();
-
-  const timeoutMs = 60000;
-  const fetchPromise = win.webContents.executeJavaScript(`
-    (async () => {
-      const res = await fetch(${JSON.stringify(url)});
-      if (!res.ok) throw new Error('Download failed: ' + res.status);
-      const buf = await res.arrayBuffer();
-      const bytes = new Uint8Array(buf);
-      let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-        binary += String.fromCharCode.apply(null, chunk);
-      }
-      return btoa(binary);
-    })()
-  `);
-
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Image download timed out after 60s')), timeoutMs)
-  );
-
-  return Promise.race([fetchPromise, timeoutPromise]);
+function sniffMime(buf) {
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return 'image/png';
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    return 'image/webp';
+  }
+  if (buf.length >= 6 && buf.toString('ascii', 0, 3) === 'GIF') {
+    return 'image/gif';
+  }
+  return 'image/png';
 }
 
 /**
- * Ensure the userKey is verified on Perchance's server.
- * Checks status via the API BrowserWindow (which has CF clearance).
- * If not verified, opens a SEPARATE temporary window to trigger verification
- * (never navigates the API window away from the API domain).
+ * Turn a non-2xx response into an error that says what to actually do.
+ *
+ * The status codes are specific to the images route and each has a different
+ * fix, so they are worth distinguishing rather than collapsing into one
+ * "request failed" (see docs/integrating.md in perchance-experiment).
  */
-async function ensureKeyVerified(userKey) {
-  const checkUrl = `https://image-generation.perchance.org/api/checkVerificationStatus?userKey=${encodeURIComponent(userKey)}&__cacheBust=${Math.random()}`;
-
+function describeHttpError(status, bodyText, retryAfter) {
+  let detail = bodyText;
   try {
-    const result = await browserFetch(checkUrl);
-    console.log(`[Perchance] Key verification check: ${result.body.substring(0, 200)}`);
+    const parsed = JSON.parse(bodyText);
+    detail = parsed?.error?.message || parsed?.detail || bodyText;
+  } catch (_) { /* not JSON - use the raw text */ }
+  const suffix = detail ? ` - ${String(detail).slice(0, 300)}` : '';
 
-    if (!result.body.includes('not_verified')) {
-      console.log('[Perchance] Key is verified');
-      return;
-    }
-
-    console.log('[Perchance] Key not verified — opening temporary window for verification...');
-
-    // Use a separate window so we don't disrupt the API window
-    const ses = session.fromPartition('persist:perchance-api');
-    ses.setUserAgent(CHROME_UA);
-
-    const verifyWin = new BrowserWindow({
-      show: false,
-      width: 800,
-      height: 600,
-      webPreferences: {
-        partition: 'persist:perchance-api',
-        nodeIntegration: false,
-        contextIsolation: false,
-        preload: path.join(__dirname, '..', 'perchance-stealth.js'),
-      }
-    });
-
-    try {
-      await verifyWin.webContents.loadURL('https://perchance.org/ai-text-to-image-generator', {
-        userAgent: CHROME_UA,
-      });
-
-      await waitForCfClearance(verifyWin, 30000);
-
-      // Inject the userKey so the page's verification flow uses our key
-      await verifyWin.webContents.executeJavaScript(`
-        try { localStorage.setItem('userKey', ${JSON.stringify(userKey)}); } catch(e) {}
-      `);
-
-      // Poll for verification via the API window (same-origin, no CORS issues)
-      console.log('[Perchance] Waiting for key verification...');
-      const maxWait = 25000;
-      const start = Date.now();
-      while (Date.now() - start < maxWait) {
-        await new Promise(r => setTimeout(r, 3000));
-        try {
-          const recheck = await browserFetch(`https://image-generation.perchance.org/api/checkVerificationStatus?userKey=${encodeURIComponent(userKey)}&__cacheBust=${Math.random()}`);
-          console.log(`[Perchance] Re-check: ${recheck.body.substring(0, 100)}`);
-          if (!recheck.body.includes('not_verified')) {
-            console.log('[Perchance] Key verified successfully');
-            return;
-          }
-        } catch (e) {
-          console.log('[Perchance] Re-check fetch error:', e.message);
-        }
-      }
-
-      console.log('[Perchance] Key verification timed out — proceeding with generation anyway');
-    } finally {
-      verifyWin.destroy();
-    }
-  } catch (e) {
-    console.log('[Perchance] Key verification check failed:', e.message, '— proceeding with generation');
+  switch (status) {
+    case 400:
+      return new Error(`Perchance rejected the request${suffix}`);
+    case 404:
+      return new Error(`Perchance has no model '${IMAGE_MODEL}'. Check GET /v1/models${suffix}`);
+    case 422:
+      return new Error(`Malformed request to Perchance${suffix}`);
+    case 501:
+      return new Error(
+        'No Perchance image generator is published yet. Run: perchance-chat publish --image'
+      );
+    case 502:
+      return new Error(`Perchance plugin error, or the frame could not be driven${suffix}`);
+    case 503:
+      return new Error(
+        `Perchance is busy with another image generation${retryAfter ? ` (retry after ${retryAfter}s)` : ''}${suffix}`
+      );
+    case 504:
+      return new Error(`Perchance image generation timed out${suffix}`);
+    default:
+      return new Error(`Perchance API returned HTTP ${status}${suffix}`);
   }
 }
-
 
 module.exports = {
   id: 'perchance',
-  name: 'Perchance (Free)',
+  name: 'Perchance (Local API)',
 
-  checkReady(store) {
-    return !!store.get('perchanceUserKey');
+  /**
+   * Liveness probe against the local server.
+   *
+   * Async, unlike the other providers' synchronous key checks, because
+   * readiness here is a property of a running server rather than a stored
+   * credential. Nothing in the app currently calls checkReady on any
+   * provider, so this widening breaks no caller.
+   */
+  async checkReady(store) {
+    try {
+      const res = await fetch(`${getApiUrl(store)}/healthz`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return false;
+      const health = await res.json();
+      return !!health?.image?.configured;
+    } catch (_) {
+      return false;
+    }
   },
 
   getModels() {
@@ -363,30 +271,39 @@ module.exports = {
     };
   },
 
+  /**
+   * Report what the local server can currently do, for the settings UI.
+   * Distinguishes "server down" from "server up but no image generator".
+   */
+  async getStatus(store) {
+    const url = getApiUrl(store);
+    try {
+      const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) {
+        return { running: false, configured: false, error: `HTTP ${res.status}`, url };
+      }
+      const health = await res.json();
+      return {
+        running: true,
+        configured: !!health?.image?.configured,
+        busy: !!health?.image?.busy,
+        attached: !!health?.image?.attached,
+        generator: health?.generator || null,
+        models: health?.image?.models || [],
+        url,
+      };
+    } catch (e) {
+      return {
+        running: false,
+        configured: false,
+        error: e.name === 'TimeoutError' ? 'timed out' : e.message,
+        url,
+      };
+    }
+  },
+
   async generate(prompt, negativePrompt, store, options = {}) {
-    let userKey = store.get('perchanceUserKey');
-    if (!userKey) {
-      console.log('[Perchance] No stored key, attempting extraction...');
-      const freshKey = await extractPerchanceKey(store);
-      if (freshKey) {
-        userKey = freshKey;
-        generationsSinceKeyRefresh = 0;
-      } else {
-        throw new Error('Could not extract Perchance key. Try again or extract manually in Settings.');
-      }
-    }
-
-    // Proactive key refresh every N generations
-    if (generationsSinceKeyRefresh >= KEY_REFRESH_EVERY_N) {
-      console.log(`[Perchance] ${generationsSinceKeyRefresh} generations since last key refresh, extracting fresh key...`);
-      const freshKey = await extractPerchanceKey(store);
-      if (freshKey) {
-        userKey = freshKey;
-        generationsSinceKeyRefresh = 0;
-      }
-    }
-
-    const settings = store.get('imageSettings');
+    const settings = store.get('imageSettings') || {};
     const artStyleId = store.get('perchanceArtStyle') || 'no-style';
     const artStyle = ART_STYLES[artStyleId] || ART_STYLES['no-style'];
 
@@ -395,133 +312,70 @@ module.exports = {
     if (options && options.rawNegativePrompt) {
       finalNegative = negativePrompt || '';
     } else {
-      const styleNegative = artStyle.negative;
-      finalNegative = [negativePrompt, styleNegative].filter(Boolean).join(', ');
+      finalNegative = [negativePrompt, artStyle.negative].filter(Boolean).join(', ');
     }
 
-    const width = Math.min(settings.width || 512, MAX_DIMENSION);
-    const height = Math.min(settings.height || 768, MAX_DIMENSION);
-    const resolution = `${width}x${height}`;
-
-    const guidanceScale = store.get('perchanceGuidanceScale') || 7;
-    const seed = Math.floor(Math.random() * 4294967295);
-
-    console.log(`[Perchance] Generating with style: ${artStyleId}, resolution: ${resolution}`);
-
-    // Enforce rate limit cooldown before sending request
-    const timeSinceLast = Date.now() - lastGenerationTime;
-    if (timeSinceLast < RATE_LIMIT_COOLDOWN_MS) {
-      const waitMs = RATE_LIMIT_COOLDOWN_MS - timeSinceLast;
-      console.log(`[Perchance] Rate limit cooldown: waiting ${Math.ceil(waitMs / 1000)}s...`);
-      await new Promise(r => setTimeout(r, waitMs));
+    const { resolution, snapped } = pickResolution(settings.width, settings.height);
+    if (snapped) {
+      console.log(
+        `${LOG_PREFIX} Requested ${settings.width}x${settings.height} is not a valid ` +
+        `Perchance resolution; using ${resolution}`
+      );
     }
 
-    // Note: ensureKeyVerified removed — Turnstile cannot solve in hidden Electron
-    // windows, so the verification pre-check always times out. Instead we just
-    // attempt the generate call directly and handle invalid_key in the retry loop.
+    const perchanceOpts = {
+      guidance_scale: store.get('perchanceGuidanceScale') || 7,
+    };
+    if (finalNegative) perchanceOpts.negative_prompt = finalNegative;
+    if (options.seed !== undefined && options.seed !== null) {
+      perchanceOpts.seed = options.seed;
+    }
 
-    // Step 1: Generate image (via browser to bypass Cloudflare)
-    // URL gets auth/cache params; body gets generation params (POST)
-    const generateUrl = new URL('https://image-generation.perchance.org/api/generate');
-    generateUrl.searchParams.set('userKey', userKey);
-    generateUrl.searchParams.set('requestId', `aiImageCompletion${Math.floor(Math.random() * 1e9)}`);
-    generateUrl.searchParams.set('__cacheBust', String(Math.random()));
-
-    const generateBody = {
-      generatorName: 'ai-image-generator',
-      channel: 'ai-text-to-image-generator',
-      subChannel: 'public',
+    const body = {
+      model: IMAGE_MODEL,
       prompt: finalPrompt,
-      negativePrompt: finalNegative,
-      style: artStyleId === 'no-style' ? undefined : artStyleId,
-      seed: seed,
-      resolution: resolution,
-      guidanceScale: guidanceScale,
+      n: 1,
+      size: resolution,
+      perchance: perchanceOpts,
     };
 
-    // Retry loop: handles HTTP 429, JSON too_many_requests, and invalid_key
-    let generateData;
-    const maxRetries = 5;
-    let invalidKeyRetried = false;
+    const url = `${getApiUrl(store)}/v1/images/generations`;
+    console.log(`${LOG_PREFIX} Generating at ${resolution} via ${url}`);
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      // Update cache-busting params on each attempt
-      generateUrl.searchParams.set('requestId', `aiImageCompletion${Math.floor(Math.random() * 1e9)}`);
-      generateUrl.searchParams.set('__cacheBust', String(Math.random()));
-      generateBody.seed = Math.floor(Math.random() * 4294967295);
-
-      const generateResult = await browserFetch(generateUrl.toString(), {
+    let res;
+    try {
+      res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(generateBody),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-
-      // Check if rate limited (HTTP 429 or JSON too_many_requests)
-      const isHttp429 = generateResult.status === 429;
-      let isJsonRateLimit = false;
-
-      console.log(`[Perchance] Raw response — HTTP ${generateResult.status}, ok=${generateResult.ok}, body length=${generateResult.body.length}`);
-
-      if (generateResult.ok || isHttp429) {
-        try {
-          generateData = JSON.parse(generateResult.body);
-          isJsonRateLimit = generateData.status === 'too_many_requests';
-        } catch {
-          if (!generateResult.ok) {
-            throw new Error(`Perchance API Error ${generateResult.status}: ${generateResult.body.substring(0, 300)}`);
-          }
-          // ok response but not JSON — might be CF challenge HTML
-          throw new Error(`Perchance returned non-JSON (HTTP ${generateResult.status}): ${generateResult.body.substring(0, 300)}`);
-        }
-      } else {
-        throw new Error(`Perchance API Error ${generateResult.status}: ${generateResult.body.substring(0, 300)}`);
+    } catch (e) {
+      if (e.name === 'TimeoutError') {
+        throw new Error(
+          `Perchance did not respond within ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s. ` +
+          'The generation may still be running; check: perchance-chat serve status'
+        );
       }
-
-      if (isHttp429 || isJsonRateLimit) {
-        if (attempt < maxRetries - 1) {
-          const waitSec = 15 + (attempt * 10); // 15s, 25s, 35s
-          console.log(`[Perchance] Rate limited (attempt ${attempt + 1}/${maxRetries}), waiting ${waitSec}s...`);
-          await new Promise(r => setTimeout(r, waitSec * 1000));
-          continue;
-        }
-        throw new Error('Perchance rate limit — the service is busy. Wait ~30 seconds and try again.');
-      }
-
-      console.log(`[Perchance] Generate response (HTTP ${generateResult.status}): ${generateResult.body.substring(0, 300)}`);
-
-      if (generateData.status === 'invalid_key') {
-        if (!invalidKeyRetried) {
-          invalidKeyRetried = true;
-          console.log('[Perchance] Key rejected, attempting re-extraction...');
-          const freshKey = await extractPerchanceKey(store);
-          if (freshKey) {
-            userKey = freshKey;
-            generationsSinceKeyRefresh = 0;
-            generateUrl.searchParams.set('userKey', userKey);
-            continue;
-          }
-        }
-        // Second failure or no fresh key available — wipe and throw
-        store.set('perchanceUserKey', '');
-        store.set('perchanceKeyAcquiredAt', 0);
-        throw new Error(`Perchance key rejected by API. Response: ${JSON.stringify(generateData)}`);
-      }
-
-      break;
+      throw new Error(
+        `Cannot reach the Perchance local API at ${getApiUrl(store)}. ` +
+        'Start it with: perchance-chat serve start'
+      );
     }
 
-    lastGenerationTime = Date.now();
-    generationsSinceKeyRefresh++;
-
-    if (!generateData.imageId) {
-      throw new Error('No image ID in Perchance response: ' + JSON.stringify(generateData));
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw describeHttpError(res.status, text, res.headers.get('retry-after'));
     }
 
-    // Step 2: Download the generated image (via browser)
-    const downloadUrl = `https://image-generation.perchance.org/api/downloadTemporaryImage?imageId=${encodeURIComponent(generateData.imageId)}`;
-    const base64 = await browserFetchBase64(downloadUrl);
+    const payload = await res.json();
+    const b64 = payload?.data?.[0]?.b64_json;
+    if (!b64) {
+      throw new Error(`Perchance returned no image data: ${JSON.stringify(payload).slice(0, 300)}`);
+    }
 
-    console.log('[Perchance] Image generated successfully');
-    return `data:image/jpeg;base64,${base64}`;
+    const buf = Buffer.from(b64, 'base64');
+    console.log(`${LOG_PREFIX} Image generated successfully (${buf.length} bytes)`);
+    return `data:${sniffMime(buf)};base64,${b64}`;
   }
 };
