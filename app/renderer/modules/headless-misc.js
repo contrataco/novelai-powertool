@@ -475,6 +475,4 @@ export function init(deps) {
     });
   }
 
-  // Expose for inline onclick handlers
-  window.selectHistorySnapshot = selectHistorySnapshot;
 }
