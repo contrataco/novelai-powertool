@@ -19,19 +19,6 @@ Thumbs.db
 .env
 .env.local
 
-# Claude Code config
-CLAUDE.md
-CLAUDE.local.md
-.claude/
-
-# AI dev tooling
-.claude-dev-helper/
-.plugin-config/
-.superpowers/
-.junie/
-AGENTS.md
-docs/superpowers/brainstorm/
-
 # Logs
 *.log
 npm-debug.log*
