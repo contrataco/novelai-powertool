@@ -154,24 +154,43 @@ async function refreshStoryIdentity(): Promise<void> {
 async function updateLorebookEntry(rawEntry: any, updates: Record<string, any>): Promise<boolean> {
   const entryId = rawEntry.id;
 
-  // Strategy 1: updateEntry API
-  try {
-    await (api.v1.lorebook as any).updateEntry(entryId, updates);
+  // Split updates into basic (accepted by updateEntry API) vs advanced (need direct mutation)
+  const ADVANCED_KEYS = new Set(['searchRange', 'forceActivation', 'keyRelative', 'nonStoryActivatable',
+    'budgetPriority', 'contextConfig', 'loreBias', 'contextSize']);
+  const basicUpdates: Record<string, any> = {};
+  const advancedUpdates: Record<string, any> = {};
+  for (const [key, value] of Object.entries(updates)) {
+    if (ADVANCED_KEYS.has(key)) advancedUpdates[key] = value;
+    else basicUpdates[key] = value;
+  }
+
+  let basicOk = Object.keys(basicUpdates).length === 0; // vacuously true if no basic fields
+
+  // Strategy 1: updateEntry API for basic fields only
+  if (!basicOk) {
+    try {
+      await (api.v1.lorebook as any).updateEntry(entryId, basicUpdates);
+      basicOk = true;
+    } catch (_) {}
+  }
+
+  // Strategy 2: Direct mutation for basic (if Strategy 1 failed) + advanced fields
+  const mutationFields = basicOk ? advancedUpdates : updates;
+  if (Object.keys(mutationFields).length > 0) {
+    try {
+      for (const [key, value] of Object.entries(mutationFields)) {
+        rawEntry[key] = value;
+      }
+      if (typeof rawEntry.save === 'function') {
+        await rawEntry.save();
+        api.v1.log(`${LOG_PREFIX} Updated ${rawEntry.displayName} (api:${basicOk}, mutation:${Object.keys(mutationFields).join(',')})`);
+        return true;
+      }
+    } catch (_) {}
+  } else if (basicOk) {
     api.v1.log(`${LOG_PREFIX} Updated via updateEntry: ${rawEntry.displayName}`);
     return true;
-  } catch (_) {}
-
-  // Strategy 2: Direct mutation + save
-  try {
-    for (const [key, value] of Object.entries(updates)) {
-      rawEntry[key] = value;
-    }
-    if (typeof rawEntry.save === 'function') {
-      await rawEntry.save();
-      api.v1.log(`${LOG_PREFIX} Updated via mutation: ${rawEntry.displayName}`);
-      return true;
-    }
-  } catch (_) {}
+  }
 
   // Strategy 3: Delete + recreate (preserve advanced fields)
   try {
@@ -184,9 +203,7 @@ async function updateLorebookEntry(rawEntry: any, updates: Record<string, any>):
     };
     const finalCategory = updates.category ?? rawEntry.category;
     if (finalCategory) recreated.category = finalCategory;
-    const advancedKeys = ['searchRange', 'forceActivation', 'keyRelative', 'nonStoryActivatable',
-      'budgetPriority', 'contextConfig', 'loreBias', 'contextSize'];
-    for (const key of advancedKeys) {
+    for (const key of ADVANCED_KEYS) {
       const val = updates[key] ?? rawEntry[key];
       if (val !== undefined) recreated[key] = val;
     }
