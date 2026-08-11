@@ -1416,6 +1416,8 @@ function migrateLitrpgState(state) {
     for (const i of (char.inventory || [])) {
       if (i.rarity === undefined) i.rarity = null;
     }
+    // Relationships: structured inter-character edges
+    if (!Array.isArray(char.relationships)) char.relationships = [];
   }
 }
 
@@ -2253,6 +2255,85 @@ async function r3_classifyParty(ctx) {
   consolidateFactions(state);
 }
 
+// --- Relationship type classification keywords ---
+const REL_FAMILY_KEYWORDS = new Set([
+  'sister', 'brother', 'father', 'mother', 'daughter', 'son', 'wife', 'husband',
+  'parent', 'child', 'sibling', 'cousin', 'uncle', 'aunt', 'nephew', 'niece',
+  'grandfather', 'grandmother', 'grandson', 'granddaughter', 'spouse', 'fiancé',
+  'fiancée', 'twin', 'half-brother', 'half-sister', 'stepfather', 'stepmother',
+]);
+const REL_RIVAL_KEYWORDS = new Set([
+  'rival', 'enemy', 'nemesis', 'antagonist', 'adversary', 'opponent', 'foe',
+]);
+const REL_ALLY_KEYWORDS = new Set([
+  'ally', 'friend', 'companion', 'partner', 'comrade', 'confidant',
+]);
+const REL_MENTOR_KEYWORDS = new Set([
+  'mentor', 'student', 'teacher', 'apprentice', 'master', 'disciple', 'pupil',
+]);
+
+function classifyRelationshipType(label) {
+  const lower = label.toLowerCase();
+  const words = lower.split(/[\s,\-/]+/);
+  for (const w of words) {
+    if (REL_FAMILY_KEYWORDS.has(w)) return 'family';
+    if (REL_RIVAL_KEYWORDS.has(w)) return 'rival';
+    if (REL_ALLY_KEYWORDS.has(w)) return 'ally';
+    if (REL_MENTOR_KEYWORDS.has(w)) return 'mentor';
+  }
+  return 'other';
+}
+
+/**
+ * Pass R3c: Extract structured inter-character relationships from lorebook entry text.
+ * Zero LLM calls — pure text parsing of Relationships/Family fields.
+ */
+function r3c_extractInterCharRelationships(ctx) {
+  const { state, characterEntries } = ctx;
+  const LINE_RE = /^-\s+(.+?):\s+(.+)$/;
+  let totalEdges = 0;
+
+  for (const entry of characterEntries) {
+    const charId = fuzzyMatchCharacter(entry.displayName, state.characters);
+    if (!charId) continue;
+    const char = state.characters[charId];
+
+    const relText = extractField(entry.text, 'Relationships') || '';
+    const famText = extractField(entry.text, 'Family') || '';
+
+    const edges = [];
+    const seenTargets = new Set();
+
+    for (const [fieldText, fieldSource] of [[relText, 'relationship'], [famText, 'family']]) {
+      for (const line of fieldText.split('\n')) {
+        const m = line.trim().match(LINE_RE);
+        if (!m) continue;
+        const targetName = m[1].trim();
+        const label = m[2].trim();
+        if (!targetName || !label) continue;
+
+        const targetKey = targetName.toLowerCase();
+        if (seenTargets.has(targetKey)) continue;
+        seenTargets.add(targetKey);
+
+        const targetId = fuzzyMatchCharacter(targetName, state.characters);
+        // Skip self-references
+        if (targetId === charId) continue;
+
+        const type = fieldSource === 'family' ? 'family' : classifyRelationshipType(label);
+        edges.push({ targetName, targetId, type, label });
+      }
+    }
+
+    char.relationships = edges;
+    totalEdges += edges.length;
+  }
+
+  if (totalEdges > 0) {
+    console.log(`${LOG_PREFIX} R3c: Extracted ${totalEdges} inter-character relationships`);
+  }
+}
+
 /**
  * Pass R4: Lore Element Extraction (classes, equipment, factions, quests -> lore entries)
  */
@@ -2399,6 +2480,9 @@ async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, 
 
   // --- R3: Party & NPC Classification ---
   await r3_classifyParty(ctx);
+
+  // --- R3c: Extract structured inter-character relationships (no LLM) ---
+  r3c_extractInterCharRelationships(ctx);
 
   // --- R4: Lore Element Extraction ---
   await r4_extractLoreElements(ctx);

@@ -7,6 +7,14 @@ const RINGS = {
   hostile:  { r: 330, color: '#e57373', edgeColor: '#e57373' },
 };
 
+const RELATIONSHIP_STYLES = {
+  family: { color: '#ffd54f', dash: null,  width: 1.2 },
+  ally:   { color: '#81c784', dash: null,  width: 1 },
+  rival:  { color: '#e57373', dash: '4 3', width: 1.2 },
+  mentor: { color: '#4fc3f7', dash: '2 4', width: 1 },
+  other:  { color: '#888',    dash: '2 2', width: 0.8 },
+};
+
 let panAbort = null;
 
 const CENTER_X = 300;
@@ -75,6 +83,46 @@ function buildFactionHubs(nodes) {
     hubs.push({ name, cx: nx, cy: ny, members });
   }
   return hubs;
+}
+
+function buildInterCharEdges(nodes) {
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const seen = new Set();
+  const edges = [];
+
+  for (const node of nodes) {
+    const rels = node.char.relationships || [];
+    for (const rel of rels) {
+      if (!rel.targetId) continue;
+      const target = nodeMap.get(rel.targetId);
+      if (!target) continue;
+
+      // Deduplicate bidirectional edges (A->B and B->A become one)
+      const pairKey = [node.id, rel.targetId].sort().join('|');
+      if (seen.has(pairKey)) continue;
+      seen.add(pairKey);
+
+      edges.push({
+        source: node,
+        target,
+        type: rel.type || 'other',
+        label: rel.label || '',
+      });
+    }
+  }
+  return edges;
+}
+
+function bezierPath(x1, y1, x2, y2, offset) {
+  const mx = (x1 + x2) / 2;
+  const my = (y1 + y2) / 2;
+  // Perpendicular offset for the control point
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const cx = mx + (-dy / len) * offset;
+  const cy = my + (dx / len) * offset;
+  return `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
 }
 
 function escapeHtml(str) {
@@ -167,6 +215,33 @@ export function renderRelationshipGraph(container, litrpgState) {
     }
   }
 
+  // --- Inter-character relationship edges (curved) ---
+  const interEdgeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  interEdgeGroup.setAttribute('id', 'rg-inter-edges');
+  g.appendChild(interEdgeGroup);
+
+  const interEdges = buildInterCharEdges(nodes);
+  for (let i = 0; i < interEdges.length; i++) {
+    const edge = interEdges[i];
+    const style = RELATIONSHIP_STYLES[edge.type] || RELATIONSHIP_STYLES.other;
+    // Alternate offset direction to reduce overlaps
+    const offset = 30 * (i % 2 === 0 ? 1 : -1);
+    const d = bezierPath(edge.source.x, edge.source.y, edge.target.x, edge.target.y, offset);
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', style.color);
+    path.setAttribute('stroke-width', String(style.width));
+    path.setAttribute('stroke-opacity', '0.5');
+    if (style.dash) path.setAttribute('stroke-dasharray', style.dash);
+    path.dataset.sourceId = edge.source.id;
+    path.dataset.targetId = edge.target.id;
+    path.dataset.label = `${edge.source.name} → ${edge.target.name}: ${edge.label}`;
+    path.classList.add('rg-inter-edge');
+    interEdgeGroup.appendChild(path);
+  }
+
   // --- Character nodes ---
   const nodeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   nodeGroup.setAttribute('id', 'rg-nodes');
@@ -256,6 +331,14 @@ export function renderRelationshipGraph(container, litrpgState) {
         c.faction ? `Faction: ${escapeHtml(c.faction)}` : null,
         c.npcRelationship ? escapeHtml(c.npcRelationship) : null,
       ].filter(Boolean);
+      const rels = (c.relationships || []).filter(r => r.targetId);
+      if (rels.length > 0) {
+        lines.push('<hr style="border-color:#333;margin:4px 0">');
+        for (const r of rels.slice(0, 4)) {
+          lines.push(`<small>${escapeHtml(r.targetName)}: ${escapeHtml(r.label)}</small>`);
+        }
+        if (rels.length > 4) lines.push(`<small>...+${rels.length - 4} more</small>`);
+      }
       tooltip.innerHTML = lines.join('<br>');
       tooltip.classList.remove('u-hidden');
 
@@ -276,6 +359,20 @@ export function renderRelationshipGraph(container, litrpgState) {
     });
   }
 
+  // --- Interaction: hover tooltip on inter-character edges ---
+  for (const path of interEdgeGroup.querySelectorAll('.rg-inter-edge')) {
+    path.addEventListener('mouseenter', (e) => {
+      tooltip.innerHTML = escapeHtml(e.currentTarget.dataset.label);
+      tooltip.classList.remove('u-hidden');
+      const rect = container.getBoundingClientRect();
+      tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
+      tooltip.style.top = (e.clientY - rect.top - 12) + 'px';
+    });
+    path.addEventListener('mouseleave', () => {
+      tooltip.classList.add('u-hidden');
+    });
+  }
+
   // --- Interaction: click to highlight node's edges ---
   let selectedNodeId = null;
   for (const circle of nodeGroup.querySelectorAll('.rg-node')) {
@@ -283,17 +380,17 @@ export function renderRelationshipGraph(container, litrpgState) {
       e.stopPropagation();
       const nodeId = e.currentTarget.dataset.nodeId;
       if (selectedNodeId === nodeId) {
-        clearHighlight(edgeGroup, nodeGroup);
+        clearHighlight(edgeGroup, nodeGroup, interEdgeGroup);
         selectedNodeId = null;
       } else {
         selectedNodeId = nodeId;
-        highlightNode(nodeId, edgeGroup, nodeGroup);
+        highlightNode(nodeId, edgeGroup, nodeGroup, interEdgeGroup);
       }
     });
   }
   svg.addEventListener('click', () => {
     if (selectedNodeId) {
-      clearHighlight(edgeGroup, nodeGroup);
+      clearHighlight(edgeGroup, nodeGroup, interEdgeGroup);
       selectedNodeId = null;
     }
   });
@@ -335,7 +432,7 @@ function applyTransform(g, translate, scale) {
   g.setAttribute('transform', `translate(${translate.x},${translate.y}) scale(${scale})`);
 }
 
-function highlightNode(nodeId, edgeGroup, nodeGroup) {
+function highlightNode(nodeId, edgeGroup, nodeGroup, interEdgeGroup) {
   for (const el of edgeGroup.querySelectorAll('.rg-edge, .rg-edge-label')) {
     if (el.dataset.nodeId === nodeId) {
       el.setAttribute('stroke-opacity', '1');
@@ -348,9 +445,15 @@ function highlightNode(nodeId, edgeGroup, nodeGroup) {
   for (const el of nodeGroup.querySelectorAll('.rg-node')) {
     el.setAttribute('opacity', el.dataset.nodeId === nodeId ? '1' : '0.3');
   }
+  if (interEdgeGroup) {
+    for (const el of interEdgeGroup.querySelectorAll('.rg-inter-edge')) {
+      const involved = el.dataset.sourceId === nodeId || el.dataset.targetId === nodeId;
+      el.setAttribute('stroke-opacity', involved ? '0.9' : '0.08');
+    }
+  }
 }
 
-function clearHighlight(edgeGroup, nodeGroup) {
+function clearHighlight(edgeGroup, nodeGroup, interEdgeGroup) {
   for (const el of edgeGroup.querySelectorAll('.rg-edge')) {
     el.setAttribute('stroke-opacity', '0.4');
   }
@@ -359,6 +462,11 @@ function clearHighlight(edgeGroup, nodeGroup) {
   }
   for (const el of nodeGroup.querySelectorAll('.rg-node')) {
     el.setAttribute('opacity', '1');
+  }
+  if (interEdgeGroup) {
+    for (const el of interEdgeGroup.querySelectorAll('.rg-inter-edge')) {
+      el.setAttribute('stroke-opacity', '0.5');
+    }
   }
 }
 
