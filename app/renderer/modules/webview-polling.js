@@ -677,7 +677,7 @@ export function init() {
       // Fallback: if URL detection failed but we have a pending story ID,
       // check if ProseMirror appeared (meaning the story editor loaded).
       // NovelAI strips ?id= from the URL, so URL detection is unreliable.
-      else if (pendingStoryId && !state.currentStoryId) {
+      else if (pendingStoryId && (!state.currentStoryId || state._loadingStoryId)) {
         const hasPM = await webview.executeJavaScript(`!!document.querySelector('.ProseMirror')`).catch(() => false);
         if (hasPM) {
           const title = await webview.executeJavaScript(`

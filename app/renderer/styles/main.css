@@ -860,6 +860,7 @@
       flex: 1;
       display: none;
       background: var(--bg-base);
+      min-width: 0;
     }
 
     /* Command Palette */
@@ -1067,12 +1068,15 @@
       padding-bottom: 50vh;
     }
 
-    .main-container.webview-active .editor-container,
+    .main-container.webview-active {
+      display: none;
+    }
+
     .main-container.showing-story-selector .editor-container {
       display: none;
     }
 
-    .main-container.webview-active .webview-container {
+    .main-container.webview-active ~ .webview-container {
       display: block;
     }
 

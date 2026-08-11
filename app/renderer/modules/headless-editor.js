@@ -194,7 +194,7 @@ async function scrollToLoadAll() {
   // Temporarily give the webview real dimensions — in headless mode it has
   // display:none / 0px viewport, so ProseMirror's lazy loader never triggers.
   const wvContainer = document.querySelector('.webview-container');
-  const wasHidden = wvContainer && wvContainer.style.display !== 'block';
+  const wasHidden = wvContainer && getComputedStyle(wvContainer).display === 'none';
   if (wasHidden && wvContainer) {
     // Make webview visible ON-SCREEN (behind our overlay at z-index 9000)
     // so Chromium actually renders it and NovelAI's scroll handlers trigger.
@@ -325,15 +325,11 @@ async function scrollToLoadAll() {
     console.error('[HeadlessSync] Scroll-to-load error:', e);
     if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'Partial Load';
   } finally {
-    // Restore webview container to hidden
+    // Clear all inline styles so CSS classes control visibility again.
+    // NEVER set inline display:none — it overrides the CSS sibling rule
+    // .main-container.webview-active ~ .webview-container { display: block }
     if (wasHidden && wvContainer) {
-      wvContainer.style.display = 'none';
-      wvContainer.style.position = '';
-      wvContainer.style.left = '';
-      wvContainer.style.width = '';
-      wvContainer.style.height = '';
-      wvContainer.style.opacity = '';
-      wvContainer.style.pointerEvents = '';
+      wvContainer.style.cssText = '';
     }
   }
 }
@@ -601,7 +597,9 @@ export function init() {
       console.log('[HeadlessSync] Pre-filling editor with cached text:', cached.char_count, 'chars');
       storyEditor.innerText = cached.text;
       lastKnownWebviewText = cached.text;
+      lastEditorTextForAnnotation = cached.text;
       updateStatusMetrics();
+      scheduleAnnotation();
     }
   });
 
@@ -652,7 +650,9 @@ export function init() {
           console.log('[HeadlessSync] Timeout — using partial text:', partialText.length, 'chars');
           storyEditor.innerText = partialText;
           lastKnownWebviewText = partialText;
+          lastEditorTextForAnnotation = partialText;
           updateStatusMetrics();
+          scheduleAnnotation();
           window.powertool.storyTextSet(storyId, partialText, 'partial');
           finishStoryLoad(storyId);
         } else {
@@ -690,7 +690,9 @@ export function init() {
           console.log('[HeadlessSync] Full story loaded:', fullText.length, 'chars');
           storyEditor.innerText = fullText;
           lastKnownWebviewText = fullText;
+          lastEditorTextForAnnotation = fullText;
           updateStatusMetrics();
+          scheduleAnnotation();
           window.powertool.storyTextSet(storyId, fullText, 'scroll-to-load');
           finishStoryLoad(storyId);
           await imageEmbed.loadStoryImages(state.currentStoryId);
