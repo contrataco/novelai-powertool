@@ -5,6 +5,7 @@ import {
   imgWidth, imgHeight,
   perchanceCheckBtn, perchanceKeyDot, perchanceKeyText, perchanceApiUrlInput,
   perchanceArtStyleSelect, perchanceGuidanceSlider, perchanceGuidanceValue,
+  perchanceCliPathInput, perchanceServerDetails, perchanceServerBtns,
   veniceKeyDot, veniceKeyText, veniceApiKeyInput, saveVeniceKeyBtn,
   veniceModelSelect, veniceStepsInput, veniceCfgScaleInput,
   veniceStylePresetSelect, veniceSafeModeCheckbox, veniceHideWatermarkCheckbox,
@@ -221,26 +222,89 @@ function renderPerchanceStatus(status) {
     perchanceKeyDot.className = 'dot inactive';
     perchanceKeyText.textContent =
       `Server not reachable at ${status?.url || 'the configured URL'}` +
-      `${status?.error ? ` (${status.error})` : ''} — run: perchance-chat serve start`;
+      `${status?.error ? ` (${status.error})` : ''} - use Start below`;
     return;
   }
   if (!status.configured) {
     perchanceKeyDot.className = 'dot inactive';
     perchanceKeyText.textContent =
-      'Server up, but no image generator published — run: perchance-chat publish --image';
+      'Server up, but no image generator published - run: perchance-chat publish --image';
     return;
   }
   perchanceKeyDot.className = 'dot active';
   perchanceKeyText.textContent =
     `Ready${status.generator ? ` (generator ${status.generator})` : ''}` +
-    `${status.busy ? ' — busy generating' : ''}`;
+    `${status.busy ? ' - busy generating' : ''}`;
+}
+
+/**
+ * Paint the server lifecycle block from a perchanceServerStatus() result.
+ *
+ * One fact per line rather than a label/value grid: the settings modal is read
+ * magnified, where anything that puts a label and its value at opposite ends
+ * of a wide row costs a horizontal scan per fact.
+ */
+function renderPerchanceServer(status) {
+  if (!perchanceServerDetails) return;
+  const lines = [];
+  let cls = 'perchance-server-details';
+
+  if (!status) {
+    perchanceServerDetails.className = cls;
+    perchanceServerDetails.textContent = 'Not checked';
+    return;
+  }
+
+  if (status.running) {
+    cls += ' is-running';
+    lines.push(`Running (pid ${status.pid ?? 'unknown'})`);
+    if (status.uptimeSeconds != null) {
+      lines.push(`Up for ${formatUptime(status.uptimeSeconds)}`);
+    }
+    if (status.managedBy) lines.push(`Managed by: ${status.managedBy}`);
+    if (status.imageConfigured === false) {
+      lines.push('No image generator published yet');
+    }
+    if (status.adminUnavailable) lines.push(status.error);
+  } else {
+    cls += ' is-error';
+    lines.push('Not running');
+    if (status.error) lines.push(status.error);
+  }
+
+  if (!status.cliPath) {
+    cls = cls.replace(' is-running', '') + ' is-error';
+    lines.push('perchance-chat command not found - set its path below');
+  }
+
+  perchanceServerDetails.className = cls;
+  perchanceServerDetails.textContent = lines.join('\n');
+}
+
+function formatUptime(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** Fetch and paint both Perchance status blocks together. */
+async function refreshPerchanceServer() {
+  const [server, image] = await Promise.all([
+    window.powertool.perchanceServerStatus(),
+    window.powertool.getPerchanceStatus(),
+  ]);
+  renderPerchanceServer(server);
+  renderPerchanceStatus(image);
+  return server;
 }
 
 // --- Load all provider settings into the modal ---
 
 export async function loadProviderSettings(effectiveProvider) {
-  const [perchanceStatus, perchanceSettings, veniceSettings, veniceKeyStatus, puterSettings] = await Promise.all([
+  const [perchanceStatus, perchanceServer, perchanceSettings, veniceSettings, veniceKeyStatus, puterSettings] = await Promise.all([
     window.powertool.getPerchanceStatus(),
+    window.powertool.perchanceServerStatus(),
     window.powertool.getPerchanceSettings(),
     window.powertool.getVeniceSettings(),
     window.powertool.getVeniceApiKeyStatus(),
@@ -253,9 +317,11 @@ export async function loadProviderSettings(effectiveProvider) {
 
   // Perchance local API status
   renderPerchanceStatus(perchanceStatus);
+  renderPerchanceServer(perchanceServer);
 
   // Perchance settings
   perchanceApiUrlInput.value = perchanceSettings.apiUrl || 'http://127.0.0.1:8730';
+  perchanceCliPathInput.value = perchanceSettings.cliPath || '';
   perchanceArtStyleSelect.value = perchanceSettings.artStyle || 'no-style';
   perchanceGuidanceSlider.value = perchanceSettings.guidanceScale || 7;
   perchanceGuidanceValue.textContent = perchanceSettings.guidanceScale || 7;
@@ -347,6 +413,7 @@ export async function saveProviderSettings() {
     artStyle: perchanceArtStyleSelect.value,
     guidanceScale: parseFloat(perchanceGuidanceSlider.value),
     apiUrl: perchanceApiUrlInput.value.trim() || 'http://127.0.0.1:8730',
+    cliPath: perchanceCliPathInput.value.trim(),
   });
 
   // Venice AI settings
@@ -399,13 +466,53 @@ export function initProviderEvents() {
       await window.powertool.setPerchanceSettings({
         apiUrl: perchanceApiUrlInput.value.trim() || 'http://127.0.0.1:8730',
       });
-      renderPerchanceStatus(await window.powertool.getPerchanceStatus());
+      await refreshPerchanceServer();
     } catch (e) {
       perchanceKeyDot.className = 'dot inactive';
       perchanceKeyText.textContent = 'Error: ' + e.message;
     } finally {
       perchanceCheckBtn.disabled = false;
     }
+  });
+
+  // Perchance server lifecycle. Delegated onto each button rather than one
+  // listener per action, and every button is disabled for the whole run: a
+  // Stop fired while a Start is still waiting for the port would race it.
+  perchanceServerBtns.forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.action;
+      perchanceServerBtns.forEach((b) => { b.disabled = true; });
+      const previous = btn.textContent;
+      btn.textContent = action === 'stop' ? 'Stopping...' : `${previous}ing...`;
+      if (perchanceServerDetails) {
+        perchanceServerDetails.className = 'perchance-server-details';
+        perchanceServerDetails.textContent = `Running ${action}...`;
+      }
+      try {
+        // Persist the path and URL first, so the action uses what the fields
+        // say rather than what was saved the last time the modal was closed.
+        await window.powertool.setPerchanceSettings({
+          apiUrl: perchanceApiUrlInput.value.trim() || 'http://127.0.0.1:8730',
+          cliPath: perchanceCliPathInput.value.trim(),
+        });
+        const res = await window.powertool.perchanceServerControl(action);
+        if (!res.ok) {
+          showToast(res.error || `Server ${action} failed`, 6000, 'error');
+        } else {
+          showToast(`Server ${action} completed`, 3000, 'success');
+        }
+        await refreshPerchanceServer();
+        if (!res.ok && perchanceServerDetails && res.output) {
+          perchanceServerDetails.className = 'perchance-server-details is-error';
+          perchanceServerDetails.textContent = res.output;
+        }
+      } catch (e) {
+        showToast(`Server ${action} failed: ${e.message}`, 6000, 'error');
+      } finally {
+        btn.textContent = previous;
+        perchanceServerBtns.forEach((b) => { b.disabled = false; });
+      }
+    });
   });
 
   // Venice AI key save

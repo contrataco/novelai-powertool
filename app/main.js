@@ -68,6 +68,10 @@ const store = new Store({
     perchanceArtStyle: { type: 'string', default: 'no-style' },
     perchanceGuidanceScale: { type: 'number', default: 7 },
     perchanceApiUrl: { type: 'string', default: 'http://127.0.0.1:8730' },
+    // Empty means "look in the usual install locations". Set only when
+    // perchance-chat lives somewhere unusual - it is never resolved off PATH,
+    // which an app launched from Finder does not meaningfully have.
+    perchanceCliPath: { type: 'string', default: '' },
     veniceApiKey: { type: 'string', default: '' },
     veniceModel: { type: 'string', default: 'flux-2-max' },
     veniceSteps: { type: 'number', default: 25 },
@@ -688,6 +692,16 @@ ipcMain.handle('get-perchance-status', async () => {
 });
 
 // IPC Handlers — Perchance settings
+// Lifecycle of the local perchance-chat server, so the settings UI can show
+// whether it is up and act on it without the user going to a terminal.
+ipcMain.handle('perchance:server-status', async () => {
+  return perchanceProvider.getServerStatus(store);
+});
+
+ipcMain.handle('perchance:server-control', async (event, action) => {
+  return perchanceProvider.serverControl(store, action);
+});
+
 ipcMain.handle('get-perchance-art-styles', () => {
   return perchanceProvider.getArtStyles();
 });
@@ -697,6 +711,7 @@ ipcMain.handle('get-perchance-settings', () => {
     artStyle: store.get('perchanceArtStyle') || 'no-style',
     guidanceScale: store.get('perchanceGuidanceScale') || 7,
     apiUrl: store.get('perchanceApiUrl') || 'http://127.0.0.1:8730',
+    cliPath: store.get('perchanceCliPath') || '',
   };
 });
 
@@ -704,6 +719,7 @@ ipcMain.handle('set-perchance-settings', (event, settings) => {
   if (settings.artStyle !== undefined) store.set('perchanceArtStyle', settings.artStyle);
   if (settings.guidanceScale !== undefined) store.set('perchanceGuidanceScale', settings.guidanceScale);
   if (settings.apiUrl !== undefined) store.set('perchanceApiUrl', settings.apiUrl);
+  if (settings.cliPath !== undefined) store.set('perchanceCliPath', settings.cliPath);
   return { success: true };
 });
 

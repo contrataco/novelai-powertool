@@ -14,7 +14,17 @@
  * See ~/git/perchance-experiment/docs/integrating.md for the contract.
  */
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFile } = require('child_process');
+
 const LOG_PREFIX = '[Perchance]';
+
+// Required on every /admin call on the local API. The value is ignored; the
+// header exists to force a CORS preflight the server never answers, so a web
+// page cannot reach /admin/stop. Not a secret - do not treat it as one.
+const ADMIN_HEADER = 'X-Perchance-Admin';
 
 // Electron's main-process fetch can fail resolving `localhost` over IPv6,
 // so the default is spelled as a loopback literal.
@@ -208,6 +218,52 @@ function describeHttpError(status, bodyText, retryAfter) {
   }
 }
 
+/**
+ * Absolute path to the perchance-chat CLI, or null if it cannot be found.
+ *
+ * Never resolved off PATH. An Electron app launched from Finder inherits a
+ * minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin) that contains none of the
+ * places this gets installed, so `spawn('perchance-chat')` works when the app
+ * is started from a terminal and fails when it is started normally - the worst
+ * kind of bug to chase. An explicit override wins so a non-standard install is
+ * a setting rather than a patch.
+ */
+function resolveCli(store) {
+  const configured = (store.get('perchanceCliPath') || '').trim();
+  if (configured) {
+    try {
+      fs.accessSync(configured, fs.constants.X_OK);
+      return configured;
+    } catch (_) {
+      return null;
+    }
+  }
+  const home = os.homedir();
+  const candidates = [
+    '/opt/homebrew/bin/perchance-chat',
+    '/usr/local/bin/perchance-chat',
+    path.join(home, '.local', 'bin', 'perchance-chat'),
+    path.join(home, 'Library', 'Python', '3.14', 'bin', 'perchance-chat'),
+  ];
+  for (const c of candidates) {
+    try {
+      fs.accessSync(c, fs.constants.X_OK);
+      return c;
+    } catch (_) { /* try the next one */ }
+  }
+  return null;
+}
+
+/** Run one `perchance-chat serve <action>` and resolve with its outcome. */
+function runCli(cliPath, args, timeoutMs) {
+  return new Promise((resolve) => {
+    execFile(cliPath, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
+      const out = `${stdout || ''}${stderr || ''}`.trim();
+      resolve({ ok: !err, output: out, error: err ? err.message : null });
+    });
+  });
+}
+
 module.exports = {
   id: 'perchance',
   name: 'Perchance (Local API)',
@@ -284,6 +340,90 @@ module.exports = {
         url,
       };
     }
+  },
+
+  /**
+   * Server lifecycle state, for the settings UI.
+   *
+   * Status comes over HTTP because /admin/status is richer than the CLI's
+   * printed report and costs no process spawn. When the server is down there
+   * is nothing to ask, so the answer is simply "not running" plus whether the
+   * CLI needed to start it can be found at all - which is the actionable part.
+   */
+  async getServerStatus(store) {
+    const url = getApiUrl(store);
+    const cli = resolveCli(store);
+    try {
+      const res = await fetch(`${url}/admin/status`, {
+        headers: { [ADMIN_HEADER]: '1' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const s = await res.json();
+        return {
+          running: true,
+          url,
+          cliPath: cli,
+          pid: s.pid,
+          uptimeSeconds: s.uptime_seconds,
+          managedBy: s.managed_by,
+          canRestartOverHttp: !!s.is_detached_server,
+          generator: s.generator,
+          log: s.log,
+          config: s.config,
+          imageConfigured: !!s.image?.configured,
+          busy: !!s.busy || !!s.image?.busy,
+        };
+      }
+      if (res.status === 404) {
+        // Listening, but an older build without /admin. Everything else still
+        // works, so say so precisely instead of reporting the server as down.
+        return {
+          running: true,
+          url,
+          cliPath: cli,
+          adminUnavailable: true,
+          error: 'this server predates /admin - restart it to pick up the new build',
+        };
+      }
+      return { running: true, url, cliPath: cli, error: `HTTP ${res.status}` };
+    } catch (e) {
+      return {
+        running: false,
+        url,
+        cliPath: cli,
+        error: e.name === 'TimeoutError' ? 'timed out' : e.message,
+      };
+    }
+  },
+
+  /**
+   * start / stop / restart, driven through the CLI rather than /admin.
+   *
+   * The CLI is the right tool even though two of the three have HTTP
+   * equivalents: `start` has no HTTP form at all (nothing is listening to
+   * answer it), and the CLI's start waits for the port to accept connections
+   * before reporting success, so "started" means started rather than "a
+   * process existed for a moment". Driving all three the same way also means
+   * one code path to be wrong, instead of two that can disagree.
+   */
+  async serverControl(store, action) {
+    if (!['start', 'stop', 'restart', 'status'].includes(action)) {
+      return { ok: false, error: `unknown action '${action}'` };
+    }
+    const cliPath = resolveCli(store);
+    if (!cliPath) {
+      return {
+        ok: false,
+        error:
+          'Could not find the perchance-chat command. Set its full path in ' +
+          'Perchance settings (find it with `which perchance-chat`).',
+      };
+    }
+    // start/restart wait for the port, which includes a Python process boot.
+    const timeoutMs = action === 'stop' ? 30000 : 90000;
+    const res = await runCli(cliPath, ['serve', action], timeoutMs);
+    return { ...res, cliPath, action };
   },
 
   async generate(prompt, negativePrompt, store, options = {}) {

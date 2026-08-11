@@ -1316,7 +1316,7 @@
           <label>Image Generation Provider</label>
           <select id="provider">
             <option value="novelai">NovelAI (requires API token)</option>
-            <option value="perchance">Perchance (free, local API, max 768px)</option>
+            <option value="perchance">Perchance (free, local API)</option>
             <option value="venice">Venice AI (API key)</option>
             <option value="puter">Puter.js (35+ models, no API key)</option>
           </select>
@@ -1358,12 +1358,31 @@
           <span id="perchanceKeyText">Not checked</span>
         </div>
         <button class="key-extract-btn" id="perchanceCheckBtn">Check Server</button>
+
+        <div class="form-group" style="margin-top: 12px;">
+          <label>Server</label>
+          <div class="perchance-server-actions">
+            <button class="perchance-server-btn" id="perchanceServerStartBtn" data-action="start">Start</button>
+            <button class="perchance-server-btn" id="perchanceServerStopBtn" data-action="stop">Stop</button>
+            <button class="perchance-server-btn" id="perchanceServerRestartBtn" data-action="restart">Restart</button>
+          </div>
+          <div id="perchanceServerDetails" class="perchance-server-details">Not checked</div>
+        </div>
+
         <div class="form-group" style="margin-top: 12px;">
           <label>Server URL</label>
           <input type="text" id="perchanceApiUrl" placeholder="http://127.0.0.1:8730" style="width:100%;font-family:monospace;font-size:12px;">
           <small style="color:#888;display:block;margin-top:4px;">
-            Started with <code>perchance-chat serve start</code>. Image generation
-            additionally needs <code>perchance-chat publish --image</code>, run once.
+            Image generation additionally needs
+            <code>perchance-chat publish --image</code>, run once.
+          </small>
+        </div>
+        <div class="form-group" style="margin-top: 8px;">
+          <label>perchance-chat path</label>
+          <input type="text" id="perchanceCliPath" placeholder="(found automatically)" style="width:100%;font-family:monospace;font-size:12px;">
+          <small style="color:#888;display:block;margin-top:4px;">
+            Only needed if the buttons above cannot find the command. Get it
+            with <code>which perchance-chat</code>.
           </small>
         </div>
         <div class="form-group" style="margin-top: 8px;">

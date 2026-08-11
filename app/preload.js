@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('powertool', {
 
   // Perchance
   getPerchanceStatus: () => ipcRenderer.invoke('get-perchance-status'),
+  perchanceServerStatus: () => ipcRenderer.invoke('perchance:server-status'),
+  perchanceServerControl: (action) => ipcRenderer.invoke('perchance:server-control', action),
   getPerchanceArtStyles: () => ipcRenderer.invoke('get-perchance-art-styles'),
   getPerchanceSettings: () => ipcRenderer.invoke('get-perchance-settings'),
   setPerchanceSettings: (settings) => ipcRenderer.invoke('set-perchance-settings', settings),

@@ -2631,6 +2631,42 @@
     .key-extract-btn:hover { background: var(--accent); }
     .key-extract-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* Perchance server controls.
+       Wraps rather than scrolls, and the status below is one fact per line:
+       a label/value pair spread across a wide row is exactly what a magnified
+       viewport makes expensive to read. */
+    .perchance-server-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .perchance-server-btn {
+      background: var(--bg-elevated);
+      border: none;
+      color: var(--text-primary);
+      padding: 8px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background var(--transition-default);
+    }
+
+    .perchance-server-btn:hover:not(:disabled) { background: var(--accent); }
+    .perchance-server-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .perchance-server-details {
+      margin-top: 8px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      white-space: pre-line;
+      word-break: break-word;
+    }
+
+    .perchance-server-details.is-error { color: #ff8a80; }
+    .perchance-server-details.is-running { color: #9ccc65; }
+
     .modal-buttons {
       display: flex;
       gap: 8px;
