@@ -16,7 +16,7 @@ import {
   loreEnrichOld, loreEnrichNew, loreEnrichAcceptBtn, loreEnrichEditBtn, loreEnrichRejectBtn,
   loreAutoScan, loreAutoUpdates, loreMinChars, loreMinCharsValue,
   loreTemp, loreTempValue, loreDetailLevel,
-  loreLlmSelect, loreOllamaSettings, loreOllamaModelSelect, loreOllamaRefreshBtn,
+  loreLlmSelect, loreNovelaiModelSettings, novelaiTextModelSelect, loreOllamaSettings, loreOllamaModelSelect, loreOllamaRefreshBtn,
   loreHybridToggle,
   loreScanMenu,
   startProgressiveScanBtn, pauseProgressiveScanBtn, cancelProgressiveScanBtn,
@@ -2285,10 +2285,14 @@ async function loadComprehensionState() {
 }
 
 // LLM indicator
-async function updateLlmIndicator(provider, model) {
-  const primary = provider === 'ollama'
-    ? 'Ollama ' + (model || 'mistral:7b')
-    : 'NovelAI GLM-4-6';
+async function updateLlmIndicator(provider, model, novelaiModel) {
+  let primary;
+  if (provider === 'ollama') {
+    primary = 'Ollama ' + (model || 'mistral:7b');
+  } else {
+    const nm = novelaiModel || novelaiTextModelSelect?.value || 'glm-4-6';
+    primary = nm === 'xialong' ? 'NovelAI Xialong' : 'NovelAI GLM-4-6';
+  }
 
   // Check if hybrid is enabled in settings and secondary is available
   const hybridEnabled = loreHybridToggle.checked;
@@ -2526,7 +2530,9 @@ export function init() {
       // LLM provider
       const llmConfig = await window.powertool.loreGetLlmProvider();
       loreLlmSelect.value = llmConfig.provider;
-      updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel);
+      if (novelaiTextModelSelect) novelaiTextModelSelect.value = llmConfig.novelaiTextModel || 'glm-4-6';
+      loreNovelaiModelSettings.classList.toggle('u-hidden', llmConfig.provider !== 'novelai');
+      updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel, llmConfig.novelaiTextModel);
       if (llmConfig.provider === 'ollama') {
         loreOllamaSettings.classList.remove('u-hidden');
         refreshOllamaModels();
@@ -2545,7 +2551,7 @@ export function init() {
   loreHybridToggle.addEventListener('change', async () => {
     saveLoreSettings();
     const llmConfig = await window.powertool.loreGetLlmProvider();
-    updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel);
+    updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel, llmConfig.novelaiTextModel);
   });
   loreMinChars.addEventListener('input', () => {
     loreMinCharsValue.textContent = loreMinChars.value;
@@ -2561,10 +2567,17 @@ export function init() {
   loreLlmSelect.addEventListener('change', async () => {
     const provider = loreLlmSelect.value;
     loreOllamaSettings.classList.toggle('u-hidden', provider !== 'ollama');
+    loreNovelaiModelSettings.classList.toggle('u-hidden', provider !== 'novelai');
     await window.powertool.loreSetLlmProvider({ provider });
     if (provider === 'ollama') await refreshOllamaModels();
     const llmConfig = await window.powertool.loreGetLlmProvider();
-    updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel);
+    updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel, llmConfig.novelaiTextModel);
+  });
+
+  novelaiTextModelSelect.addEventListener('change', async () => {
+    const novelaiTextModel = novelaiTextModelSelect.value;
+    await window.powertool.loreSetLlmProvider({ novelaiTextModel });
+    updateLlmIndicator('novelai', null, novelaiTextModel);
   });
 
   loreOllamaModelSelect.addEventListener('change', async () => {

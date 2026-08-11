@@ -51,7 +51,7 @@ const PROVIDERS = {
 
 // Text-only LLM providers (for lore, comprehension, scene analysis, etc.)
 const TEXT_PROVIDERS = {
-  novelai: { id: 'novelai', name: 'NovelAI (GLM-4-6)' },
+  novelai: { id: 'novelai', get name() { const m = store.get('novelaiTextModel') || 'glm-4-6'; return m === 'xialong' ? 'NovelAI (Xialong)' : 'NovelAI (GLM-4-6)'; } },
   ollama: { id: 'ollama', name: 'Ollama (Local)' },
   openai: { id: 'openai', name: 'OpenAI', provider: openaiTextProvider },
   anthropic: { id: 'anthropic', name: 'Anthropic', provider: anthropicTextProvider },
@@ -114,6 +114,7 @@ const store = new Store({
       default: {}
     },
     loreLlmProvider: { type: 'string', default: 'novelai' },
+    novelaiTextModel: { type: 'string', default: 'glm-4-6' },
     loreOllamaModel: { type: 'string', default: 'mistral:7b' },
     loreOllamaUrl: { type: 'string', default: 'http://localhost:11434' },
     loreComprehension: { type: 'object', default: {} },
@@ -1512,7 +1513,7 @@ Types: "action" for physical actions, "dialogue" for speech, "narrative" for des
 
     console.log('[Main] Generating suggestions via direct API call...');
     const response = await provider.generateText(messages, {
-      model: 'glm-4-6',
+      model: store.get('novelaiTextModel') || 'glm-4-6',
       max_tokens: 300,
       temperature: sceneSettings.suggestionTemperature,
     }, store);
@@ -1753,10 +1754,10 @@ Guidelines:
       { role: 'user', content: userContent }
     ];
 
-    // 5. Call GLM-4-6
+    // 5. Call NovelAI text model
     console.log('[Main] Generating scene prompt via direct API call...');
     const response = await provider.generateText(messages, {
-      model: 'glm-4-6',
+      model: store.get('novelaiTextModel') || 'glm-4-6',
       max_tokens: 400,
       temperature: sceneSettings.promptTemperature,
     }, store);
@@ -1890,7 +1891,7 @@ const progressiveScans = new Map(); // storyId → {cancel: false, pause: false}
 function makeNovelaiGenerateTextFn() {
   return async (messages, options) => {
     return novelaiProvider.generateText(messages, {
-      model: 'glm-4-6',
+      model: store.get('novelaiTextModel') || 'glm-4-6',
       max_tokens: options.max_tokens || 300,
       temperature: options.temperature || 0.4,
     }, store);
@@ -2463,13 +2464,15 @@ ipcMain.handle('lore:get-llm-provider', () => {
     provider: store.get('loreLlmProvider') || 'novelai',
     ollamaModel: store.get('loreOllamaModel') || 'mistral:7b',
     ollamaUrl: store.get('loreOllamaUrl') || 'http://localhost:11434',
+    novelaiTextModel: store.get('novelaiTextModel') || 'glm-4-6',
   };
 });
 
-ipcMain.handle('lore:set-llm-provider', (event, { provider, ollamaModel, ollamaUrl }) => {
+ipcMain.handle('lore:set-llm-provider', (event, { provider, ollamaModel, ollamaUrl, novelaiTextModel }) => {
   if (provider !== undefined) store.set('loreLlmProvider', provider);
   if (ollamaModel !== undefined) store.set('loreOllamaModel', ollamaModel);
   if (ollamaUrl !== undefined) store.set('loreOllamaUrl', ollamaUrl);
+  if (novelaiTextModel !== undefined) store.set('novelaiTextModel', novelaiTextModel);
   return { success: true };
 });
 

@@ -375,7 +375,7 @@ module.exports = {
   },
 
   /**
-   * Generate text via NovelAI's OpenAI-compatible chat API (GLM-4-6).
+   * Generate text via NovelAI's OpenAI-compatible chat API (GLM-4-6 / Xialong).
    * Endpoint streams SSE chunks; we accumulate delta.content text.
    */
   async generateText(messages, options, store) {

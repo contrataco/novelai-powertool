@@ -645,7 +645,7 @@
             <span class="dot inactive" id="loreProxyDot"></span>
             <span style="font-size:11px;color:#aaa;" id="loreProxyStatusText">Proxy not connected</span>
           </div>
-          <div class="lore-llm-indicator" id="loreLlmIndicator" style="margin-bottom:0;">LLM: <span>NovelAI GLM-4-6</span></div>
+          <div class="lore-llm-indicator" id="loreLlmIndicator" style="margin-bottom:0;">LLM: <span>NovelAI</span></div>
         </div>
 
         <!-- Action Bar -->
@@ -820,10 +820,19 @@
             <label>
               LLM Provider:
               <select id="loreLlmSelect">
-                <option value="novelai">NovelAI GLM-4-6</option>
+                <option value="novelai">NovelAI</option>
                 <option value="ollama">Ollama (Local)</option>
               </select>
             </label>
+            <div class="u-hidden" id="loreNovelaiModelSettings" style="margin-left: 16px">
+              <label>
+                Model:
+                <select id="novelaiTextModelSelect">
+                  <option value="glm-4-6">GLM-4-6</option>
+                  <option value="xialong">Xialong (Opus only)</option>
+                </select>
+              </label>
+            </div>
             <div class="u-hidden" id="loreOllamaSettings" style="margin-left: 16px">
               <label>
                 Model:
@@ -1264,7 +1273,7 @@
           <label>Secondary LLM (for parallel pipeline)</label>
           <select id="sceneSecondaryLlm">
             <option value="none">None (sequential only)</option>
-            <option value="novelai">NovelAI (GLM-4-6)</option>
+            <option value="novelai">NovelAI</option>
             <option value="ollama">Ollama (Local)</option>
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
