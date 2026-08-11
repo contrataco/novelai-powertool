@@ -28,8 +28,7 @@
   "dependencies": {
     "adm-zip": "^0.5.10",
     "better-sqlite3": "^12.6.2",
-    "electron-store": "^8.1.0",
-    "ws": "^8.19.0"
+    "electron-store": "^8.1.0"
   },
   "build": {
     "appId": "com.contrataco.novelai-powertool",
