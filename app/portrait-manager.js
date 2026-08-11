@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 
 const LOG_PREFIX = '[Portrait]';
-const THUMB_SIZE = 48;
+const THUMB_SIZE = 128;
 
 let portraitsBaseDir = null;
 
@@ -60,10 +60,37 @@ function savePortrait(storyId, characterId, imageBuffer) {
 }
 
 function getPortraitAsBase64(storyId, characterId, thumbnail = false) {
-  const filePath = thumbnail
-    ? getThumbnailPath(storyId, characterId)
-    : getPortraitPath(storyId, characterId);
+  if (thumbnail) {
+    const thumbPath = getThumbnailPath(storyId, characterId);
+    const fullPath = getPortraitPath(storyId, characterId);
+    // Lazy regeneration: if thumb missing or undersized, regenerate from full portrait
+    const thumbExists = fs.existsSync(thumbPath);
+    let needsRegen = !thumbExists;
+    if (thumbExists && fs.existsSync(fullPath)) {
+      try {
+        const existing = nativeImage.createFromPath(thumbPath);
+        const sz = existing.getSize();
+        if (sz.width > 0 && sz.width < THUMB_SIZE) needsRegen = true;
+      } catch (_) { needsRegen = true; }
+    }
+    if (needsRegen && fs.existsSync(fullPath)) {
+      try {
+        const img = nativeImage.createFromPath(fullPath);
+        const size = img.getSize();
+        if (size.width > 0 && size.height > 0) {
+          const thumb = img.resize({ width: THUMB_SIZE, height: THUMB_SIZE });
+          fs.writeFileSync(thumbPath, thumb.toPNG());
+          console.log(`${LOG_PREFIX} Regenerated thumbnail for ${characterId}`);
+        }
+      } catch (err) {
+        console.error(`${LOG_PREFIX} Thumbnail regen failed:`, err.message);
+      }
+    }
+    if (!fs.existsSync(thumbPath)) return null;
+    return fs.readFileSync(thumbPath).toString('base64');
+  }
 
+  const filePath = getPortraitPath(storyId, characterId);
   if (!fs.existsSync(filePath)) return null;
   return fs.readFileSync(filePath).toString('base64');
 }
@@ -80,7 +107,7 @@ function deletePortrait(storyId, characterId) {
 // Album — multiple images per character
 // ---------------------------------------------------------------------------
 
-const ALBUM_THUMB_SIZE = 80;
+const ALBUM_THUMB_SIZE = 128;
 const ALBUM_CAP = 20;
 
 function getAlbumDir(storyId, characterId) {
