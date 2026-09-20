@@ -268,6 +268,10 @@ module.exports = {
   id: 'perchance',
   name: 'Perchance (Local API)',
 
+  // Plain prompt-keyword styles, shared with the other Stable Diffusion
+  // backed provider rather than copied into it.
+  ART_STYLES,
+
   /**
    * Liveness probe against the local server.
    *

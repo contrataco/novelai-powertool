@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('powertool', {
   getPerchanceSettings: () => ipcRenderer.invoke('get-perchance-settings'),
   setPerchanceSettings: (settings) => ipcRenderer.invoke('set-perchance-settings', settings),
 
+  // ComfyUI
+  comfyuiStatus: () => ipcRenderer.invoke('comfyui:status'),
+  getComfyuiArtStyles: () => ipcRenderer.invoke('get-comfyui-art-styles'),
+  getComfyuiSettings: () => ipcRenderer.invoke('get-comfyui-settings'),
+  setComfyuiSettings: (settings) => ipcRenderer.invoke('set-comfyui-settings', settings),
+
   // Venice AI
   getVeniceSettings: () => ipcRenderer.invoke('get-venice-settings'),
   setVeniceSettings: (settings) => ipcRenderer.invoke('set-venice-settings', settings),

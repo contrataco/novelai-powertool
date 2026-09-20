@@ -7,11 +7,19 @@ const Store = require('electron-store');
 process.stdout?.on('error', () => {});
 process.stderr?.on('error', () => {});
 
+// Prefer IPv4 when a hostname resolves to both families. Electron 28 ships
+// Node 18, which connects to the first address returned and never falls back.
+// An mDNS name like `fancy-pc.local` lists its IPv6 addresses first, while
+// self-hosted services (ComfyUI, Ollama) typically listen on IPv4 only, so
+// without this the request fails with EHOSTUNREACH even though the host is up.
+require('dns').setDefaultResultOrder('ipv4first');
+
 // Providers
 const novelaiProvider = require('./providers/novelai');
 const perchanceProvider = require('./providers/perchance');
 const veniceProvider = require('./providers/venice');
 const puterProvider = require('./providers/puter');
+const comfyuiProvider = require('./providers/comfyui');
 const openaiTextProvider = require('./providers/openai-text');
 const anthropicTextProvider = require('./providers/anthropic-text');
 const storyboard = require('./storyboard');
@@ -46,6 +54,7 @@ const PROVIDERS = {
   [perchanceProvider.id]: perchanceProvider,
   [veniceProvider.id]: veniceProvider,
   [puterProvider.id]: puterProvider,
+  [comfyuiProvider.id]: comfyuiProvider,
 };
 
 // Text-only LLM providers (for lore, comprehension, scene analysis, etc.)
@@ -72,6 +81,14 @@ const store = new Store({
     // perchance-chat lives somewhere unusual - it is never resolved off PATH,
     // which an app launched from Finder does not meaningfully have.
     perchanceCliPath: { type: 'string', default: '' },
+    comfyuiApiUrl: { type: 'string', default: 'http://fancy-pc.local:21030' },
+    // Empty means "the first checkpoint the server lists".
+    comfyuiCheckpoint: { type: 'string', default: '' },
+    comfyuiArtStyle: { type: 'string', default: 'no-style' },
+    comfyuiSteps: { type: 'number', default: 25 },
+    comfyuiCfg: { type: 'number', default: 6 },
+    comfyuiSampler: { type: 'string', default: 'dpmpp_2m' },
+    comfyuiScheduler: { type: 'string', default: 'karras' },
     veniceApiKey: { type: 'string', default: '' },
     veniceModel: { type: 'string', default: 'flux-2-max' },
     veniceSteps: { type: 'number', default: 25 },
@@ -720,6 +737,40 @@ ipcMain.handle('set-perchance-settings', (event, settings) => {
   if (settings.guidanceScale !== undefined) store.set('perchanceGuidanceScale', settings.guidanceScale);
   if (settings.apiUrl !== undefined) store.set('perchanceApiUrl', settings.apiUrl);
   if (settings.cliPath !== undefined) store.set('perchanceCliPath', settings.cliPath);
+  return { success: true };
+});
+
+// IPC Handlers - ComfyUI settings
+// Reachability plus what the server has installed; feeds the status line
+// and the checkpoint/sampler/scheduler dropdowns in one round trip.
+ipcMain.handle('comfyui:status', async () => {
+  return comfyuiProvider.getStatus(store);
+});
+
+ipcMain.handle('get-comfyui-art-styles', () => {
+  return comfyuiProvider.getArtStyles();
+});
+
+ipcMain.handle('get-comfyui-settings', () => {
+  return {
+    apiUrl: store.get('comfyuiApiUrl') || 'http://fancy-pc.local:21030',
+    checkpoint: store.get('comfyuiCheckpoint') || '',
+    artStyle: store.get('comfyuiArtStyle') || 'no-style',
+    steps: store.get('comfyuiSteps') || 25,
+    cfg: store.get('comfyuiCfg') || 6,
+    sampler: store.get('comfyuiSampler') || 'dpmpp_2m',
+    scheduler: store.get('comfyuiScheduler') || 'karras',
+  };
+});
+
+ipcMain.handle('set-comfyui-settings', (event, settings) => {
+  if (settings.apiUrl !== undefined) store.set('comfyuiApiUrl', settings.apiUrl);
+  if (settings.checkpoint !== undefined) store.set('comfyuiCheckpoint', settings.checkpoint);
+  if (settings.artStyle !== undefined) store.set('comfyuiArtStyle', settings.artStyle);
+  if (Number.isFinite(settings.steps)) store.set('comfyuiSteps', settings.steps);
+  if (Number.isFinite(settings.cfg)) store.set('comfyuiCfg', settings.cfg);
+  if (settings.sampler !== undefined) store.set('comfyuiSampler', settings.sampler);
+  if (settings.scheduler !== undefined) store.set('comfyuiScheduler', settings.scheduler);
   return { success: true };
 });
 

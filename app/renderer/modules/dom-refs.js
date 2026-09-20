@@ -233,6 +233,19 @@ export const perchanceArtStyleSelect = document.getElementById('perchanceArtStyl
 export const perchanceGuidanceSlider = document.getElementById('perchanceGuidance');
 export const perchanceGuidanceValue = document.getElementById('perchanceGuidanceValue');
 
+// Settings elements -- ComfyUI
+export const comfyuiCheckBtn = document.getElementById('comfyuiCheckBtn');
+export const comfyuiDot = document.getElementById('comfyuiDot');
+export const comfyuiStatusText = document.getElementById('comfyuiStatusText');
+export const comfyuiServerDetails = document.getElementById('comfyuiServerDetails');
+export const comfyuiApiUrlInput = document.getElementById('comfyuiApiUrl');
+export const comfyuiCheckpointSelect = document.getElementById('comfyuiCheckpoint');
+export const comfyuiArtStyleSelect = document.getElementById('comfyuiArtStyle');
+export const comfyuiStepsInput = document.getElementById('comfyuiSteps');
+export const comfyuiCfgInput = document.getElementById('comfyuiCfg');
+export const comfyuiSamplerSelect = document.getElementById('comfyuiSampler');
+export const comfyuiSchedulerSelect = document.getElementById('comfyuiScheduler');
+
 // Settings elements -- Venice AI
 export const veniceKeyDot = document.getElementById('veniceKeyDot');
 export const veniceKeyText = document.getElementById('veniceKeyText');

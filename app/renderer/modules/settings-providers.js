@@ -6,6 +6,9 @@ import {
   perchanceCheckBtn, perchanceKeyDot, perchanceKeyText, perchanceApiUrlInput,
   perchanceArtStyleSelect, perchanceGuidanceSlider, perchanceGuidanceValue,
   perchanceCliPathInput, perchanceServerDetails, perchanceServerBtns,
+  comfyuiCheckBtn, comfyuiDot, comfyuiStatusText, comfyuiServerDetails, comfyuiApiUrlInput,
+  comfyuiCheckpointSelect, comfyuiArtStyleSelect, comfyuiStepsInput, comfyuiCfgInput,
+  comfyuiSamplerSelect, comfyuiSchedulerSelect,
   veniceKeyDot, veniceKeyText, veniceApiKeyInput, saveVeniceKeyBtn,
   veniceModelSelect, veniceStepsInput, veniceCfgScaleInput,
   veniceStylePresetSelect, veniceSafeModeCheckbox, veniceHideWatermarkCheckbox,
@@ -31,7 +34,7 @@ export function updateProviderSections() {
     section.classList.toggle('provider-visible', match);
   });
   // Clamp resolution max per provider
-  const maxDimMap = { perchance: 768, venice: 1280, puter: 1536 };
+  const maxDimMap = { perchance: 768, venice: 1280, puter: 1536, comfyui: 1536 };
   const maxDim = maxDimMap[selected] || 1536;
   imgWidth.max = maxDim;
   imgHeight.max = maxDim;
@@ -299,16 +302,108 @@ async function refreshPerchanceServer() {
   return server;
 }
 
+// --- ComfyUI ---
+
+/**
+ * Fill a select from a list of {id, name}, keeping `selected` chosen.
+ *
+ * The saved value is always present as an option, even when the server does
+ * not list it (server down, model removed), so opening and saving the modal
+ * while the server is unreachable never rewrites a setting to blank.
+ */
+function fillSelect(select, options, selected, { autoLabel } = {}) {
+  select.innerHTML = '';
+  const add = (value, label) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    select.appendChild(opt);
+  };
+  if (autoLabel) add('', autoLabel);
+  for (const o of options) add(o.id, o.name);
+  if (selected && !options.some((o) => o.id === selected)) {
+    add(selected, options.length ? `${selected} (not on server)` : selected);
+  }
+  select.value = selected || '';
+}
+
+/** Paint the ComfyUI status line and details from a comfyuiStatus() result. */
+function renderComfyuiStatus(status) {
+  if (!status) {
+    comfyuiDot.className = 'dot inactive';
+    comfyuiStatusText.textContent = 'Checking server...';
+    comfyuiServerDetails.className = 'perchance-server-details';
+    comfyuiServerDetails.textContent = '';
+    return;
+  }
+  if (!status.running) {
+    comfyuiDot.className = 'dot inactive';
+    comfyuiStatusText.textContent = 'Server not reachable';
+    comfyuiServerDetails.className = 'perchance-server-details is-error';
+    comfyuiServerDetails.textContent = `${status.url}\n${status.error || 'no response'}`;
+    return;
+  }
+  const count = status.checkpoints.length;
+  comfyuiDot.className = count ? 'dot active' : 'dot inactive';
+  comfyuiStatusText.textContent = count
+    ? `Connected - ${count} checkpoint${count === 1 ? '' : 's'}`
+    : 'Connected, but no checkpoints installed';
+  const lines = [status.url];
+  if (status.version) lines.push(`ComfyUI ${status.version}`);
+  if (status.gpu) lines.push(status.gpu);
+  if (status.vramTotalGb) lines.push(`VRAM free: ${status.vramFreeGb} of ${status.vramTotalGb} GB`);
+  lines.push(`Jobs in queue: ${status.queued}`);
+  comfyuiServerDetails.className = 'perchance-server-details is-running';
+  comfyuiServerDetails.textContent = lines.join('\n');
+}
+
+/**
+ * Ask the server what it has and refill the dropdowns around whatever is
+ * selected when the answer lands - not when the probe was sent, or a choice
+ * made while a slow server was still answering would be reset.
+ *
+ * Not awaited by the modal's load path: the server is another machine, and
+ * when it is off the probe runs to its timeout. The modal must not wait on it.
+ */
+async function refreshComfyui() {
+  renderComfyuiStatus(null);
+  let status;
+  try {
+    status = await window.powertool.comfyuiStatus();
+  } catch (e) {
+    status = { running: false, url: comfyuiApiUrlInput.value, error: e.message, checkpoints: [] };
+  }
+  renderComfyuiStatus(status);
+  if (!status.running) return;
+  const asOptions = (names) => names.map((n) => ({ id: n, name: n }));
+  fillSelect(comfyuiCheckpointSelect, status.checkpoints, comfyuiCheckpointSelect.value, { autoLabel: 'Auto (first installed)' });
+  fillSelect(comfyuiSamplerSelect, asOptions(status.samplers), comfyuiSamplerSelect.value);
+  fillSelect(comfyuiSchedulerSelect, asOptions(status.schedulers), comfyuiSchedulerSelect.value);
+}
+
+function readComfyuiForm() {
+  return {
+    apiUrl: comfyuiApiUrlInput.value.trim() || 'http://fancy-pc.local:21030',
+    checkpoint: comfyuiCheckpointSelect.value,
+    artStyle: comfyuiArtStyleSelect.value || 'no-style',
+    steps: parseInt(comfyuiStepsInput.value),
+    cfg: parseFloat(comfyuiCfgInput.value),
+    sampler: comfyuiSamplerSelect.value || 'dpmpp_2m',
+    scheduler: comfyuiSchedulerSelect.value || 'karras',
+  };
+}
+
 // --- Load all provider settings into the modal ---
 
 export async function loadProviderSettings(effectiveProvider) {
-  const [perchanceStatus, perchanceServer, perchanceSettings, veniceSettings, veniceKeyStatus, puterSettings] = await Promise.all([
+  const [perchanceStatus, perchanceServer, perchanceSettings, veniceSettings, veniceKeyStatus, puterSettings, comfyuiSettings] = await Promise.all([
     window.powertool.getPerchanceStatus(),
     window.powertool.perchanceServerStatus(),
     window.powertool.getPerchanceSettings(),
     window.powertool.getVeniceSettings(),
     window.powertool.getVeniceApiKeyStatus(),
     window.powertool.getPuterSettings(),
+    window.powertool.getComfyuiSettings(),
   ]);
 
   // Provider
@@ -325,6 +420,17 @@ export async function loadProviderSettings(effectiveProvider) {
   perchanceArtStyleSelect.value = perchanceSettings.artStyle || 'no-style';
   perchanceGuidanceSlider.value = perchanceSettings.guidanceScale || 7;
   perchanceGuidanceValue.textContent = perchanceSettings.guidanceScale || 7;
+
+  // ComfyUI settings. Saved values go in first; the server probe fills in
+  // the rest of each list when (and if) it answers.
+  comfyuiApiUrlInput.value = comfyuiSettings.apiUrl;
+  comfyuiArtStyleSelect.value = comfyuiSettings.artStyle || 'no-style';
+  comfyuiStepsInput.value = comfyuiSettings.steps;
+  comfyuiCfgInput.value = comfyuiSettings.cfg;
+  fillSelect(comfyuiCheckpointSelect, [], comfyuiSettings.checkpoint, { autoLabel: 'Auto (first installed)' });
+  fillSelect(comfyuiSamplerSelect, [], comfyuiSettings.sampler);
+  fillSelect(comfyuiSchedulerSelect, [], comfyuiSettings.scheduler);
+  refreshComfyui();
 
   // Venice AI settings
   if (veniceKeyStatus.hasKey) {
@@ -416,6 +522,9 @@ export async function saveProviderSettings() {
     cliPath: perchanceCliPathInput.value.trim(),
   });
 
+  // ComfyUI settings
+  await window.powertool.setComfyuiSettings(readComfyuiForm());
+
   // Venice AI settings
   await window.powertool.setVeniceSettings({
     model: veniceModelSelect.value,
@@ -472,6 +581,19 @@ export function initProviderEvents() {
       perchanceKeyText.textContent = 'Error: ' + e.message;
     } finally {
       perchanceCheckBtn.disabled = false;
+    }
+  });
+
+  // ComfyUI server check. Saves the URL first so the probe tests what is
+  // typed, not what was last saved - same as the Perchance check above.
+  comfyuiCheckBtn.addEventListener('click', async () => {
+    comfyuiCheckBtn.disabled = true;
+    try {
+      const form = readComfyuiForm();
+      await window.powertool.setComfyuiSettings({ apiUrl: form.apiUrl });
+      await refreshComfyui();
+    } finally {
+      comfyuiCheckBtn.disabled = false;
     }
   });
 
@@ -567,6 +689,16 @@ export function initProviderEvents() {
       }
     } catch (e) {
       console.error('Failed to load art styles:', e);
+    }
+  })();
+
+  // Populate ComfyUI art styles on load
+  (async function loadComfyuiArtStyles() {
+    try {
+      const styles = await window.powertool.getComfyuiArtStyles();
+      fillSelect(comfyuiArtStyleSelect, styles, comfyuiArtStyleSelect.value || 'no-style');
+    } catch (e) {
+      console.error('Failed to load ComfyUI art styles:', e);
     }
   })();
 }

@@ -31,6 +31,9 @@ function updateV3Options() {
 
 // --- Load image/scene settings into the modal ---
 
+// Providers the per-image cost warning does not apply to.
+const NO_COST_PORTRAIT_PROVIDERS = ['novelai', 'comfyui'];
+
 export async function loadImageSettings(effectiveSettings, effectiveArtStyle, effectiveSceneSettings) {
   // NovelAI art style
   novelaiArtStyleSelect.value = effectiveArtStyle || 'no-style';
@@ -122,7 +125,7 @@ export async function loadImageSettings(effectiveSettings, effectiveArtStyle, ef
     if (portraitProviderSelect) {
       portraitProviderSelect.value = portraitSettings.portraitProvider || 'novelai';
       if (portraitProviderCostWarning) {
-        portraitProviderCostWarning.classList.toggle('u-hidden', !(portraitProviderSelect.value !== 'novelai'));
+        portraitProviderCostWarning.classList.toggle('u-hidden', NO_COST_PORTRAIT_PROVIDERS.includes(portraitProviderSelect.value));
       }
     }
   } catch (e) {
@@ -271,7 +274,7 @@ export function initImageEvents() {
   // Portrait provider cost warning
   if (portraitProviderSelect && portraitProviderCostWarning) {
     portraitProviderSelect.addEventListener('change', () => {
-      portraitProviderCostWarning.classList.toggle('u-hidden', !(portraitProviderSelect.value !== 'novelai'));
+      portraitProviderCostWarning.classList.toggle('u-hidden', NO_COST_PORTRAIT_PROVIDERS.includes(portraitProviderSelect.value));
     });
   }
 }
