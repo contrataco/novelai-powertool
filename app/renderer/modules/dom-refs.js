@@ -240,6 +240,7 @@ export const comfyuiStatusText = document.getElementById('comfyuiStatusText');
 export const comfyuiServerDetails = document.getElementById('comfyuiServerDetails');
 export const comfyuiApiUrlInput = document.getElementById('comfyuiApiUrl');
 export const comfyuiCheckpointSelect = document.getElementById('comfyuiCheckpoint');
+export const comfyuiModelHint = document.getElementById('comfyuiModelHint');
 export const comfyuiArtStyleSelect = document.getElementById('comfyuiArtStyle');
 export const comfyuiStepsInput = document.getElementById('comfyuiSteps');
 export const comfyuiCfgInput = document.getElementById('comfyuiCfg');
@@ -403,6 +404,8 @@ export const loreNovelaiModelSettings = document.getElementById('loreNovelaiMode
 export const novelaiTextModelSelect = document.getElementById('novelaiTextModelSelect');
 export const loreOllamaSettings = document.getElementById('loreOllamaSettings');
 export const loreOllamaModelSelect = document.getElementById('loreOllamaModelSelect');
+export const loreOllamaUrlInput = document.getElementById('loreOllamaUrlInput');
+export const loreOllamaUrlStatus = document.getElementById('loreOllamaUrlStatus');
 export const loreOllamaRefreshBtn = document.getElementById('loreOllamaRefreshBtn');
 export const loreHybridToggle = document.getElementById('loreHybridToggle');
 

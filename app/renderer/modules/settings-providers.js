@@ -7,7 +7,7 @@ import {
   perchanceArtStyleSelect, perchanceGuidanceSlider, perchanceGuidanceValue,
   perchanceCliPathInput, perchanceServerDetails, perchanceServerBtns,
   comfyuiCheckBtn, comfyuiDot, comfyuiStatusText, comfyuiServerDetails, comfyuiApiUrlInput,
-  comfyuiCheckpointSelect, comfyuiArtStyleSelect, comfyuiStepsInput, comfyuiCfgInput,
+  comfyuiCheckpointSelect, comfyuiModelHint, comfyuiArtStyleSelect, comfyuiStepsInput, comfyuiCfgInput,
   comfyuiSamplerSelect, comfyuiSchedulerSelect,
   veniceKeyDot, veniceKeyText, veniceApiKeyInput, saveVeniceKeyBtn,
   veniceModelSelect, veniceStepsInput, veniceCfgScaleInput,
@@ -327,6 +327,33 @@ function fillSelect(select, options, selected, { autoLabel } = {}) {
   select.value = selected || '';
 }
 
+// Models from the last successful server probe, for their fixed-recipe info.
+let comfyuiModels = [];
+
+/**
+ * Distilled models (Flux schnell, Z-Image Turbo) run a fixed recipe: their
+ * own step count and sampler, CFG 1, no negative prompt. Grey out the
+ * controls that do not apply and say what is used instead, so the saved
+ * checkpoint settings are visibly parked rather than silently ignored.
+ *
+ * The `diffusion:` id prefix alone decides it, so this still works when the
+ * server is unreachable and the model list is empty.
+ */
+function updateComfyuiModelHint() {
+  const id = comfyuiCheckpointSelect.value;
+  const isFixed = id.startsWith('diffusion:');
+  for (const el of [comfyuiStepsInput, comfyuiCfgInput, comfyuiSamplerSelect, comfyuiSchedulerSelect]) {
+    el.disabled = isFixed;
+  }
+  comfyuiModelHint.classList.toggle('u-hidden', !isFixed);
+  if (!isFixed) return;
+  const fixed = comfyuiModels.find((m) => m.id === id)?.fixed;
+  comfyuiModelHint.textContent = fixed
+    ? `This model runs a fixed recipe: ${fixed.steps} steps, CFG ${fixed.cfg}, ${fixed.sampler} / ${fixed.scheduler}. ` +
+      'The settings below and the negative prompt are not used.'
+    : 'This model runs a fixed recipe. The settings below and the negative prompt are not used.';
+}
+
 /** Paint the ComfyUI status line and details from a comfyuiStatus() result. */
 function renderComfyuiStatus(status) {
   if (!status) {
@@ -346,8 +373,8 @@ function renderComfyuiStatus(status) {
   const count = status.checkpoints.length;
   comfyuiDot.className = count ? 'dot active' : 'dot inactive';
   comfyuiStatusText.textContent = count
-    ? `Connected - ${count} checkpoint${count === 1 ? '' : 's'}`
-    : 'Connected, but no checkpoints installed';
+    ? `Connected - ${count} model${count === 1 ? '' : 's'}`
+    : 'Connected, but no usable models installed';
   const lines = [status.url];
   if (status.version) lines.push(`ComfyUI ${status.version}`);
   if (status.gpu) lines.push(status.gpu);
@@ -376,14 +403,16 @@ async function refreshComfyui() {
   renderComfyuiStatus(status);
   if (!status.running) return;
   const asOptions = (names) => names.map((n) => ({ id: n, name: n }));
-  fillSelect(comfyuiCheckpointSelect, status.checkpoints, comfyuiCheckpointSelect.value, { autoLabel: 'Auto (first installed)' });
+  fillSelect(comfyuiCheckpointSelect, status.checkpoints, comfyuiCheckpointSelect.value, { autoLabel: 'Auto (first checkpoint)' });
   fillSelect(comfyuiSamplerSelect, asOptions(status.samplers), comfyuiSamplerSelect.value);
   fillSelect(comfyuiSchedulerSelect, asOptions(status.schedulers), comfyuiSchedulerSelect.value);
+  comfyuiModels = status.checkpoints;
+  updateComfyuiModelHint();
 }
 
 function readComfyuiForm() {
   return {
-    apiUrl: comfyuiApiUrlInput.value.trim() || 'http://fancy-pc.local:21030',
+    apiUrl: comfyuiApiUrlInput.value.trim() || 'http://127.0.0.1:8188',
     checkpoint: comfyuiCheckpointSelect.value,
     artStyle: comfyuiArtStyleSelect.value || 'no-style',
     steps: parseInt(comfyuiStepsInput.value),
@@ -427,9 +456,10 @@ export async function loadProviderSettings(effectiveProvider) {
   comfyuiArtStyleSelect.value = comfyuiSettings.artStyle || 'no-style';
   comfyuiStepsInput.value = comfyuiSettings.steps;
   comfyuiCfgInput.value = comfyuiSettings.cfg;
-  fillSelect(comfyuiCheckpointSelect, [], comfyuiSettings.checkpoint, { autoLabel: 'Auto (first installed)' });
+  fillSelect(comfyuiCheckpointSelect, [], comfyuiSettings.checkpoint, { autoLabel: 'Auto (first checkpoint)' });
   fillSelect(comfyuiSamplerSelect, [], comfyuiSettings.sampler);
   fillSelect(comfyuiSchedulerSelect, [], comfyuiSettings.scheduler);
+  updateComfyuiModelHint();
   refreshComfyui();
 
   // Venice AI settings
@@ -586,6 +616,8 @@ export function initProviderEvents() {
 
   // ComfyUI server check. Saves the URL first so the probe tests what is
   // typed, not what was last saved - same as the Perchance check above.
+  comfyuiCheckpointSelect.addEventListener('change', updateComfyuiModelHint);
+
   comfyuiCheckBtn.addEventListener('click', async () => {
     comfyuiCheckBtn.disabled = true;
     try {

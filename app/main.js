@@ -9,7 +9,7 @@ process.stderr?.on('error', () => {});
 
 // Prefer IPv4 when a hostname resolves to both families. Electron 28 ships
 // Node 18, which connects to the first address returned and never falls back.
-// An mDNS name like `fancy-pc.local` lists its IPv6 addresses first, while
+// An mDNS name like `gpu-box.local` lists its IPv6 addresses first, while
 // self-hosted services (ComfyUI, Ollama) typically listen on IPv4 only, so
 // without this the request fails with EHOSTUNREACH even though the host is up.
 require('dns').setDefaultResultOrder('ipv4first');
@@ -60,7 +60,7 @@ const PROVIDERS = {
 // Text-only LLM providers (for lore, comprehension, scene analysis, etc.)
 const TEXT_PROVIDERS = {
   novelai: { id: 'novelai', get name() { const m = store.get('novelaiTextModel') || 'glm-4-6'; return m === 'xialong' ? 'NovelAI (Xialong)' : 'NovelAI (GLM-4-6)'; } },
-  ollama: { id: 'ollama', name: 'Ollama (Local)' },
+  ollama: { id: 'ollama', name: 'Ollama' },
   openai: { id: 'openai', name: 'OpenAI', provider: openaiTextProvider },
   anthropic: { id: 'anthropic', name: 'Anthropic', provider: anthropicTextProvider },
 };
@@ -81,7 +81,7 @@ const store = new Store({
     // perchance-chat lives somewhere unusual - it is never resolved off PATH,
     // which an app launched from Finder does not meaningfully have.
     perchanceCliPath: { type: 'string', default: '' },
-    comfyuiApiUrl: { type: 'string', default: 'http://fancy-pc.local:21030' },
+    comfyuiApiUrl: { type: 'string', default: 'http://127.0.0.1:8188' },
     // Empty means "the first checkpoint the server lists".
     comfyuiCheckpoint: { type: 'string', default: '' },
     comfyuiArtStyle: { type: 'string', default: 'no-style' },
@@ -753,7 +753,7 @@ ipcMain.handle('get-comfyui-art-styles', () => {
 
 ipcMain.handle('get-comfyui-settings', () => {
   return {
-    apiUrl: store.get('comfyuiApiUrl') || 'http://fancy-pc.local:21030',
+    apiUrl: store.get('comfyuiApiUrl') || 'http://127.0.0.1:8188',
     checkpoint: store.get('comfyuiCheckpoint') || '',
     artStyle: store.get('comfyuiArtStyle') || 'no-style',
     steps: store.get('comfyuiSteps') || 25,
@@ -2523,7 +2523,9 @@ ipcMain.handle('lore:set-llm-provider', (event, { provider, ollamaModel, ollamaU
 ipcMain.handle('lore:check-ollama', async () => {
   try {
     const url = getOllamaUrl();
-    const response = await fetch(`${url}/api/tags`);
+    // Bounded: the server may be another machine, and an unreachable host
+    // otherwise holds the model list open until the OS gives up.
+    const response = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(4000) });
     if (!response.ok) return { available: false };
     const data = await response.json();
     const models = (data.models || []).map(m => ({ name: m.name, size: m.size }));

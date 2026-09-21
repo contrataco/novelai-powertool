@@ -3,10 +3,10 @@
  *
  * Talks to ComfyUI's native HTTP API: POST /prompt queues a node graph,
  * GET /history/<id> reports completion, GET /view returns the image bytes.
- * The graph built here is the plain checkpoint one, which covers every
+ * Two graphs are built here. The plain checkpoint one covers every
  * SD1.5/SDXL-family checkpoint. Models that ship as a bare diffusion model
- * (Flux, Z-Image) need separate text-encoder and VAE loaders and are not
- * handled yet.
+ * (Flux, Z-Image) get a second graph with separate text-encoder and VAE
+ * loaders, described per family in DIFFUSION_FAMILIES.
  *
  * Completion is polled rather than read off the /ws socket so the provider
  * works the same whether it reaches ComfyUI directly or through a reverse
@@ -21,9 +21,8 @@ const { ART_STYLES } = require('./perchance');
 
 const LOG_PREFIX = '[ComfyUI]';
 
-// A hostname, never the DHCP address. `.local` resolves over mDNS with no
-// /etc/hosts entry on the client.
-const DEFAULT_API_URL = 'http://fancy-pc.local:21030';
+// ComfyUI's own default bind. A server on another machine is a setting.
+const DEFAULT_API_URL = 'http://127.0.0.1:8188';
 
 const DEFAULTS = {
   steps: 25,
@@ -35,6 +34,9 @@ const DEFAULTS = {
 // The first generation after a checkpoint switch loads several GB into VRAM
 // before sampling starts, and the request may queue behind other jobs.
 const GENERATION_TIMEOUT_MS = 240000;
+// Bare diffusion models plus their text encoders can exceed the card's VRAM,
+// so ComfyUI streams weights from system RAM and a cold run is much slower.
+const DIFFUSION_TIMEOUT_MS = 360000;
 const POLL_INTERVAL_MS = 1000;
 const REQUEST_TIMEOUT_MS = 15000;
 
@@ -50,25 +52,86 @@ const CHECKPOINT_PROMPT_PRESETS = [
   },
 ];
 
+// Stored model ids for bare diffusion models carry this prefix, so they can
+// never be confused with a checkpoint of the same filename. A colon cannot
+// appear in a Windows filename, and checkpoint ids stay the plain filename.
+const DIFFUSION_PREFIX = 'diffusion:';
+
+/**
+ * Bare diffusion models this provider knows how to wire up, matched on
+ * filename. Anything in models/diffusion_models that matches no family is
+ * left out of the model list - on a typical server that folder also holds
+ * video models, which would only fail in an image graph.
+ *
+ * These are distilled models: steps, sampler and scheduler are part of how
+ * they were trained, CFG is 1, and a negative prompt has no effect. The
+ * user's checkpoint settings are deliberately not applied to them.
+ *
+ * A guidance-distilled model (Flux dev) would be one more row plus a
+ * FluxGuidance node on the positive conditioning; none is installed to
+ * prove it against, so it is not here.
+ */
+const DIFFUSION_FAMILIES = [
+  {
+    id: 'flux-schnell',
+    label: 'Flux schnell',
+    match: /flux.*schnell/i,
+    clip: { node: 'DualCLIPLoader', type: 'flux', inputs: ['clip_name1', 'clip_name2'], files: [/t5xxl/i, /clip_l/i] },
+    vae: /^ae\./i,
+    shift: null,
+    steps: 4,
+    sampler: 'euler',
+    scheduler: 'simple',
+  },
+  {
+    id: 'z-image-turbo',
+    label: 'Z-Image Turbo',
+    match: /z[_-]?image.*turbo/i,
+    clip: { node: 'CLIPLoader', type: 'lumina2', inputs: ['clip_name'], files: [/qwen_3_4b/i] },
+    vae: /^ae\./i,
+    shift: 3,
+    steps: 9,
+    sampler: 'res_multistep',
+    scheduler: 'simple',
+  },
+];
+
+function basename(file) {
+  return file.replace(/^.*[\\/]/, '');
+}
+
+function familyFor(file) {
+  return DIFFUSION_FAMILIES.find((f) => f.match.test(basename(file || ''))) || null;
+}
+
+function isDiffusionId(modelId) {
+  return (modelId || '').startsWith(DIFFUSION_PREFIX);
+}
+
 function getApiUrl(store) {
   const raw = (store.get('comfyuiApiUrl') || DEFAULT_API_URL).trim();
   return raw.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
 }
 
-function presetFor(checkpoint) {
-  return CHECKPOINT_PROMPT_PRESETS.find((p) => p.match.test(checkpoint || '')) || null;
+/** Checkpoints only: a model that ignores its negative gets no score tags. */
+function presetFor(modelId) {
+  if (isDiffusionId(modelId)) return null;
+  return CHECKPOINT_PROMPT_PRESETS.find((p) => p.match.test(modelId || '')) || null;
 }
 
-/** Latent sizes must be multiples of 8; anything else is a graph error. */
-function snapSide(v) {
+/**
+ * Latent sizes must be a multiple of the latent node's step, or the graph is
+ * rejected: 8 for EmptyLatentImage, 16 for EmptySD3LatentImage.
+ */
+function snapSide(v, step = 8) {
   const n = Math.round(Number(v));
   if (!Number.isFinite(n) || n < 64) return 1024;
-  return Math.min(Math.round(n / 8) * 8, MAX_SIDE);
+  return Math.min(Math.round(n / step) * step, MAX_SIDE);
 }
 
-/** Display name for a checkpoint path: no folder, no extension. */
+/** Display name for a model path: no prefix, no folder, no extension. */
 function checkpointLabel(file) {
-  return file.replace(/^.*[\\/]/, '').replace(/\.(safetensors|ckpt|pt)$/i, '');
+  return basename(file.replace(DIFFUSION_PREFIX, '')).replace(/\.(safetensors|ckpt|pt|gguf|sft)$/i, '');
 }
 
 async function getJson(url, timeoutMs = REQUEST_TIMEOUT_MS) {
@@ -85,6 +148,56 @@ async function nodeOptions(baseUrl, nodeClass, inputName) {
   if (Array.isArray(spec?.[0])) return spec[0];
   if (Array.isArray(spec?.[1]?.options)) return spec[1].options;
   return [];
+}
+
+/**
+ * Every model the provider can drive: checkpoints, then the bare diffusion
+ * models that match a known family. The GGUF loader is a custom node, so a
+ * server without it simply contributes nothing.
+ */
+async function listModels(baseUrl) {
+  const [checkpoints, unets, ggufs] = await Promise.all([
+    nodeOptions(baseUrl, 'CheckpointLoaderSimple', 'ckpt_name'),
+    nodeOptions(baseUrl, 'UNETLoader', 'unet_name').catch(() => []),
+    nodeOptions(baseUrl, 'UnetLoaderGGUF', 'unet_name').catch(() => []),
+  ]);
+  const models = checkpoints.map((file) => ({ id: file, name: checkpointLabel(file), family: null, fixed: null }));
+  for (const file of [...unets, ...ggufs]) {
+    const family = familyFor(file);
+    if (!family) continue;
+    models.push({
+      id: DIFFUSION_PREFIX + file,
+      name: `${checkpointLabel(file)} (${family.label})`,
+      family: family.id,
+      fixed: { steps: family.steps, cfg: 1, sampler: family.sampler, scheduler: family.scheduler },
+    });
+  }
+  return models;
+}
+
+/**
+ * Pick the text encoder and VAE files a family needs out of what the server
+ * has. Done here rather than hardcoded because the filenames vary by
+ * precision (fp8, fp16, scaled) and a missing one should say which folder to
+ * fill, not surface as ComfyUI's "value not in list".
+ */
+async function resolveFamilyFiles(baseUrl, family) {
+  const [clips, vaes] = await Promise.all([
+    nodeOptions(baseUrl, family.clip.node, family.clip.inputs[0]),
+    nodeOptions(baseUrl, 'VAELoader', 'vae_name'),
+  ]);
+  const clipFiles = family.clip.files.map((pattern) => clips.find((f) => pattern.test(basename(f))));
+  const missing = family.clip.files.filter((_, i) => !clipFiles[i]).map((pattern) => pattern.source);
+  if (missing.length) {
+    throw new Error(
+      `${family.label} needs a text encoder matching ${missing.join(' and ')} in the server's models/text_encoders folder`
+    );
+  }
+  const vae = vaes.find((f) => family.vae.test(basename(f)));
+  if (!vae) {
+    throw new Error(`${family.label} needs its VAE (ae.safetensors) in the server's models/vae folder`);
+  }
+  return { clipFiles, vae };
 }
 
 /**
@@ -131,6 +244,50 @@ function buildGraph({ checkpoint, positive, negative, width, height, seed, steps
   };
 }
 
+/**
+ * Graph for a bare diffusion model: the model, its text encoder(s) and its
+ * VAE each come from their own loader. The negative is the positive zeroed
+ * out - these models run at CFG 1, where a text negative does nothing, and
+ * zeroing skips a second pass through a multi-gigabyte text encoder.
+ */
+function buildDiffusionGraph({ family, file, clipFiles, vae, positive, width, height, seed }) {
+  const isGguf = /\.gguf$/i.test(file);
+  const clipInputs = { type: family.clip.type };
+  family.clip.inputs.forEach((name, i) => { clipInputs[name] = clipFiles[i]; });
+
+  const graph = {
+    '1': isGguf
+      ? { class_type: 'UnetLoaderGGUF', inputs: { unet_name: file } }
+      : { class_type: 'UNETLoader', inputs: { unet_name: file, weight_dtype: 'default' } },
+    '2': { class_type: family.clip.node, inputs: clipInputs },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: vae } },
+    '4': { class_type: 'CLIPTextEncode', inputs: { text: positive, clip: ['2', 0] } },
+    '5': { class_type: 'ConditioningZeroOut', inputs: { conditioning: ['4', 0] } },
+    '6': { class_type: 'EmptySD3LatentImage', inputs: { width, height, batch_size: 1 } },
+    '7': {
+      class_type: 'KSampler',
+      inputs: {
+        model: family.shift ? ['10', 0] : ['1', 0],
+        positive: ['4', 0],
+        negative: ['5', 0],
+        latent_image: ['6', 0],
+        seed,
+        steps: family.steps,
+        cfg: 1,
+        sampler_name: family.sampler,
+        scheduler: family.scheduler,
+        denoise: 1,
+      },
+    },
+    '8': { class_type: 'VAEDecode', inputs: { samples: ['7', 0], vae: ['3', 0] } },
+    '9': { class_type: 'PreviewImage', inputs: { images: ['8', 0] } },
+  };
+  if (family.shift) {
+    graph['10'] = { class_type: 'ModelSamplingAuraFlow', inputs: { model: ['1', 0], shift: family.shift } };
+  }
+  return graph;
+}
+
 /** Pull a readable reason out of a failed POST /prompt body. */
 function describeQueueError(status, bodyText) {
   try {
@@ -175,8 +332,8 @@ async function cancelPrompt(baseUrl, promptId) {
   } catch (_) { /* the timeout error the caller throws is the useful one */ }
 }
 
-async function waitForOutput(baseUrl, promptId) {
-  const deadline = Date.now() + GENERATION_TIMEOUT_MS;
+async function waitForOutput(baseUrl, promptId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     let history;
@@ -202,7 +359,8 @@ async function waitForOutput(baseUrl, promptId) {
   }
   await cancelPrompt(baseUrl, promptId);
   throw new Error(
-    `ComfyUI did not finish within ${Math.round(GENERATION_TIMEOUT_MS / 1000)}s; the job was cancelled`
+    `ComfyUI did not finish within ${Math.round(timeoutMs / 1000)}s, so the job was cancelled. ` +
+    'If the GPU is shared with another workload (a loaded LLM, another queue), it may not have had room for the model.'
   );
 }
 
@@ -219,10 +377,9 @@ module.exports = {
     return [];
   },
 
-  /** Checkpoints currently installed on the server, for the settings UI. */
+  /** Models currently usable on the server, for the settings UI. */
   async fetchModelsForUI(store) {
-    const files = await nodeOptions(getApiUrl(store), 'CheckpointLoaderSimple', 'ckpt_name');
-    return files.map((file) => ({ id: file, name: checkpointLabel(file) }));
+    return listModels(getApiUrl(store));
   },
 
   getArtStyles() {
@@ -230,6 +387,9 @@ module.exports = {
   },
 
   getNegativeSuffix(store) {
+    if (isDiffusionId(store.get('comfyuiCheckpoint'))) {
+      return { styleNegative: '', ucPresetNegative: '', combined: '' };
+    }
     const artStyle = ART_STYLES[store.get('comfyuiArtStyle') || 'no-style'] || ART_STYLES['no-style'];
     const preset = presetFor(store.get('comfyuiCheckpoint'));
     const styleNegative = artStyle.negative || '';
@@ -250,7 +410,7 @@ module.exports = {
     try {
       const [stats, checkpoints, samplers, schedulers, queue] = await Promise.all([
         getJson(`${url}/system_stats`, 6000),
-        nodeOptions(url, 'CheckpointLoaderSimple', 'ckpt_name'),
+        listModels(url),
         nodeOptions(url, 'KSampler', 'sampler_name'),
         nodeOptions(url, 'KSampler', 'scheduler'),
         getJson(`${url}/queue`, 6000).catch(() => null),
@@ -265,7 +425,7 @@ module.exports = {
         vramFreeGb: gpu ? Math.round((gpu.vram_free / 2 ** 30) * 10) / 10 : null,
         vramTotalGb: gpu ? Math.round((gpu.vram_total / 2 ** 30) * 10) / 10 : null,
         queued: (queue?.queue_pending?.length || 0) + (queue?.queue_running?.length || 0),
-        checkpoints: checkpoints.map((file) => ({ id: file, name: checkpointLabel(file) })),
+        checkpoints,
         samplers,
         schedulers,
       };
@@ -300,30 +460,50 @@ module.exports = {
       checkpoint = installed[0];
     }
 
-    const preset = presetFor(checkpoint);
-    const positive = (preset?.prefix || '') + prompt + artStyle.prompt;
-    const negative = options.rawNegativePrompt
-      ? (negativePrompt || '')
-      : [negativePrompt, artStyle.negative, preset?.negative].filter(Boolean).join(', ');
-
-    const width = snapSide(settings.width);
-    const height = snapSide(settings.height);
     const seed = (options.seed !== undefined && options.seed !== null)
       ? Number(options.seed)
       : crypto.randomInt(0, 2 ** 32);
 
-    const graph = buildGraph({
-      checkpoint,
-      positive,
-      negative,
-      width,
-      height,
-      seed,
-      steps: store.get('comfyuiSteps') || DEFAULTS.steps,
-      cfg: store.get('comfyuiCfg') || DEFAULTS.cfg,
-      sampler: store.get('comfyuiSampler') || DEFAULTS.sampler,
-      scheduler: store.get('comfyuiScheduler') || DEFAULTS.scheduler,
-    });
+    let graph;
+    let width;
+    let height;
+    let timeoutMs = GENERATION_TIMEOUT_MS;
+    if (isDiffusionId(checkpoint)) {
+      const file = checkpoint.slice(DIFFUSION_PREFIX.length);
+      const family = familyFor(file);
+      if (!family) throw new Error(`No ComfyUI workflow is defined for the model '${file}'`);
+      let files;
+      try {
+        files = await resolveFamilyFiles(baseUrl, family);
+      } catch (e) {
+        if (e?.name === 'TimeoutError' || e?.cause) throw unreachable(baseUrl, e);
+        throw e;
+      }
+      width = snapSide(settings.width, 16);
+      height = snapSide(settings.height, 16);
+      timeoutMs = DIFFUSION_TIMEOUT_MS;
+      graph = buildDiffusionGraph({
+        family, file, ...files, positive: prompt + artStyle.prompt, width, height, seed,
+      });
+    } else {
+      const preset = presetFor(checkpoint);
+      width = snapSide(settings.width);
+      height = snapSide(settings.height);
+      graph = buildGraph({
+        checkpoint,
+        positive: (preset?.prefix || '') + prompt + artStyle.prompt,
+        negative: options.rawNegativePrompt
+          ? (negativePrompt || '')
+          : [negativePrompt, artStyle.negative, preset?.negative].filter(Boolean).join(', '),
+        width,
+        height,
+        seed,
+        steps: store.get('comfyuiSteps') || DEFAULTS.steps,
+        cfg: store.get('comfyuiCfg') || DEFAULTS.cfg,
+        sampler: store.get('comfyuiSampler') || DEFAULTS.sampler,
+        scheduler: store.get('comfyuiScheduler') || DEFAULTS.scheduler,
+      });
+    }
 
     console.log(`${LOG_PREFIX} Queueing ${width}x${height} on ${checkpointLabel(checkpoint)} via ${baseUrl}`);
 
@@ -344,7 +524,7 @@ module.exports = {
     const { prompt_id: promptId } = await res.json();
     if (!promptId) throw new Error('ComfyUI accepted the workflow but returned no prompt id');
 
-    const image = await waitForOutput(baseUrl, promptId);
+    const image = await waitForOutput(baseUrl, promptId, timeoutMs);
 
     const query = new URLSearchParams({
       filename: image.filename,

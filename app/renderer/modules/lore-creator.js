@@ -16,7 +16,7 @@ import {
   loreEnrichOld, loreEnrichNew, loreEnrichAcceptBtn, loreEnrichEditBtn, loreEnrichRejectBtn,
   loreAutoScan, loreAutoUpdates, loreMinChars, loreMinCharsValue,
   loreTemp, loreTempValue, loreDetailLevel,
-  loreLlmSelect, loreNovelaiModelSettings, novelaiTextModelSelect, loreOllamaSettings, loreOllamaModelSelect, loreOllamaRefreshBtn,
+  loreLlmSelect, loreNovelaiModelSettings, novelaiTextModelSelect, loreOllamaSettings, loreOllamaModelSelect, loreOllamaUrlInput, loreOllamaUrlStatus, loreOllamaRefreshBtn,
   loreHybridToggle,
   loreScanMenu,
   startProgressiveScanBtn, pauseProgressiveScanBtn, cancelProgressiveScanBtn,
@@ -2336,8 +2336,24 @@ function saveLoreSettings() {
   window.powertool.loreSetSettings(state.loreSettings);
 }
 
+// Only the newest refresh may paint: two can overlap (a URL change landing
+// while a Refresh click is still waiting on the server), and both appending
+// to the same select leaves duplicate options.
+let ollamaRefreshSeq = 0;
+
 async function refreshOllamaModels() {
+  const seq = ++ollamaRefreshSeq;
+  const llmUrl = (await window.powertool.loreGetLlmProvider()).ollamaUrl;
+  // Do not overwrite the field while it is being typed in.
+  if (document.activeElement !== loreOllamaUrlInput) loreOllamaUrlInput.value = llmUrl;
+  loreOllamaUrlStatus.textContent = 'Checking...';
   const result = await window.powertool.loreCheckOllama();
+  const llmConfig = await window.powertool.loreGetLlmProvider();
+  if (seq !== ollamaRefreshSeq) return;
+  loreOllamaUrlStatus.textContent = result.available
+    ? `Connected - ${result.models?.length || 0} models`
+    : `No Ollama server answering at ${llmUrl}`;
+  loreOllamaUrlStatus.style.color = result.available ? '#9ccc65' : '#ff8a80';
   loreOllamaModelSelect.innerHTML = '';
   if (result.available && result.models) {
     for (const m of result.models) {
@@ -2346,7 +2362,17 @@ async function refreshOllamaModels() {
       opt.textContent = m.name;
       loreOllamaModelSelect.appendChild(opt);
     }
-    const llmConfig = await window.powertool.loreGetLlmProvider();
+    // A model saved against a different server may not exist on this one.
+    // Show it as missing rather than letting the dropdown display some other
+    // model while requests still go out for the saved name.
+    if (llmConfig.ollamaModel && !result.models.some((m) => m.name === llmConfig.ollamaModel)) {
+      const opt = document.createElement('option');
+      opt.value = llmConfig.ollamaModel;
+      opt.textContent = `${llmConfig.ollamaModel} (not on this server)`;
+      loreOllamaModelSelect.prepend(opt);
+      loreOllamaUrlStatus.textContent = `Connected, but '${llmConfig.ollamaModel}' is not installed there - pick a model`;
+      loreOllamaUrlStatus.style.color = '#ffd54f';
+    }
     loreOllamaModelSelect.value = llmConfig.ollamaModel;
   } else {
     const opt = document.createElement('option');
@@ -2586,6 +2612,15 @@ export function init() {
   });
 
   loreOllamaRefreshBtn.addEventListener('click', refreshOllamaModels);
+
+  // The server may be another machine on the network. Saved on commit
+  // (blur / Enter), then the model list is reloaded from the new address.
+  loreOllamaUrlInput.addEventListener('change', async () => {
+    const ollamaUrl = loreOllamaUrlInput.value.trim().replace(/\/+$/, '') || 'http://localhost:11434';
+    loreOllamaUrlInput.value = ollamaUrl;
+    await window.powertool.loreSetLlmProvider({ ollamaUrl });
+    await refreshOllamaModels();
+  });
 
   // Category management buttons
   if (loreAddCategoryBtn) {

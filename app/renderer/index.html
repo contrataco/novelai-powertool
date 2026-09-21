@@ -821,7 +821,7 @@
               LLM Provider:
               <select id="loreLlmSelect">
                 <option value="novelai">NovelAI</option>
-                <option value="ollama">Ollama (Local)</option>
+                <option value="ollama">Ollama</option>
               </select>
             </label>
             <div class="u-hidden" id="loreNovelaiModelSettings" style="margin-left: 16px">
@@ -834,6 +834,11 @@
               </label>
             </div>
             <div class="u-hidden" id="loreOllamaSettings" style="margin-left: 16px">
+              <label style="display:block;margin-bottom:6px;">
+                Server URL:
+                <input type="text" id="loreOllamaUrlInput" placeholder="http://localhost:11434" style="width:100%;font-family:monospace;font-size:12px;">
+              </label>
+              <div id="loreOllamaUrlStatus" style="font-size:11px;color:#888;margin-bottom:6px;"></div>
               <label>
                 Model:
                 <select id="loreOllamaModelSelect">
@@ -1274,7 +1279,7 @@
           <select id="sceneSecondaryLlm">
             <option value="none">None (sequential only)</option>
             <option value="novelai">NovelAI</option>
-            <option value="ollama">Ollama (Local)</option>
+            <option value="ollama">Ollama</option>
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
           </select>
@@ -1305,7 +1310,7 @@
           <select id="textLlmOllamaModelSelect">
             <option value="">Detecting...</option>
           </select>
-          <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">Auto-detected from local Ollama server.</div>
+          <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">Read from the Ollama server set under Lore settings.</div>
         </div>
       </details>
 
@@ -1414,7 +1419,7 @@
         <div id="comfyuiServerDetails" class="perchance-server-details"></div>
         <div class="form-group">
           <label>Server URL</label>
-          <input type="text" id="comfyuiApiUrl" placeholder="http://fancy-pc.local:21030" style="width:100%;font-family:monospace;font-size:12px;">
+          <input type="text" id="comfyuiApiUrl" placeholder="http://127.0.0.1:8188" style="width:100%;font-family:monospace;font-size:12px;">
           <span style="font-size:11px;color:#888;display:block;margin-top:4px;">
             Address of a running ComfyUI server. It must be started with
             <code>--listen</code> to accept connections from another machine.
@@ -1424,9 +1429,11 @@
           <label>Checkpoint</label>
           <select id="comfyuiCheckpoint"></select>
           <span style="font-size:11px;color:#888;display:block;margin-top:4px;">
-            Read live from the server's <code>models/checkpoints</code> folder.
-            Pony checkpoints get their score tags added automatically.
+            Read live from the server: checkpoints, plus Flux schnell and
+            Z-Image Turbo models. Pony checkpoints get their score tags added
+            automatically.
           </span>
+          <span id="comfyuiModelHint" class="u-hidden" style="font-size:12px;color:#ffd54f;display:block;margin-top:6px;"></span>
         </div>
         <div class="form-group">
           <label>Art Style</label>
