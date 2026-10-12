@@ -1234,7 +1234,7 @@ async function r1_readWholeStory(ctx) {
   const roster = reader.buildRoster({ loreEntries: characterEntries, stateChars: state.characters, chunks: read.chunks });
   const prot = reader.resolveProtagonist({ storyText, loreEntries: characterEntries, stateChars: state.characters, chunks: read.chunks, roster });
   if (!prot.person && prot.name) prot.person = roster.add(prot.name, { source: 'story' });
-  const fold = reader.foldChunks(read.chunks, roster, prot.person, prot.pov);
+  const fold = reader.foldChunks(read.chunks, roster, (i) => prot.at(i), prot.pov);
 
   // Names that are classes, skills or items in this story are not people.
   const classKeys = new Set([...fold.classes.values()].map(c => reader.nameKey(c.name)));
@@ -1440,6 +1440,11 @@ async function r1_readWholeStory(ctx) {
     name: protChar?.name || null,
     pov: prot.pov,
     source: protChar ? prot.source : null,
+    // Where the story hands the player role to someone new (part = chunk + 1).
+    history: (prot.history || []).map(h => {
+      const id = personIds.get(h.person);
+      return { characterId: id || null, name: (id && state.characters[id]?.name) || h.person.name, part: h.chunk == null ? null : h.chunk + 1, source: h.source };
+    }),
   };
 
   const summary = {
@@ -2626,7 +2631,19 @@ function setPlayer(state, characterId) {
   }
   state.party = state.party || {};
   state.party.members = Object.entries(state.characters).filter(([, c]) => c.isPartyMember).map(([id]) => id);
-  state.protagonist = { characterId, name: player.name, pov: state.protagonist?.pov || null, source: 'manual' };
+  state.protagonist = { characterId, name: player.name, pov: state.protagonist?.pov || null, source: 'manual', history: [] };
+  return state;
+}
+
+/**
+ * Undo setPlayer: let the story decide who the player is again. The current
+ * player stays until the next scan works it out from the story.
+ */
+function clearPlayerPin(state) {
+  for (const c of Object.values(state?.characters || {})) {
+    if ((c._manualFields || []).includes('storyFunction')) c._manualFields = c._manualFields.filter(f => f !== 'storyFunction');
+  }
+  if (state?.protagonist) state.protagonist = { ...state.protagonist, source: 'auto-pending' };
   return state;
 }
 
@@ -2636,6 +2653,7 @@ function setPlayer(state, characterId) {
 
 module.exports = {
   setPlayer,
+  clearPlayerPin,
   // Detection
   detectLitRPGSignals,
   confirmLitRPG,

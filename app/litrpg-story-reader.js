@@ -15,7 +15,7 @@ const { recoverJSON, callLLM, NARRATOR_RULE, isNarratorPlaceholder, fuzzyNameSco
 const { parseMetadata, getEntryType } = require('./metadata');
 
 const LOG_PREFIX = '[LitRPG]';
-const READER_VERSION = 1;
+const READER_VERSION = 2;
 const CHUNK_MAX_TOKENS = 2000;
 const MAX_KNOWN_NAMES = 40;
 // Same budget the NovelAI provider allows a reply of this size, so the chunk
@@ -618,41 +618,78 @@ function applyEvent(sheet, e, chunkIndex) {
 }
 
 /**
- * Decide the protagonist (the player). Order: the one the user picked, lorebook
- * @protagonist, the narrator's own name in first-person narration, then the
- * name the reader gave the narrator most often.
+ * Decide the protagonist (the player), part by part. A player the user picked
+ * holds for the whole story. Otherwise the lorebook's @protagonist starts it,
+ * and in first-person narration the player is whoever narrates each part: a
+ * narrator who names themself takes over at once, one only the reader names
+ * must narrate the next part too (one misread part does not flip the player).
+ * Returns { person (the player now), at(chunkIndex), history, pov, source }.
  */
 function resolveProtagonist({ storyText, loreEntries, stateChars, chunks, roster }) {
   const pov = detectPov(storyText);
+  const res = { person: null, pov, source: null, history: [] };
+  const perChunk = new Map();
+  res.at = (i) => perChunk.get(i) || res.person;
+
   // The player the user picked wins over everything the story or lorebook says.
   for (const ch of Object.values(stateChars)) {
     if (ch.narrative?.storyFunction === 'protagonist' && (ch._manualFields || []).includes('storyFunction')) {
-      return { person: roster.find(ch.name), pov, source: 'manual' };
+      res.person = roster.find(ch.name);
+      res.source = 'manual';
+      return res;
     }
   }
   for (const e of loreEntries) {
-    if (parseMetadata(e.text).protagonist) return { person: roster.find(e.displayName), pov, source: 'lorebook' };
-  }
-  if (pov === 'first') {
-    const self = findSelfName(storyText);
-    if (self) return { person: roster.find(self), name: self, pov, source: 'self-named' };
-    const votes = new Map();
-    for (const c of chunks) {
-      const n = c.result && c.result.narrator;
-      const p = n && roster.find(n);
-      if (p) votes.set(p, (votes.get(p) || 0) + 1);
+    if (parseMetadata(e.text).protagonist) {
+      res.person = roster.find(e.displayName);
+      if (res.person) { res.source = 'lorebook'; res.history.push({ chunk: null, person: res.person, source: 'lorebook' }); }
+      break;
     }
-    const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
-    if (best) return { person: best[0], pov, source: 'reader' };
   }
-  return { person: null, pov, source: null };
+  if (pov !== 'first') return res;
+
+  const narratorOf = (c) => {
+    const self = findSelfName(c.text || '');
+    const p = self && roster.find(self);
+    if (p) return { person: p, source: 'self-named' };
+    const n = c.result && c.result.narrator;
+    const q = n && roster.find(n);
+    return q ? { person: q, source: 'reader' } : null;
+  };
+  const ordered = chunks.slice().sort((a, b) => a.index - b.index);
+  ordered.forEach((c, k) => {
+    const here = narratorOf(c);
+    if (here && here.person !== res.person) {
+      const next = ordered[k + 1] && narratorOf(ordered[k + 1]);
+      const confirmed = !res.person || here.source === 'self-named' || (next && next.person === here.person);
+      if (confirmed) {
+        res.person = here.person;
+        res.source = here.source;
+        res.history.push({ chunk: c.index, person: here.person, source: here.source });
+      }
+    }
+    if (res.person) perChunk.set(c.index, res.person);
+  });
+  // Parts before the first named narrator belong to the first player found.
+  const first = ordered.find(c => perChunk.has(c.index));
+  if (first) for (const c of ordered) { if (c === first) break; perChunk.set(c.index, perChunk.get(first.index)); }
+
+  // A self-name the cast does not hold yet: the caller adds that person.
+  if (!res.person) {
+    const self = findSelfName(storyText);
+    if (self) { res.name = self; res.source = 'self-named'; }
+  }
+  return res;
 }
 
 /**
  * Fold every chunk's events, in story order, into one sheet per person.
+ * `player` is the player person, or a function giving the player for a chunk
+ * index (the player can change during the story).
  * Returns { sheets: Map(person -> sheet), classes, quests, unattributed }.
  */
-function foldChunks(chunks, roster, protagonist, pov) {
+function foldChunks(chunks, roster, player, pov) {
+  const playerAt = typeof player === 'function' ? player : () => player;
   const sheets = new Map();
   const classes = new Map();
   const quests = [];
@@ -664,7 +701,7 @@ function foldChunks(chunks, roster, protagonist, pov) {
     for (const e of c.result.events) {
       let p = null;
       if (isNarratorPlaceholder(e.who) || /^(?:the )?narrator$/i.test(e.who)) {
-        p = narratorHere || (pov === 'first' ? protagonist : null);
+        p = narratorHere || (pov === 'first' ? playerAt(c.index) : null);
       } else {
         p = roster.find(e.who);
       }
@@ -687,7 +724,7 @@ function foldChunks(chunks, roster, protagonist, pov) {
       if (!ex.owner) {
         const to = q.forWho && !/^(?:you|player|the player|narrator|the narrator|everyone|all|the team|team|party|the party)$/i.test(q.forWho) && !isNarratorPlaceholder(q.forWho)
           ? roster.find(q.forWho) : null;
-        ex.owner = to || protagonist || null;
+        ex.owner = to || playerAt(c.index) || null;
       }
       if (q.status === 'completed' || q.status === 'failed') ex.status = q.status;
       for (const o of q.objectives) if (!ex.objectives.some(x => fuzzyNameScore(x.text, o) >= 0.8)) ex.objectives.push({ text: o, completed: q.status === 'completed' });

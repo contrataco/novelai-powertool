@@ -375,10 +375,11 @@ function getPlayerId(rpg) {
 }
 
 const PLAYER_SOURCE_TEXT = {
-  'manual': 'You picked this character.',
+  'manual': 'You picked this character. Scans keep your pick.',
   'lorebook': 'Marked @protagonist in your lorebook.',
   'self-named': 'The narrator names themself in the story.',
-  'reader': 'The story follows this character most.',
+  'reader': 'This character narrates the story now.',
+  'auto-pending': 'Automatic. The next scan picks the player from the story.',
 };
 
 function renderPlayer(rpg) {
@@ -394,6 +395,12 @@ function renderPlayer(rpg) {
       ? `${player.xp.current}${player.xp.needed ? ` / ${player.xp.needed}` : ''} XP`
       : '';
     const source = PLAYER_SOURCE_TEXT[rpg.protagonist?.source] || '';
+    // When the story hands the player role around, list where.
+    const changes = (rpg.protagonist?.history || []).filter(h => h.part != null);
+    const historyHTML = changes.length > 1
+      ? `<div class="rpg-player-source">Player changes in this story:</div><ul class="rpg-player-history">${changes.map(h =>
+          `<li>Part ${escapeHtml(String(h.part))}: ${escapeHtml(h.name || '?')}</li>`).join('')}</ul>`
+      : '';
     rpgPlayerCard.innerHTML = `
       <div class="rpg-player-card" data-char-id="${escapeHtml(player.id)}">
         <div class="rpg-player-portrait">
@@ -407,17 +414,22 @@ function renderPlayer(rpg) {
           <div class="rpg-player-line">${player.level ? `Level ${escapeHtml(String(player.level))}` : 'No level yet'}</div>
           ${xp ? `<div class="rpg-player-line">${escapeHtml(xp)}</div>` : ''}
           ${source ? `<div class="rpg-player-source">${escapeHtml(source)}</div>` : ''}
+          ${historyHTML}
         </div>
       </div>`;
   }
 
   const sorted = chars.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  rpgPlayerSelect.innerHTML = (player ? '' : '<option value="">Choose your character</option>')
-    + sorted.map(c => `<option value="${escapeHtml(c.id)}"${c.id === playerId ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+  // "Automatic" lets the story decide (and change) who the player is; a name
+  // pins that character until you switch back.
+  const pinned = rpg.protagonist?.source === 'manual';
+  rpgPlayerSelect.innerHTML = `<option value=""${pinned ? '' : ' selected'}>Automatic: follow the story</option>`
+    + sorted.map(c => `<option value="${escapeHtml(c.id)}"${pinned && c.id === playerId ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
 }
 
 async function setPlayer(charId) {
-  if (!charId || !state.currentStoryId) return;
+  if (!state.currentStoryId) return;
+  if (!charId && getRpgState().protagonist?.source !== 'manual') return;
   const old = state.litrpgState?.characters || {};
   const result = await window.powertool.litrpgSetPlayer(state.currentStoryId, charId);
   if (!result?.success) {
@@ -432,7 +444,9 @@ async function setPlayer(charId) {
   }
   state.litrpgState = result.state;
   refreshRpgUI();
-  showToast(`You are now playing as ${result.state.characters[charId]?.name || 'that character'}.`, 3000, 'success');
+  showToast(charId
+    ? `You are now playing as ${result.state.characters[charId]?.name || 'that character'}.`
+    : 'Automatic: the next scan picks the player from the story.', 3000, 'success');
 }
 
 // Groups "per owner" lists so the player's own come first, then everyone else

@@ -4427,6 +4427,12 @@
       color: var(--text-secondary);
       margin-top: 4px;
     }
+    .rpg-player-history {
+      font-size: 16px;
+      color: var(--text-primary);
+      margin: 2px 0 0;
+      padding-left: 20px;
+    }
     .rpg-player-pick {
       display: block;
       font-size: 16px;
