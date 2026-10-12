@@ -2542,7 +2542,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
             },
             comprehensionContext || undefined,
             secondaryGenerateTextFn,
-            {} // options — no forceReEnrich for chained scans
+            { onCheckpoint: saveRpgReaderCheckpoint(storyId) } // no forceReEnrich for chained scans
           );
           // Extract transient fields before saving (not persisted in DB)
           const transient = extractTransientFields(rpgResult.state);
@@ -3169,6 +3169,19 @@ ipcMain.handle('litrpg:detect', async (event, { storyText, storyId }) => {
   }
 });
 
+/**
+ * Saves the RPG story reader's per-chunk reads while a scan runs, and nothing
+ * else: if the scan then times out, the next one starts where this stopped.
+ */
+function saveRpgReaderCheckpoint(storyId) {
+  return (cache) => {
+    const current = db.getLitrpgState(storyId);
+    if (!current) return;
+    current.storyReaderCache = cache;
+    db.setLitrpgState(storyId, current);
+  };
+}
+
 ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, forceReEnrich, fullRescan }) => {
   try {
     const rpgState = db.getLitrpgState(storyId) || { ...db.LITRPG_STATE_DEFAULTS };
@@ -3202,7 +3215,7 @@ ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, f
         },
         comprehensionContext || undefined,
         secondaryGenerateTextFn,
-        { forceReEnrich: !!forceReEnrich, fullRescan: !!fullRescan, manual: true }
+        { forceReEnrich: !!forceReEnrich, fullRescan: !!fullRescan, manual: true, onCheckpoint: saveRpgReaderCheckpoint(storyId) }
       ),
       SCAN_TIMEOUT_MS,
       'LitRPG scan'

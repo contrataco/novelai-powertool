@@ -1221,6 +1221,7 @@ async function r1_readWholeStory(ctx) {
     povLine: povPromptLine(pov, protHint),
     knownNames,
     contextHint: typeConfig.contextHint,
+    onCheckpoint: options.onCheckpoint,
     onProgress: (p) => onProgress && onProgress({ phase: 'characters', current: p.current, total: p.total, subPhase: 'R1-reading', passStartedAt: start, errorCount: report.errors.length }),
   });
   state.storyReaderCache = read.cache;
@@ -1245,13 +1246,15 @@ async function r1_readWholeStory(ctx) {
     return e ? getEntryType(e.text, e.displayName) : null;
   };
   const removedKeys = new Set((state.removedCharacterNames || []).map(n => reader.nameKey(n)));
-  // A multi-word name written in the story's prose counts even if the reader
-  // missed it. Menu and list lines don't count: "Divine Seed" there is a skill.
+  // A name written in the story's prose counts even if the reader missed it
+  // (one-word names only when capitalized). Menu and list lines don't count:
+  // "Divine Seed" there is a skill.
   const proseLines = storyText.split('\n').filter(l => !/^\s*[─\-•*>|]/.test(l) && !/^\s*\d{1,2}[.)]\s/.test(l)).join('\n');
   const namedInStory = (p) => [p.name, ...p.aliases].some(n => {
-    if (!n || n.trim().split(/\s+/).length < 2) return false;
+    if (!n || isNarratorPlaceholder(n)) return false;
+    const words = n.trim().split(/\s+/);
     const esc = n.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-    return new RegExp(`\\b${esc}\\b`, 'i').test(proseLines);
+    return words.length >= 2 ? new RegExp(`\\b${esc}\\b`, 'i').test(proseLines) : /^[A-Z]/.test(n) && new RegExp(`\\b${esc}\\b`).test(proseLines);
   });
 
   const removed = [];
@@ -1270,8 +1273,13 @@ async function r1_readWholeStory(ctx) {
     else if (!p.loreEntry && p.ambiguous) reason = 'a surname several people share';
     else if (!loreDeclared && !p.sources.has('story') && thingKeys.has(key)) reason = 'a skill or item';
     else if (linkedType && linkedType !== 'character' && linkedType !== 'unknown') reason = `lorebook @type ${linkedType}`;
-    else if (!p.sources.has('story') && !p.sources.has('lore') && allRead && !namedInStory(p)) reason = 'not named in the story';
-    else if (!p.sources.has('story') && !chars.length) reason = 'skip';  // lorebook-only, not in the story: don't add
+    else if (!p.sources.has('story') && !namedInStory(p)) {
+      // The tracker follows the story: a lorebook or old tracker name the story
+      // never uses is not tracked (the lorebook itself is left alone). While
+      // some chunks are unread, keep what is already tracked.
+      if (!chars.length) reason = 'skip';
+      else if (allRead) reason = 'not named in the story';
+    }
     if (reason) {
       if (reason !== 'skip') for (const id of p.stateIds) if (state.characters[id]) { removed.push({ name: state.characters[id].name, reason }); dropIds.add(id); }
       continue;

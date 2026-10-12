@@ -18,6 +18,9 @@ const LOG_PREFIX = '[LitRPG]';
 const READER_VERSION = 1;
 const CHUNK_MAX_TOKENS = 2000;
 const MAX_KNOWN_NAMES = 40;
+// Same budget the NovelAI provider allows a reply of this size, so the chunk
+// call is not cut off before the provider's own limit.
+const CHUNK_TIMEOUT_MS = Math.max(90000, 30000 + CHUNK_MAX_TOKENS * 60);
 
 const EVENT_TYPES = new Set([
   'class', 'subclass', 'level', 'xp', 'stat', 'skill', 'item', 'currency',
@@ -299,6 +302,12 @@ function validateChunkResult(parsed, chunkText) {
   return { result, dropped };
 }
 
+function buildCache(chunks, out) {
+  const cache = { version: READER_VERSION, chunks: {} };
+  for (const c of chunks) if (out.get(c.hash)) cache.chunks[c.hash] = out.get(c.hash);
+  return cache;
+}
+
 /**
  * Read every chunk whose text is not already in the cache.
  * cache: { version, chunks: { [hash]: result } }. Returns the per-chunk list in
@@ -306,7 +315,7 @@ function validateChunkResult(parsed, chunkText) {
  * is retried on the next scan.
  */
 async function readStoryChunks(storyText, cache, providers, opts = {}) {
-  const { onProgress, povLine, knownNames, contextHint, label = 'RPG-read' } = opts;
+  const { onProgress, onCheckpoint, povLine, knownNames, contextHint, label = 'RPG-read' } = opts;
   const chunks = chunkStory(storyText);
   const cached = (cache && cache.version === READER_VERSION && cache.chunks) || {};
   const todo = chunks.filter(c => !cached[c.hash]);
@@ -324,7 +333,7 @@ async function readStoryChunks(storyText, cache, providers, opts = {}) {
       const messages = buildChunkMessages(chunk, chunks.length, { povLine, knownNames, contextHint });
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const { raw } = await callLLM(gen, messages, { maxTokens: CHUNK_MAX_TOKENS, temperature: 0.2, label: `${label} ${chunk.index + 1}/${chunks.length}` });
+          const { raw } = await callLLM(gen, messages, { maxTokens: CHUNK_MAX_TOKENS, temperature: 0.2, timeout: CHUNK_TIMEOUT_MS, label: `${label} ${chunk.index + 1}/${chunks.length}` });
           const parsed = recoverJSON(raw);
           if (validateChunkResult(parsed, chunk.text)) {
             out.set(chunk.hash, parsed);
@@ -339,12 +348,16 @@ async function readStoryChunks(storyText, cache, providers, opts = {}) {
       failed++;
     }));
     if (onProgress) onProgress({ current: Math.min(i + step, todo.length), total: todo.length });
+    // Save reads as they finish: a scan that times out on a long story keeps
+    // its progress, and the next scan continues from there.
+    if (onCheckpoint) {
+      try { await onCheckpoint(buildCache(chunks, out)); } catch (err) { console.warn(`${LOG_PREFIX} Reader checkpoint failed: ${err.message}`); }
+    }
   }
 
   // The cache keeps the model's replies; checking them against the text runs
   // on every scan, so a stricter rule takes effect without rereading.
-  const newCache = { version: READER_VERSION, chunks: {} };
-  for (const c of chunks) if (out.get(c.hash)) newCache.chunks[c.hash] = out.get(c.hash);
+  const newCache = buildCache(chunks, out);
   const validated = chunks.map(c => {
     const v = out.get(c.hash) ? validateChunkResult(out.get(c.hash), c.text) : null;
     if (v) {
