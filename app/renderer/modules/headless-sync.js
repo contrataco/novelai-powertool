@@ -20,6 +20,7 @@ import * as imageEmbed from './headless-image-embed.js';
 import * as theme from './headless-theme.js';
 import * as preamble from './headless-preamble.js';
 import * as contextMenu from './context-menu.js';
+import * as paragraphActions from './headless-paragraph-actions.js';
 
 // Re-export sync functions for use by webview-polling.js and other modules
 export const syncFromWebview = editor.syncFromWebview;
@@ -66,6 +67,7 @@ export function init() {
   imageEmbed.init({ syncToWebview: editor.syncToWebview });
   theme.init();
   preamble.init();
+  paragraphActions.init({ syncToWebview: editor.syncToWebview });
 
   // Context menu
   contextMenu.init({

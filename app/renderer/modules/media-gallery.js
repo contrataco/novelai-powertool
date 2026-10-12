@@ -26,7 +26,10 @@ async function autoSaveImage(imageData, meta) {
       width: meta?.width || 0,
       height: meta?.height || 0,
     };
-    await window.powertool.mediaSaveImage(state.currentStoryId, imageData, metadata);
+    const storyId = state.currentStoryId;
+    const saved = await window.powertool.mediaSaveImage(storyId, imageData, metadata);
+    // The headless editor places the image only once it has a gallery id to store.
+    if (saved?.id) bus.emit('media:image-saved', { mediaId: saved.id, imageData, storyId });
     // Refresh grid if media tab is visible
     if (mediaContent && mediaContent.classList.contains('active')) {
       refreshGallery();

@@ -202,10 +202,11 @@ function _getCurrentParagraphIndex(editor) {
 export function init({ syncToWebview }) {
   _syncToWebview = syncToWebview;
 
-  // Auto-place images on generation
-  bus.on('image:generated', async ({ imageData, storyId }) => {
+  // Auto-place images once the gallery has saved them: story_images.image_id
+  // must name the media_items row, or the placement cannot be stored.
+  bus.on('media:image-saved', async ({ mediaId, imageData, storyId }) => {
     if (!state.headlessMode || storyId !== state.currentStoryId) return;
-    await autoPlaceImage(null, imageData);
+    await autoPlaceImage(mediaId, imageData);
   });
 
   // Reset on story change

@@ -1615,6 +1615,55 @@ ipcMain.handle('text-action', async (event, { type, text, storyId }) => {
   }
 });
 
+// Paragraph edits (the headless editor's per-paragraph star): one passage,
+// an action, and the writer's own instruction. Surrounding text is context only.
+const PARAGRAPH_ACTIONS = {
+  transform: { task: 'Rewrite the passage, changing it as the instruction asks.',
+    fallback: 'Rewrite it with fresh wording while keeping the same events, details and point of view.' },
+  expand: { task: 'Expand the passage: make it longer and richer (roughly half again to double the length) with more sensory detail, interiority and beats, without adding events beyond it.',
+    fallback: '' },
+  condense: { task: 'Condense the passage: make it noticeably shorter while keeping every important event, line of dialogue and detail that matters.',
+    fallback: '' },
+  'rewrite-style': { task: 'Rewrite the passage in a different prose style, keeping the same events and dialogue meaning.',
+    fallback: 'Use tighter, more vivid and polished prose.' },
+  custom: { task: 'Change the passage exactly as the instruction asks.', fallback: '' },
+};
+
+ipcMain.handle('text-action:paragraph', async (_event, { action, instruction, text, before, after }) => {
+  try {
+    const spec = PARAGRAPH_ACTIONS[action];
+    if (!spec) throw new Error(`Unknown paragraph action: ${action}`);
+    const ask = (instruction || '').trim() || spec.fallback;
+    if (action === 'custom' && !ask) throw new Error('Write an instruction for a custom change');
+    const system = 'You are a skilled fiction editor revising one passage of a story. ' +
+      'Keep the story\'s tense, point of view, names and voice unless the instruction says otherwise. ' +
+      'Reply with ONLY the revised passage: no preface, no notes, no quotation marks around it, no markdown.';
+    const parts = [];
+    if (before) parts.push(`STORY BEFORE THE PASSAGE (context only, do not repeat):\n${before}`);
+    if (after) parts.push(`STORY AFTER THE PASSAGE (context only, do not repeat):\n${after}`);
+    parts.push(`TASK: ${spec.task}`);
+    if (ask) parts.push(`INSTRUCTION FROM THE WRITER: ${ask}`);
+    parts.push(`PASSAGE TO REVISE:\n${text}`);
+    const words = text.split(/\s+/).length;
+    // Generous floor: reasoning models (e.g. gemma 4 on Ollama) sometimes think
+    // first, and a tight budget returns nothing or a passage cut off mid-sentence.
+    const maxTokens = Math.min(4000, 1500 + Math.round(words * (action === 'expand' ? 4 : 2.5)));
+    const generateFn = makeLoreGenerateTextFn();
+    const result = await generateFn(
+      [{ role: 'system', content: system }, { role: 'user', content: parts.join('\n\n') }],
+      { max_tokens: maxTokens, temperature: 0.8, label: `paragraph:${action}` }
+    );
+    let out = (result.output || '').trim();
+    out = out.replace(/^```[a-z]*\n?|\n?```$/g, '').trim();
+    out = out.replace(/^(here is|here's)[^\n]*:\s*\n+/i, '').trim();
+    if (!out) throw new Error('The AI returned nothing');
+    return { output: out };
+  } catch (e) {
+    console.error('[Main] paragraph action error:', e);
+    return { error: e.message };
+  }
+});
+
 // Scene settings (prompt generation, suggestions)
 const SCENE_SETTINGS_DEFAULTS = {
   autoGeneratePrompts: true,

@@ -133,6 +133,7 @@ contextBridge.exposeInMainWorld('powertool', {
 
   // Text actions
   textAction: (type, text, storyId) => ipcRenderer.invoke('text-action', { type, text, storyId }),
+  paragraphAction: (opts) => ipcRenderer.invoke('text-action:paragraph', opts),
 
   // Prompt History
   promptHistorySave:           (storyId, entry) => ipcRenderer.invoke('prompt-history:save', { storyId, entry }),

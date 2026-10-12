@@ -6469,3 +6469,84 @@
   cursor: pointer;
 }
 .toast-close:hover, .toast-close:focus-visible { background: rgba(0, 0, 0, 0.45); outline: 2px solid #fff; outline-offset: 1px; }
+
+/* --- Paragraph star + AI edit card (headless-paragraph-actions.js) --- */
+.para-star {
+  position: absolute;
+  z-index: 40;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 2px solid #8fa8ff;
+  border-radius: 8px;
+  background: #22284a;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.para-star:hover, .para-star:focus-visible { background: #34407a; outline: 2px solid #fff; outline-offset: 1px; }
+.story-editor p.para-editing { outline: 2px dashed #8fa8ff; outline-offset: 4px; border-radius: 2px; }
+.para-card {
+  position: absolute;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: #11152b;
+  border: 2px solid #8fa8ff;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+}
+.para-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.para-card button {
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid #6b7bbf;
+  border-radius: 6px;
+  background: #1d2346;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.para-card button:hover:not(:disabled), .para-card button:focus-visible { background: #2f3a72; outline: 2px solid #fff; outline-offset: 1px; }
+.para-card button:disabled { opacity: 0.45; cursor: default; }
+.para-card .para-action[aria-pressed="true"] { background: #e94560; border-color: #ffb3c0; color: #fff; }
+.para-card-row { display: flex; gap: 8px; }
+.para-instruction {
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid #6b7bbf;
+  border-radius: 6px;
+  background: #0a0d1f;
+  color: #fff;
+  font-size: 16px;
+}
+.para-instruction::placeholder { color: #b8c0e0; }
+.para-card .para-adjust { border-color: #ffb3c0; }
+.para-text {
+  width: 100%;
+  min-height: 90px;
+  padding: 10px;
+  border: 1px solid #6b7bbf;
+  border-radius: 6px;
+  background: #0a0d1f;
+  color: #fff;
+  font-family: Georgia, serif;
+  font-size: 18px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.para-card.busy .para-text { opacity: 0.6; }
+.para-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.para-status { flex: 1 1 200px; min-width: 0; color: #dfe4ff; font-size: 15px; }
+.para-status.ok { color: #9be7a6; }
+.para-status.warn { color: #ffd479; }
+.para-status.error { color: #ff9aa8; }
