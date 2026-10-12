@@ -2505,8 +2505,8 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
             },
           };
           const personaResult = await personaExtractor.runPersonaExtraction(personaCtx);
-          const personaState = personaResult?.state || personaCtx.state;
-          const visualProfileUpdatedIds = personaResult?.visualProfileUpdatedIds || [];
+          const personaState = mergePersonaIntoLatest(storyId, personaResult?.state || personaCtx.state);
+          const visualProfileUpdatedIds = (personaResult?.visualProfileUpdatedIds || []).filter(id => personaState.characters[id]);
           db.setLitrpgState(storyId, personaState);
           hydratePortraits(personaState, storyId);
           if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2549,7 +2549,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
           const roleUpdates = transient._pendingRoleUpdates || [];
           const pendingLoreEntries = transient._pendingLoreEntries || [];
 
-          db.setLitrpgState(storyId, rpgResult.state);
+          db.setLitrpgState(storyId, carryPersonaFromLatest(storyId, rpgResult.state));
           // Hydrate portrait data before sending to renderer (filesystem → base64)
           hydratePortraits(rpgResult.state, storyId);
           if (mainWindow && !mainWindow.isDestroyed()) {
@@ -3170,6 +3170,52 @@ ipcMain.handle('litrpg:detect', async (event, { storyText, storyId }) => {
 });
 
 /**
+ * Persona extraction runs alongside the chained RPG scan, from a snapshot taken
+ * before it. Saving that snapshot whole undid the RPG scan (old cast, old
+ * sheets, lost reads). Copy only what persona extraction owns (persona,
+ * narrative, visual) into the state saved now. While RPG tracking is on, the
+ * RPG scan owns the cast, so persona stubs are not added and the protagonist
+ * it chose stays the only one.
+ */
+function mergePersonaIntoLatest(storyId, personaState) {
+  const latest = db.getLitrpgState(storyId);
+  if (!latest || !latest.characters) return personaState;
+  const protId = latest.protagonist?.characterId || null;
+  for (const [id, pc] of Object.entries(personaState.characters || {})) {
+    const lc = latest.characters[id];
+    if (!lc) {
+      if (!latest.enabled && pc._fromPersonaExtractor) latest.characters[id] = pc;
+      continue;
+    }
+    if (pc.persona) lc.persona = pc.persona;
+    if (pc.visual) lc.visual = pc.visual;
+    if (pc.narrative) {
+      const keepFn = (lc._manualFields || []).includes('storyFunction') || (protId && (id === protId || pc.narrative.storyFunction === 'protagonist'));
+      lc.narrative = { ...pc.narrative, ...(keepFn ? { storyFunction: lc.narrative?.storyFunction ?? null } : {}) };
+    }
+  }
+  return latest;
+}
+
+/**
+ * The other direction: when persona extraction saved while an RPG scan was
+ * running, keep its persona, visual and narrative fields (the RPG scan only
+ * owns the protagonist's storyFunction).
+ */
+function carryPersonaFromLatest(storyId, rpgState) {
+  const latest = db.getLitrpgState(storyId);
+  if (!latest || !latest.characters) return rpgState;
+  for (const [id, rc] of Object.entries(rpgState.characters || {})) {
+    const lc = latest.characters[id];
+    if (!lc) continue;
+    if (lc.persona) rc.persona = lc.persona;
+    if (lc.visual) rc.visual = lc.visual;
+    if (lc.narrative) rc.narrative = { ...lc.narrative, storyFunction: rc.narrative?.storyFunction ?? lc.narrative.storyFunction ?? null };
+  }
+  return rpgState;
+}
+
+/**
  * Saves the RPG story reader's per-chunk reads while a scan runs, and nothing
  * else: if the scan then times out, the next one starts where this stopped.
  */
@@ -3227,7 +3273,7 @@ ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, f
     const pendingLoreEntries = transient._pendingLoreEntries || [];
     const r4Skipped = transient._r4Skipped || 0;
 
-    db.setLitrpgState(storyId, result.state);
+    db.setLitrpgState(storyId, carryPersonaFromLatest(storyId, result.state));
     // Hydrate portrait data before sending to renderer (filesystem → base64)
     hydratePortraits(result.state, storyId);
     return { success: true, state: result.state, roleUpdates, pendingLoreEntries, r4Skipped, report: result.report, newCharacterIds: result.newCharacterIds || [] };

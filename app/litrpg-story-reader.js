@@ -235,7 +235,17 @@ function validateChunkResult(parsed, chunkText) {
     }
     // A person is someone the passage names, written as a name: "the dad" or
     // "Bank Branch Manager" (written lowercase in the story) is a description.
-    if (!isProperName(name, chunkText)) { dropped.push(`person "${name}" is not a name in the passage`); continue; }
+    if (!isProperName(name, chunkText)) {
+      // The model often writes a known full name ("Dave Swift") where the
+      // passage only says "Dave". Keep the words the passage writes; the cast
+      // merge links "Dave" to the one full name it belongs to.
+      // The first name must survive: "Hot Bitch" is not trimmed to "Bitch".
+      const words = name.split(/\s+/);
+      const written = words.filter(w => isProperName(w, chunkText)).join(' ');
+      const keepsFirst = written && nameTokens(written)[0] === nameTokens(name)[0];
+      if (!keepsFirst || !isProperName(written, chunkText) || isNarratorPlaceholder(written)) { dropped.push(`person "${name}" is not a name in the passage`); continue; }
+      name = written;
+    }
     const tokens = nameTokens(name);
     const aliases = rawAliases.filter(a => {
       if (isNarratorPlaceholder(a) || nameKey(a) === nameKey(name) || !isProperName(a, chunkText)) return false;
