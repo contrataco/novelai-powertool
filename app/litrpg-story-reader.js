@@ -175,7 +175,7 @@ List:
 1. "people": every named person or creature who appears or is named in this passage. Give the fullest name used, other names used for the same one here (e.g. "Donut" for "Princess Donut"), and whether they are on the protagonist's team or party. A nameless voice that speaks (an announcer, the System) counts, with kind "voice". ${NARRATOR_RULE} Classes, items, skills, places, teams and companies are NOT people.
 2. "events": game facts this passage states for a specific character: class or subclass chosen or given, level reached, XP, a stat value, skill learned, item gained, lost or equipped, currency, buff or debuff, race, cultivation realm.
 3. "classes": every game class this passage names or describes, including ones only offered, with a one-sentence description and its requirements.
-4. "quests": quests or missions given, updated, completed or failed.
+4. "quests": quests or missions given, updated, completed or failed, and who they are for ("for": the character who received it).
 
 STRICT RULES:
 - A choice on a menu, an option in a list, a description, or a requirement ("Tier 2 requires Level 5") is NOT anyone's class, level, skill or item. "You have 10 minutes to choose a class" means nobody has a class yet. Record a class only when a character picks it, is given it, or the text says they have it.
@@ -185,7 +185,7 @@ STRICT RULES:
 - Empty lists when nothing applies.
 
 JSON:
-{"narrator":"the first-person narrator's name if this passage gives it, else null","people":[{"name":"","aliases":[],"kind":"person|creature|voice","onTeam":true}],"events":[{"who":"","type":"class|subclass|level|xp|stat|skill|item|currency|status|race|cultivation","name":"the class, skill, item, stat, status, race or currency name","amount":null,"change":"gain|lose|set|equip","detail":"short description or null","quote":""}],"classes":[{"name":"","description":"","requirements":null}],"quests":[{"title":"","status":"new|updated|completed|failed","objectives":[],"giver":null,"quote":""}]}`,
+{"narrator":"the first-person narrator's name if this passage gives it, else null","people":[{"name":"","aliases":[],"kind":"person|creature|voice","onTeam":true}],"events":[{"who":"","type":"class|subclass|level|xp|stat|skill|item|currency|status|race|cultivation","name":"the class, skill, item, stat, status, race or currency name","amount":null,"change":"gain|lose|set|equip","detail":"short description or null","quote":""}],"classes":[{"name":"","description":"","requirements":null}],"quests":[{"title":"","status":"new|updated|completed|failed","for":"who received it","objectives":[],"giver":null,"quote":""}]}`,
     },
   ];
 }
@@ -306,6 +306,7 @@ function validateChunkResult(parsed, chunkText) {
       status: QUEST_STATUSES.has(q.status) ? q.status : 'new',
       objectives: (Array.isArray(q.objectives) ? q.objectives : []).map(o => str(typeof o === 'string' ? o : o && o.text, 200)).filter(Boolean),
       giver: str(q.giver, 80),
+      forWho: str(q.for, 80),
     });
   }
 
@@ -617,19 +618,20 @@ function applyEvent(sheet, e, chunkIndex) {
 }
 
 /**
- * Decide the protagonist. Order: lorebook @protagonist, a protagonist the user
- * set by hand, the narrator's own name in first-person narration, then the
+ * Decide the protagonist (the player). Order: the one the user picked, lorebook
+ * @protagonist, the narrator's own name in first-person narration, then the
  * name the reader gave the narrator most often.
  */
 function resolveProtagonist({ storyText, loreEntries, stateChars, chunks, roster }) {
   const pov = detectPov(storyText);
-  for (const e of loreEntries) {
-    if (parseMetadata(e.text).protagonist) return { person: roster.find(e.displayName), pov, source: 'lorebook' };
-  }
+  // The player the user picked wins over everything the story or lorebook says.
   for (const ch of Object.values(stateChars)) {
     if (ch.narrative?.storyFunction === 'protagonist' && (ch._manualFields || []).includes('storyFunction')) {
       return { person: roster.find(ch.name), pov, source: 'manual' };
     }
+  }
+  for (const e of loreEntries) {
+    if (parseMetadata(e.text).protagonist) return { person: roster.find(e.displayName), pov, source: 'lorebook' };
   }
   if (pov === 'first') {
     const self = findSelfName(storyText);
@@ -681,7 +683,12 @@ function foldChunks(chunks, roster, protagonist, pov) {
     }
     for (const q of c.result.quests) {
       let ex = quests.find(x => sameQuest(x.title, q.title));
-      if (!ex) { ex = { title: q.title, status: 'active', objectives: [], giver: q.giver, chunk: c.index }; quests.push(ex); }
+      if (!ex) { ex = { title: q.title, status: 'active', objectives: [], giver: q.giver, owner: null, chunk: c.index }; quests.push(ex); }
+      if (!ex.owner) {
+        const to = q.forWho && !/^(?:you|player|the player|narrator|the narrator|everyone|all|the team|team|party|the party)$/i.test(q.forWho) && !isNarratorPlaceholder(q.forWho)
+          ? roster.find(q.forWho) : null;
+        ex.owner = to || protagonist || null;
+      }
       if (q.status === 'completed' || q.status === 'failed') ex.status = q.status;
       for (const o of q.objectives) if (!ex.objectives.some(x => fuzzyNameScore(x.text, o) >= 0.8)) ex.objectives.push({ text: o, completed: q.status === 'completed' });
       if (q.status === 'completed') for (const o of ex.objectives) o.completed = true;

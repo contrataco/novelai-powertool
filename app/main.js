@@ -3366,6 +3366,16 @@ ipcMain.handle('litrpg:update-character', (event, { storyId, characterId, update
   return { success: true, state: rpgState };
 });
 
+// The user picks who "you, the player" are. The choice is recorded as a hand
+// edit, so scans keep it over anything the story or lorebook says.
+ipcMain.handle('litrpg:set-player', (event, { storyId, characterId }) => {
+  const rpgState = db.getLitrpgState(storyId);
+  if (!rpgState) return { success: false, error: 'No LitRPG state' };
+  if (!litrpgTracker.setPlayer(rpgState, characterId)) return { success: false, error: 'Character not found' };
+  db.setLitrpgState(storyId, rpgState);
+  return { success: true, state: rpgState };
+});
+
 ipcMain.handle('litrpg:delete-character', (event, { storyId, characterId }) => {
   const rpgState = db.getLitrpgState(storyId);
   if (!rpgState) return { success: false, error: 'No LitRPG state' };

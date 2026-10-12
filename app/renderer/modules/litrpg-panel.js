@@ -11,6 +11,7 @@ import {
   rpgScanBtn, rpgSyncLorebookBtn, rpgReverseSyncBtn,
   rpgScanStatus, rpgScanPhase,
   rpgCastView,
+  rpgPlayerSection, rpgPlayerCard, rpgPlayerSelect,
   rpgPartySection, rpgQuestSection, rpgNpcSection,
   rpgInventorySection, rpgCurrencySection, rpgStatusSection,
   rpgFactionsSection, rpgClassesSection, rpgRacesSection,
@@ -207,7 +208,7 @@ export function refreshRpgUI() {
 
   // Toggle between persona cast view and LitRPG sections
   const rpgOnlySections = [
-    rpgPartySection, rpgQuestSection, rpgNpcSection,
+    rpgPlayerSection, rpgPartySection, rpgQuestSection, rpgNpcSection,
     rpgInventorySection, rpgCurrencySection, rpgStatusSection,
     rpgFactionsSection, rpgClassesSection, rpgRacesSection,
   ];
@@ -221,7 +222,8 @@ export function refreshRpgUI() {
   }
 
   if (isLitRPG) {
-    // Party view
+    // Who "you" are, then the rest of the party
+    renderPlayer(rpg);
     renderParty(rpg);
 
     // Quest log
@@ -362,9 +364,97 @@ function renderPersonaCast(rpg) {
 // PARTY RENDERING
 // =========================================================================
 
+// The character "you, the player" are: the scan's pick, else any character
+// still flagged as the protagonist.
+function getPlayerId(rpg) {
+  const chars = rpg.characters || {};
+  const id = rpg.protagonist?.characterId;
+  if (id && chars[id]) return id;
+  const c = Object.values(chars).find(ch => ch.isProtagonist);
+  return c ? c.id : null;
+}
+
+const PLAYER_SOURCE_TEXT = {
+  'manual': 'You picked this character.',
+  'lorebook': 'Marked @protagonist in your lorebook.',
+  'self-named': 'The narrator names themself in the story.',
+  'reader': 'The story follows this character most.',
+};
+
+function renderPlayer(rpg) {
+  if (!rpgPlayerCard || !rpgPlayerSelect) return;
+  const chars = Object.values(rpg.characters || {}).filter(c => !c.isVoice);
+  const playerId = getPlayerId(rpg);
+  const player = playerId ? rpg.characters[playerId] : null;
+
+  if (!player) {
+    rpgPlayerCard.innerHTML = `<div class="rpg-player-none">Nobody yet. Pick your character below, or run a scan.</div>`;
+  } else {
+    const xp = player.xp?.current != null
+      ? `${player.xp.current}${player.xp.needed ? ` / ${player.xp.needed}` : ''} XP`
+      : '';
+    const source = PLAYER_SOURCE_TEXT[rpg.protagonist?.source] || '';
+    rpgPlayerCard.innerHTML = `
+      <div class="rpg-player-card" data-char-id="${escapeHtml(player.id)}">
+        <div class="rpg-player-portrait">
+          ${player._thumbnailData
+            ? `<img src="data:image/png;base64,${player._thumbnailData}" alt="${escapeHtml(player.name)}">`
+            : `<span class="rpg-portrait-initial">${escapeHtml((player.name || '?')[0].toUpperCase())}</span>`}
+        </div>
+        <div class="rpg-player-info">
+          <div class="rpg-player-name">${escapeHtml(player.name)}</div>
+          <div class="rpg-player-line">${escapeHtml(player.class || 'No class yet')}</div>
+          <div class="rpg-player-line">${player.level ? `Level ${escapeHtml(String(player.level))}` : 'No level yet'}</div>
+          ${xp ? `<div class="rpg-player-line">${escapeHtml(xp)}</div>` : ''}
+          ${source ? `<div class="rpg-player-source">${escapeHtml(source)}</div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  const sorted = chars.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  rpgPlayerSelect.innerHTML = (player ? '' : '<option value="">Choose your character</option>')
+    + sorted.map(c => `<option value="${escapeHtml(c.id)}"${c.id === playerId ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+}
+
+async function setPlayer(charId) {
+  if (!charId || !state.currentStoryId) return;
+  const old = state.litrpgState?.characters || {};
+  const result = await window.powertool.litrpgSetPlayer(state.currentStoryId, charId);
+  if (!result?.success) {
+    showToast(`Could not change the player: ${result?.error || 'unknown error'}`, 4000, 'error');
+    refreshRpgUI();
+    return;
+  }
+  // The saved state has no portraits; keep the ones already loaded.
+  for (const [id, c] of Object.entries(result.state.characters || {})) {
+    if (old[id]?._thumbnailData) c._thumbnailData = old[id]._thumbnailData;
+    if (old[id]?._portraitData) c._portraitData = old[id]._portraitData;
+  }
+  state.litrpgState = result.state;
+  refreshRpgUI();
+  showToast(`You are now playing as ${result.state.characters[charId]?.name || 'that character'}.`, 3000, 'success');
+}
+
+// Groups "per owner" lists so the player's own come first, then everyone else
+// by name. Each item is { ownerId, owner, ... }.
+function groupByOwner(items, playerId, rpg) {
+  const groups = new Map();
+  for (const it of items) {
+    const key = it.ownerId || `shared:${it.owner}`;
+    if (!groups.has(key)) groups.set(key, { ownerId: it.ownerId || null, owner: it.owner, items: [] });
+    groups.get(key).items.push(it);
+  }
+  const playerName = playerId ? rpg.characters?.[playerId]?.name : null;
+  return [...groups.values()]
+    .map(g => ({ ...g, label: g.ownerId && g.ownerId === playerId ? `Yours (${playerName})` : g.owner, mine: !!g.ownerId && g.ownerId === playerId }))
+    .sort((a, b) => (b.mine - a.mine) || (a.label || '').localeCompare(b.label || ''));
+}
+
 function renderParty(rpg) {
   if (!rpgPartyList) return;
+  const playerId = getPlayerId(rpg);
   const partyMembers = (rpg.party?.members || [])
+    .filter(id => id !== playerId)
     .map(id => rpg.characters?.[id])
     .filter(Boolean);
 
@@ -373,7 +463,7 @@ function renderParty(rpg) {
   if (partyMembers.length === 0) {
     rpgPartyList.innerHTML = `<div class="rpg-party-empty">
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L4 7v6c0 5.5 3.4 10.7 8 12 4.6-1.3 8-6.5 8-12V7l-8-5z"/></svg>
-      <div>No party members detected. Run a <b>Lore Scan</b> — party members are identified automatically from your story.</div>
+      <div>${playerId ? 'Nobody else is in your party yet.' : 'No party members detected. Run a <b>Lore Scan</b> and party members are found automatically from your story.'}</div>
     </div>`;
     return;
   }
@@ -1250,7 +1340,10 @@ async function deleteCharacter(charId) {
 
 function renderQuests(rpg) {
   if (!rpgQuestListActive || !rpgQuestListDone) return;
-  const quests = Object.values(rpg.quests || {});
+  const playerId = getPlayerId(rpg);
+  // The player's quests first.
+  const quests = Object.values(rpg.quests || {})
+    .sort((a, b) => (b.ownerId === playerId && !!playerId) - (a.ownerId === playerId && !!playerId));
   const active = quests.filter(q => q.status === 'active');
   const done = quests.filter(q => q.status !== 'active');
 
@@ -1259,15 +1352,23 @@ function renderQuests(rpg) {
   if (active.length === 0) {
     rpgQuestListActive.innerHTML = '<div class="empty-state-sm" style="padding:4px;">No active quests. Quest tracking activates when your story mentions objectives, missions, or quests.</div>';
   } else {
-    rpgQuestListActive.innerHTML = active.map(q => buildQuestCardHTML(q)).join('');
+    rpgQuestListActive.innerHTML = active.map(q => buildQuestCardHTML(q, rpg, playerId)).join('');
   }
 
   rpgQuestListDone.innerHTML = done.length === 0
     ? '<div class="empty-state-sm" style="padding:4px;">None yet.</div>'
-    : done.map(q => buildQuestCardHTML(q)).join('');
+    : done.map(q => buildQuestCardHTML(q, rpg, playerId)).join('');
 }
 
-function buildQuestCardHTML(quest) {
+function questOwnerLabel(quest, rpg, playerId) {
+  if (!quest.ownerId) return '';
+  const owner = rpg.characters?.[quest.ownerId];
+  if (!owner) return '';
+  return quest.ownerId === playerId ? `For: you (${owner.name})` : `For: ${owner.name}`;
+}
+
+function buildQuestCardHTML(quest, rpg = getRpgState(), playerId = getPlayerId(rpg)) {
+  const ownerLabel = questOwnerLabel(quest, rpg, playerId);
   const objectives = (quest.objectives || []).map(o =>
     `<div class="rpg-objective-v2${o.completed ? ' completed' : ''}"><span class="rpg-obj-check">${o.completed ? '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>' : ''}</span>${escapeHtml(o.text)}</div>`
   ).join('');
@@ -1291,6 +1392,7 @@ function buildQuestCardHTML(quest) {
         <span class="rpg-quest-type ${questType}">${escapeHtml(questType.toUpperCase())}</span>
         <span class="rpg-quest-title">${escapeHtml(quest.title)}</span>
       </div>
+      ${ownerLabel ? `<div class="rpg-quest-owner${quest.ownerId === playerId ? ' is-player' : ''}">${escapeHtml(ownerLabel)}</div>` : ''}
       ${quest.description ? `<div class="rpg-quest-desc">${escapeHtml(quest.description)}</div>` : ''}
       ${progressBar}
       ${objectives ? `<div class="rpg-quest-objectives">${objectives}</div>` : ''}
@@ -1491,7 +1593,7 @@ function renderInventory(rpg) {
   if (!rpgInventoryList) return;
   const allChars = Object.values(rpg.characters || {});
   const globalInv = rpg.globalInventory || [];
-  const charItems = allChars.flatMap(c => (c.inventory || []).map(i => ({ ...i, owner: c.name })));
+  const charItems = allChars.flatMap(c => (c.inventory || []).map(i => ({ ...i, owner: c.name, ownerId: c.id })));
   const allItems = [...globalInv.map(i => ({ ...i, owner: 'Shared' })), ...charItems];
 
   if (allItems.length === 0) {
@@ -1502,9 +1604,11 @@ function renderInventory(rpg) {
     return;
   }
 
-  rpgInventoryList.innerHTML = `<div class="rpg-inv-grid">${allItems.map(i =>
-    `<div class="rpg-inv-slot${i.rarity ? ` rarity-${i.rarity}` : ''}"><span style="flex:1;color:var(--text-primary);">${escapeHtml(i.name)}</span><span class="rpg-inv-qty">x${i.quantity || 1}</span><span class="detail-muted" style="font-size:9px;">${escapeHtml(i.owner)}</span></div>`
-  ).join('')}</div>`;
+  rpgInventoryList.innerHTML = groupByOwner(allItems, getPlayerId(rpg), rpg).map(g =>
+    `<div class="rpg-owner-group${g.mine ? ' is-player' : ''}"><div class="rpg-owner-heading">${escapeHtml(g.label)}</div><div class="rpg-inv-grid">${g.items.map(i =>
+      `<div class="rpg-inv-slot${i.rarity ? ` rarity-${i.rarity}` : ''}"><span style="flex:1;color:var(--text-primary);">${escapeHtml(i.name)}</span><span class="rpg-inv-qty">x${i.quantity || 1}</span></div>`
+    ).join('')}</div></div>`
+  ).join('');
 }
 
 function renderCurrency(rpg) {
@@ -1518,7 +1622,7 @@ function renderCurrency(rpg) {
   }
   for (const c of allChars) {
     if (c.currency && Object.keys(c.currency).length > 0) {
-      entries.push({ owner: c.name, currency: c.currency });
+      entries.push({ owner: c.name, ownerId: c.id, currency: c.currency });
     }
   }
 
@@ -1530,9 +1634,9 @@ function renderCurrency(rpg) {
     return;
   }
 
-  rpgCurrencyList.innerHTML = entries.map(e =>
-    `<div class="mb-sm"><div class="detail-muted" style="font-size:9px;margin-bottom:3px;">${escapeHtml(e.owner)}</div><div class="flex-row-wrap">${Object.entries(e.currency).map(([unit, amount]) =>
-      `<div class="rpg-currency-card"><span class="rpg-currency-amount">${amount}</span><span class="rpg-currency-unit">${escapeHtml(unit)}</span></div>`
+  rpgCurrencyList.innerHTML = groupByOwner(entries, getPlayerId(rpg), rpg).map(g =>
+    `<div class="rpg-owner-group${g.mine ? ' is-player' : ''}"><div class="rpg-owner-heading">${escapeHtml(g.label)}</div><div class="flex-row-wrap">${g.items.flatMap(e => Object.entries(e.currency)).map(([unit, amount]) =>
+      `<div class="rpg-currency-card"><span class="rpg-currency-amount">${escapeHtml(String(amount))}</span><span class="rpg-currency-unit">${escapeHtml(unit)}</span></div>`
     ).join('')}</div></div>`
   ).join('');
 }
@@ -1540,7 +1644,7 @@ function renderCurrency(rpg) {
 function renderStatusEffects(rpg) {
   if (!rpgStatusEffectsList) return;
   const allChars = Object.values(rpg.characters || {});
-  const allEffects = allChars.flatMap(c => (c.statusEffects || []).map(s => ({ ...s, owner: c.name })));
+  const allEffects = allChars.flatMap(c => (c.statusEffects || []).map(s => ({ ...s, owner: c.name, ownerId: c.id })));
 
   if (allEffects.length === 0) {
     rpgStatusEffectsList.innerHTML = `<div class="rpg-empty-state">
@@ -1550,9 +1654,11 @@ function renderStatusEffects(rpg) {
     return;
   }
 
-  rpgStatusEffectsList.innerHTML = `<div class="rpg-status-tag-row">${allEffects.map(s =>
-    `<span class="rpg-status-tag rpg-status-${s.type || 'buff'}" title="${escapeHtml(s.owner)}${s.duration ? ` — ${escapeHtml(s.duration)}` : ''}">${s.type === 'buff' ? '&#9650;' : s.type === 'debuff' ? '&#9660;' : '&#9679;'} ${escapeHtml(s.name)}</span>`
-  ).join('')}</div>`;
+  rpgStatusEffectsList.innerHTML = groupByOwner(allEffects, getPlayerId(rpg), rpg).map(g =>
+    `<div class="rpg-owner-group${g.mine ? ' is-player' : ''}"><div class="rpg-owner-heading">${escapeHtml(g.label)}</div><div class="rpg-status-tag-row">${g.items.map(s =>
+      `<span class="rpg-status-tag rpg-status-${escapeHtml(s.type || 'buff')}"${s.duration ? ` title="${escapeHtml(s.duration)}"` : ''}>${s.type === 'buff' ? '&#9650;' : s.type === 'debuff' ? '&#9660;' : '&#9679;'} ${escapeHtml(s.name)}</span>`
+    ).join('')}</div></div>`
+  ).join('');
 }
 
 // =========================================================================
@@ -2524,6 +2630,11 @@ export function init() {
   });
 
   // --- Delegated event listeners for RPG card lists ---
+  if (rpgPlayerSelect) rpgPlayerSelect.addEventListener('change', () => setPlayer(rpgPlayerSelect.value));
+  if (rpgPlayerCard) rpgPlayerCard.addEventListener('click', (e) => {
+    const card = e.target.closest('.rpg-player-card');
+    if (card) openStatOverlay(card.dataset.charId, getRpgState());
+  });
   if (rpgPartyList) rpgPartyList.addEventListener('click', (e) => {
     const card = e.target.closest('.rpg-character-card-v2');
     if (card) openStatOverlay(card.dataset.charId, getRpgState());

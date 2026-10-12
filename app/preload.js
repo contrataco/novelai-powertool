@@ -266,6 +266,8 @@ contextBridge.exposeInMainWorld('powertool', {
     ipcRenderer.invoke('litrpg:reject-all-updates', { storyId }),
   litrpgUpdateCharacter: (storyId, characterId, updates) =>
     ipcRenderer.invoke('litrpg:update-character', { storyId, characterId, updates }),
+  litrpgSetPlayer: (storyId, characterId) =>
+    ipcRenderer.invoke('litrpg:set-player', { storyId, characterId }),
   litrpgDeleteCharacter: (storyId, characterId) =>
     ipcRenderer.invoke('litrpg:delete-character', { storyId, characterId }),
   litrpgResetState: (storyId) =>

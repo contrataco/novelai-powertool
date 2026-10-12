@@ -1165,7 +1165,8 @@ function isCharacterLoreEntry(e) {
 
 function povPromptLine(pov, protagonistName) {
   const who = protagonistName || 'the narrator (write "narrator" when no name is given)';
-  if (pov === 'first') return `POINT OF VIEW: first person. "I", "me" and "my" in the narration are ${who}.`;
+  const sys = ` Game system messages that say "you" are for ${protagonistName || 'the narrator'} unless they name someone else.`;
+  if (pov === 'first') return `POINT OF VIEW: first person. "I", "me" and "my" in the narration are ${who}.${sys}`;
   if (pov === 'second') return `POINT OF VIEW: second person. "You" in the narration is ${who}.`;
   return `POINT OF VIEW: third person.${protagonistName ? ` The protagonist is ${protagonistName}.` : ''}`;
 }
@@ -1289,6 +1290,7 @@ async function r1_readWholeStory(ctx) {
 
   // Apply: one tracked character per person.
   const idMap = new Map();      // dropped or merged id -> keeper id (or null)
+  const personIds = new Map();  // roster person -> tracked character id
   const merged = [];
   let added = 0, changedFields = 0;
   const now = Date.now();
@@ -1306,6 +1308,7 @@ async function r1_readWholeStory(ctx) {
       added++;
     }
     const char = state.characters[keeperId];
+    personIds.set(p, keeperId);
     for (const id of ids) {
       if (id === keeperId) continue;
       mergeCharacterInto(char, state.characters[id]);
@@ -1409,7 +1412,10 @@ async function r1_readWholeStory(ctx) {
   let questsAdded = 0;
   for (const q of fold.quests) {
     const ex = Object.values(state.quests).find(o => reader.sameQuest(o.title, q.title));
+    // Whose quest it is: the character it was given to, normally the player.
+    const ownerId = (q.owner && personIds.get(q.owner)) || null;
     if (ex) {
+      if (!ex._ownerManual) ex.ownerId = ownerId;
       if (q.status !== 'active' && ex.status === 'active') { ex.status = q.status; ex.completedAt = now; }
       for (const o of q.objectives) {
         const eo = ex.objectives.find(x => fuzzyNameScore(x.text, o.text) >= 0.8);
@@ -1420,7 +1426,7 @@ async function r1_readWholeStory(ctx) {
     } else {
       const id = generateRpgId('quest');
       state.quests[id] = {
-        id, title: q.title, description: '', status: q.status, type: 'side',
+        id, title: q.title, description: '', status: q.status, type: 'side', ownerId,
         objectives: q.objectives, rewards: null, giver: q.giver || null, location: null,
         discoveredAt: now, completedAt: q.status === 'active' ? null : now, lastUpdated: now,
       };
@@ -2587,11 +2593,49 @@ function categorizeChanges(scoredChanges) {
   return result;
 }
 
+/**
+ * Make one character "you, the player". The choice is recorded as a hand edit
+ * (storyFunction in _manualFields), so later scans keep it over anything the
+ * story or lorebook says. Quests the old player held, or nobody held, move
+ * with the role. Mutates and returns state, or null when the id is unknown.
+ */
+function setPlayer(state, characterId) {
+  const player = state?.characters?.[characterId];
+  if (!player) return null;
+  const oldId = state.protagonist?.characterId || null;
+  for (const [id, c] of Object.entries(state.characters)) {
+    const manual = new Set(c._manualFields || []);
+    if (id === characterId) {
+      c.narrative = { ...(c.narrative || {}), storyFunction: 'protagonist' };
+      c.isProtagonist = true;
+      c.isPartyMember = true;
+      c.isNPC = false;
+      if (!PARTY_SIDE_ROLES.has(c.partyRole)) c.partyRole = 'party-member';
+      manual.add('storyFunction');
+    } else if (c.isProtagonist || c.narrative?.storyFunction === 'protagonist') {
+      c.isProtagonist = false;
+      c.narrative = { ...(c.narrative || {}), storyFunction: null };
+      manual.add('storyFunction');
+    } else {
+      continue;
+    }
+    c._manualFields = [...manual];
+  }
+  for (const q of Object.values(state.quests || {})) {
+    if (!q._ownerManual && (q.ownerId === oldId || !q.ownerId)) q.ownerId = characterId;
+  }
+  state.party = state.party || {};
+  state.party.members = Object.entries(state.characters).filter(([, c]) => c.isPartyMember).map(([id]) => id);
+  state.protagonist = { characterId, name: player.name, pov: state.protagonist?.pov || null, source: 'manual' };
+  return state;
+}
+
 // ============================================================================
 // EXPORTS
 // ============================================================================
 
 module.exports = {
+  setPlayer,
   // Detection
   detectLitRPGSignals,
   confirmLitRPG,

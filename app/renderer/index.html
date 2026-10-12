@@ -1038,6 +1038,14 @@
         <!-- Relationship Graph -->
         <div id="relationshipGraphContainer" class="u-hidden relationship-graph-container"></div>
 
+        <!-- Player: who "you" are in the game -->
+        <div class="lore-section rpg-player-section u-hidden" id="rpgPlayerSection">
+          <h4 class="rpg-player-heading">You are playing as</h4>
+          <div id="rpgPlayerCard"></div>
+          <label class="rpg-player-pick" for="rpgPlayerSelect">Switch player</label>
+          <select id="rpgPlayerSelect" class="rpg-player-select"></select>
+        </div>
+
         <!-- Party View -->
         <details class="lore-section" id="rpgPartySection" open>
           <summary>Party <span class="count" id="rpgPartyCount">(0)</span></summary>
