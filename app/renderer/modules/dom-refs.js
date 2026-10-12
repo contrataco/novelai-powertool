@@ -246,6 +246,10 @@ export const comfyuiStepsInput = document.getElementById('comfyuiSteps');
 export const comfyuiCfgInput = document.getElementById('comfyuiCfg');
 export const comfyuiSamplerSelect = document.getElementById('comfyuiSampler');
 export const comfyuiSchedulerSelect = document.getElementById('comfyuiScheduler');
+export const comfyuiPromptStyleSelect = document.getElementById('comfyuiPromptStyle');
+export const comfyuiExtraPositiveInput = document.getElementById('comfyuiExtraPositive');
+export const comfyuiExtraNegativeInput = document.getElementById('comfyuiExtraNegative');
+export const comfyuiExtraNegativeHint = document.getElementById('comfyuiExtraNegativeHint');
 
 // Settings elements -- Venice AI
 export const veniceKeyDot = document.getElementById('veniceKeyDot');
@@ -402,6 +406,8 @@ export const loreDetailLevel = document.getElementById('loreDetailLevel');
 export const loreLlmSelect = document.getElementById('loreLlmSelect');
 export const loreNovelaiModelSettings = document.getElementById('loreNovelaiModelSettings');
 export const novelaiTextModelSelect = document.getElementById('novelaiTextModelSelect');
+export const lorePerchanceModelSettings = document.getElementById('lorePerchanceModelSettings');
+export const perchanceTextModelSelect = document.getElementById('perchanceTextModelSelect');
 export const loreOllamaSettings = document.getElementById('loreOllamaSettings');
 export const loreOllamaModelSelect = document.getElementById('loreOllamaModelSelect');
 export const loreOllamaUrlInput = document.getElementById('loreOllamaUrlInput');

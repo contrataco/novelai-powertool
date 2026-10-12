@@ -9,6 +9,7 @@ import {
   comfyuiCheckBtn, comfyuiDot, comfyuiStatusText, comfyuiServerDetails, comfyuiApiUrlInput,
   comfyuiCheckpointSelect, comfyuiModelHint, comfyuiArtStyleSelect, comfyuiStepsInput, comfyuiCfgInput,
   comfyuiSamplerSelect, comfyuiSchedulerSelect,
+  comfyuiPromptStyleSelect, comfyuiExtraPositiveInput, comfyuiExtraNegativeInput, comfyuiExtraNegativeHint,
   veniceKeyDot, veniceKeyText, veniceApiKeyInput, saveVeniceKeyBtn,
   veniceModelSelect, veniceStepsInput, veniceCfgScaleInput,
   veniceStylePresetSelect, veniceSafeModeCheckbox, veniceHideWatermarkCheckbox,
@@ -330,6 +331,53 @@ function fillSelect(select, options, selected, { autoLabel } = {}) {
 // Models from the last successful server probe, for their fixed-recipe info.
 let comfyuiModels = [];
 
+// Per-model prompt settings as edited in this modal, keyed by model id ('' is
+// Auto), and the id the prompt fields currently show. Switching models in the
+// dropdown stashes the fields under the old id first, so editing two models
+// before saving keeps both.
+let comfyuiProfiles = {};
+let comfyuiProfileId = '';
+
+function stashComfyuiProfileFields() {
+  comfyuiProfiles[comfyuiProfileId] = {
+    style: comfyuiPromptStyleSelect.value,
+    positive: comfyuiExtraPositiveInput.value.trim(),
+    negative: comfyuiExtraNegativeInput.value.trim(),
+  };
+}
+
+function showComfyuiProfileFields(id) {
+  comfyuiProfileId = id;
+  const p = comfyuiProfiles[id] || {};
+  comfyuiPromptStyleSelect.value = p.style || '';
+  comfyuiExtraPositiveInput.value = p.positive || '';
+  comfyuiExtraNegativeInput.value = p.negative || '';
+}
+
+/**
+ * Name what Auto resolves to for the selected model, and park the negative
+ * field for distilled models, which run at CFG 1 where a negative does
+ * nothing. Unknown models (server down) fall back on the id prefix alone.
+ */
+function updateComfyuiPromptHints() {
+  const id = comfyuiCheckpointSelect.value;
+  const isFixed = id.startsWith('diffusion:');
+  const style = comfyuiModels.find((m) => m.id === id)?.promptStyle || (isFixed ? 'prose' : null);
+  comfyuiPromptStyleSelect.options[0].textContent = style
+    ? `Auto - ${style === 'prose' ? 'natural language' : 'tags'} for this model`
+    : 'Auto';
+  comfyuiExtraNegativeInput.disabled = isFixed;
+  comfyuiExtraNegativeHint.textContent = isFixed
+    ? 'Not used: this model ignores negative prompts. Phrase what you want in Extra Descriptors instead (e.g. "sharp focus, clean hands").'
+    : 'Kept out of every image from the selected model.';
+}
+
+function onComfyuiModelChange() {
+  stashComfyuiProfileFields();
+  showComfyuiProfileFields(comfyuiCheckpointSelect.value);
+  updateComfyuiModelHint();
+}
+
 /**
  * Distilled models (Flux schnell, Z-Image Turbo) run a fixed recipe: their
  * own step count and sampler, CFG 1, no negative prompt. Grey out the
@@ -340,6 +388,7 @@ let comfyuiModels = [];
  * server is unreachable and the model list is empty.
  */
 function updateComfyuiModelHint() {
+  updateComfyuiPromptHints();
   const id = comfyuiCheckpointSelect.value;
   const isFixed = id.startsWith('diffusion:');
   for (const el of [comfyuiStepsInput, comfyuiCfgInput, comfyuiSamplerSelect, comfyuiSchedulerSelect]) {
@@ -411,7 +460,9 @@ async function refreshComfyui() {
 }
 
 function readComfyuiForm() {
+  stashComfyuiProfileFields();
   return {
+    modelProfiles: comfyuiProfiles,
     apiUrl: comfyuiApiUrlInput.value.trim() || 'http://127.0.0.1:8188',
     checkpoint: comfyuiCheckpointSelect.value,
     artStyle: comfyuiArtStyleSelect.value || 'no-style',
@@ -459,6 +510,8 @@ export async function loadProviderSettings(effectiveProvider) {
   fillSelect(comfyuiCheckpointSelect, [], comfyuiSettings.checkpoint, { autoLabel: 'Auto (first checkpoint)' });
   fillSelect(comfyuiSamplerSelect, [], comfyuiSettings.sampler);
   fillSelect(comfyuiSchedulerSelect, [], comfyuiSettings.scheduler);
+  comfyuiProfiles = { ...(comfyuiSettings.modelProfiles || {}) };
+  showComfyuiProfileFields(comfyuiCheckpointSelect.value);
   updateComfyuiModelHint();
   refreshComfyui();
 
@@ -616,7 +669,7 @@ export function initProviderEvents() {
 
   // ComfyUI server check. Saves the URL first so the probe tests what is
   // typed, not what was last saved - same as the Perchance check above.
-  comfyuiCheckpointSelect.addEventListener('change', updateComfyuiModelHint);
+  comfyuiCheckpointSelect.addEventListener('change', onComfyuiModelChange);
 
   comfyuiCheckBtn.addEventListener('click', async () => {
     comfyuiCheckBtn.disabled = true;

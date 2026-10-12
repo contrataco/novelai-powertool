@@ -18,6 +18,9 @@
 
 const crypto = require('crypto');
 const { ART_STYLES } = require('./perchance');
+const {
+  buildProsePrompt, flatToProse, novelaiToComfyWeights, joinPrompt,
+} = require('./comfyui-prompt');
 
 const LOG_PREFIX = '[ComfyUI]';
 
@@ -42,15 +45,45 @@ const REQUEST_TIMEOUT_MS = 15000;
 
 const MAX_SIDE = 2048;
 
-// Pony-family checkpoints are trained against these score tags and produce
-// visibly worse output without them. Matched on the checkpoint filename.
-const CHECKPOINT_PROMPT_PRESETS = [
+/**
+ * How each checkpoint family wants to be prompted, matched on the filename.
+ *
+ * `style` picks the prompt form: 'tags' is the comma-separated booru list
+ * the scene pipeline writes, 'prose' rewrites it into sentences for models
+ * whose text encoder was trained on captions. A checkpoint that matches no
+ * row keeps tags and nothing else - what every checkpoint got before.
+ * `clipSkip` is applied with CLIPSetLastLayer.
+ */
+const CHECKPOINT_PROFILES = [
   {
+    // Pony V6 model card: load with clip skip 2 or output degrades to "low
+    // quality blobs", and the full score string works far better than
+    // score_9 alone.
     match: /pony/i,
-    prefix: 'score_9, score_8_up, score_7_up, ',
+    style: 'tags',
+    prefix: 'score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up',
     negative: 'score_6, score_5, score_4',
+    clipSkip: -2,
+  },
+  {
+    match: /realvis/i,
+    style: 'prose',
+    prefix: '',
+    negative: 'face asymmetry, eyes asymmetry, deformed eyes, lowres, blurry',
+    clipSkip: null,
+  },
+  {
+    match: /sd_?xl_base|sdxl[_-]?base/i,
+    style: 'prose',
+    prefix: '',
+    negative: '',
+    clipSkip: null,
   },
 ];
+
+const DEFAULT_PROFILE = { style: 'tags', prefix: '', negative: '', clipSkip: null };
+// Distilled diffusion models: caption-trained encoders, and no negative.
+const DIFFUSION_PROFILE = { style: 'prose', prefix: '', negative: '', clipSkip: null };
 
 // Stored model ids for bare diffusion models carry this prefix, so they can
 // never be confused with a checkpoint of the same filename. A colon cannot
@@ -113,11 +146,46 @@ function getApiUrl(store) {
   return raw.replace('localhost', '127.0.0.1').replace(/\/+$/, '');
 }
 
-/** Checkpoints only: a model that ignores its negative gets no score tags. */
-function presetFor(modelId) {
-  if (isDiffusionId(modelId)) return null;
-  return CHECKPOINT_PROMPT_PRESETS.find((p) => p.match.test(modelId || '')) || null;
+/** The built-in profile for a model id, before the user's own additions. */
+function builtInProfile(modelId) {
+  if (isDiffusionId(modelId)) return DIFFUSION_PROFILE;
+  return CHECKPOINT_PROFILES.find((p) => p.match.test(basename(modelId || ''))) || DEFAULT_PROFILE;
 }
+
+/**
+ * The profile a generation uses: the built-in one for the model actually
+ * run, plus what the user saved for the model they picked in settings
+ * (`settingsId` is '' when they left it on Auto). Saved fields: `style`
+ * ('' for the built-in choice), `positive` and `negative` descriptors.
+ */
+function profileFor(modelId, settingsId, store) {
+  const base = builtInProfile(modelId);
+  const saved = (store.get('comfyuiModelProfiles') || {})[settingsId || ''] || {};
+  const style = saved.style === 'tags' || saved.style === 'prose' ? saved.style : base.style;
+  return {
+    ...base,
+    style,
+    extraPositive: String(saved.positive || '').trim(),
+    // A distilled model runs at CFG 1, where a negative does nothing.
+    extraNegative: isDiffusionId(modelId) ? '' : String(saved.negative || '').trim(),
+  };
+}
+
+/**
+ * The prompt body before prefixes and style: sentences for a prose model,
+ * built from the structured captions when the scene pipeline sent them.
+ */
+function promptBody(prompt, style, options) {
+  if (style !== 'prose') return prompt;
+  if (options.charCaptions?.length || options.baseCaption) {
+    const prose = buildProsePrompt({ baseCaption: options.baseCaption, charCaptions: options.charCaptions });
+    if (prose) return prose;
+  }
+  return flatToProse(prompt);
+}
+
+// The model the last generation ran on, for gallery and history metadata.
+let lastModelId = '';
 
 /**
  * Latent sizes must be a multiple of the latent node's step, or the graph is
@@ -161,11 +229,14 @@ async function listModels(baseUrl) {
     nodeOptions(baseUrl, 'UNETLoader', 'unet_name').catch(() => []),
     nodeOptions(baseUrl, 'UnetLoaderGGUF', 'unet_name').catch(() => []),
   ]);
-  const models = checkpoints.map((file) => ({ id: file, name: checkpointLabel(file), family: null, fixed: null }));
+  const models = checkpoints.map((file) => ({
+    id: file, name: checkpointLabel(file), family: null, fixed: null, promptStyle: builtInProfile(file).style,
+  }));
   for (const file of [...unets, ...ggufs]) {
     const family = familyFor(file);
     if (!family) continue;
     models.push({
+      promptStyle: DIFFUSION_PROFILE.style,
       id: DIFFUSION_PREFIX + file,
       name: `${checkpointLabel(file)} (${family.label})`,
       family: family.id,
@@ -216,11 +287,14 @@ function unreachable(baseUrl, e) {
   );
 }
 
-function buildGraph({ checkpoint, positive, negative, width, height, seed, steps, cfg, sampler, scheduler }) {
-  return {
+function buildGraph({ checkpoint, positive, negative, width, height, seed, steps, cfg, sampler, scheduler, clipSkip }) {
+  // Both encoders read the clip through CLIPSetLastLayer when the model
+  // wants clip skip, straight from the checkpoint otherwise.
+  const clip = clipSkip ? ['8', 0] : ['1', 1];
+  const graph = {
     '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: checkpoint } },
-    '2': { class_type: 'CLIPTextEncode', inputs: { text: positive, clip: ['1', 1] } },
-    '3': { class_type: 'CLIPTextEncode', inputs: { text: negative, clip: ['1', 1] } },
+    '2': { class_type: 'CLIPTextEncode', inputs: { text: positive, clip } },
+    '3': { class_type: 'CLIPTextEncode', inputs: { text: negative, clip } },
     '4': { class_type: 'EmptyLatentImage', inputs: { width, height, batch_size: 1 } },
     '5': {
       class_type: 'KSampler',
@@ -242,6 +316,10 @@ function buildGraph({ checkpoint, positive, negative, width, height, seed, steps
     // so the app does not fill the server's output folder.
     '7': { class_type: 'PreviewImage', inputs: { images: ['6', 0] } },
   };
+  if (clipSkip) {
+    graph['8'] = { class_type: 'CLIPSetLastLayer', inputs: { clip: ['1', 1], stop_at_clip_layer: clipSkip } };
+  }
+  return graph;
 }
 
 /**
@@ -386,19 +464,39 @@ module.exports = {
     return Object.entries(ART_STYLES).map(([id, style]) => ({ id, name: style.name }));
   },
 
+  /**
+   * The negative the renderer bakes into its prompt before sending it with
+   * rawNegativePrompt, so the model's profile and the user's per-model
+   * negative descriptors have to be in here, not added again in generate().
+   */
   getNegativeSuffix(store) {
-    if (isDiffusionId(store.get('comfyuiCheckpoint'))) {
+    const checkpoint = store.get('comfyuiCheckpoint') || '';
+    if (isDiffusionId(checkpoint)) {
       return { styleNegative: '', ucPresetNegative: '', combined: '' };
     }
     const artStyle = ART_STYLES[store.get('comfyuiArtStyle') || 'no-style'] || ART_STYLES['no-style'];
-    const preset = presetFor(store.get('comfyuiCheckpoint'));
+    const profile = profileFor(checkpoint, checkpoint, store);
     const styleNegative = artStyle.negative || '';
-    const ucPresetNegative = preset?.negative || '';
+    const ucPresetNegative = [profile.negative, profile.extraNegative].filter(Boolean).join(', ');
     return {
       styleNegative,
       ucPresetNegative,
       combined: [styleNegative, ucPresetNegative].filter(Boolean).join(', '),
     };
+  },
+
+  /**
+   * 'prose' or 'tags' for the model the next generation will most likely
+   * use: the saved choice, or on Auto the model the last run resolved to.
+   */
+  getPromptStyle(store) {
+    const settingsId = store.get('comfyuiCheckpoint') || '';
+    return profileFor(settingsId || lastModelId, settingsId, store).style;
+  },
+
+  /** Display name of the model the last generation ran on. */
+  getActiveModelLabel() {
+    return lastModelId ? checkpointLabel(lastModelId) : '';
   },
 
   /**
@@ -446,7 +544,8 @@ module.exports = {
     const settings = store.get('imageSettings') || {};
     const artStyle = ART_STYLES[store.get('comfyuiArtStyle') || 'no-style'] || ART_STYLES['no-style'];
 
-    let checkpoint = store.get('comfyuiCheckpoint') || '';
+    const settingsId = store.get('comfyuiCheckpoint') || '';
+    let checkpoint = settingsId;
     if (!checkpoint) {
       let installed;
       try {
@@ -463,6 +562,19 @@ module.exports = {
     const seed = (options.seed !== undefined && options.seed !== null)
       ? Number(options.seed)
       : crypto.randomInt(0, 2 ** 32);
+
+    // The positive is always assembled here, even under rawPrompt: the
+    // renderer sets that flag on every scene prompt because NovelAI's suffix
+    // is baked in renderer-side, but this provider has no positive suffix
+    // for it to bake. The negative does arrive baked (getNegativeSuffix).
+    const profile = profileFor(checkpoint, settingsId, store);
+    const positive = novelaiToComfyWeights(joinPrompt(
+      [profile.prefix, promptBody(prompt, profile.style, options), profile.extraPositive, artStyle.prompt],
+      profile.style,
+    ));
+    const negative = novelaiToComfyWeights(options.rawNegativePrompt
+      ? (negativePrompt || '')
+      : [negativePrompt, artStyle.negative, profile.negative, profile.extraNegative].filter(Boolean).join(', '));
 
     let graph;
     let width;
@@ -483,18 +595,16 @@ module.exports = {
       height = snapSide(settings.height, 16);
       timeoutMs = DIFFUSION_TIMEOUT_MS;
       graph = buildDiffusionGraph({
-        family, file, ...files, positive: prompt + artStyle.prompt, width, height, seed,
+        family, file, ...files, positive, width, height, seed,
       });
     } else {
-      const preset = presetFor(checkpoint);
       width = snapSide(settings.width);
       height = snapSide(settings.height);
       graph = buildGraph({
         checkpoint,
-        positive: (preset?.prefix || '') + prompt + artStyle.prompt,
-        negative: options.rawNegativePrompt
-          ? (negativePrompt || '')
-          : [negativePrompt, artStyle.negative, preset?.negative].filter(Boolean).join(', '),
+        positive,
+        negative,
+        clipSkip: profile.clipSkip,
         width,
         height,
         seed,
@@ -506,6 +616,9 @@ module.exports = {
     }
 
     console.log(`${LOG_PREFIX} Queueing ${width}x${height} on ${checkpointLabel(checkpoint)} via ${baseUrl}`);
+    console.log(`${LOG_PREFIX} Prompt (${profile.style}): ${positive.slice(0, 600)}`);
+    if (!isDiffusionId(checkpoint)) console.log(`${LOG_PREFIX} Negative: ${negative.slice(0, 300)}`);
+    lastModelId = checkpoint;
 
     let res;
     try {

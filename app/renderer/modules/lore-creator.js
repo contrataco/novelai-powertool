@@ -16,7 +16,7 @@ import {
   loreEnrichOld, loreEnrichNew, loreEnrichAcceptBtn, loreEnrichEditBtn, loreEnrichRejectBtn,
   loreAutoScan, loreAutoUpdates, loreMinChars, loreMinCharsValue,
   loreTemp, loreTempValue, loreDetailLevel,
-  loreLlmSelect, loreNovelaiModelSettings, novelaiTextModelSelect, loreOllamaSettings, loreOllamaModelSelect, loreOllamaUrlInput, loreOllamaUrlStatus, loreOllamaRefreshBtn,
+  loreLlmSelect, loreNovelaiModelSettings, novelaiTextModelSelect, lorePerchanceModelSettings, perchanceTextModelSelect, loreOllamaSettings, loreOllamaModelSelect, loreOllamaUrlInput, loreOllamaUrlStatus, loreOllamaRefreshBtn,
   loreHybridToggle,
   loreScanMenu,
   startProgressiveScanBtn, pauseProgressiveScanBtn, cancelProgressiveScanBtn,
@@ -2289,13 +2289,16 @@ async function updateLlmIndicator(provider, model, novelaiModel) {
   let primary;
   if (provider === 'ollama') {
     primary = 'Ollama ' + (model || 'mistral:7b');
+  } else if (provider === 'perchance') {
+    primary = 'Perchance ' + (perchanceTextModelSelect?.value || 'perchance');
   } else {
     const nm = novelaiModel || novelaiTextModelSelect?.value || 'glm-4-6';
     primary = nm === 'xialong' ? 'NovelAI Xialong' : 'NovelAI GLM-4-6';
   }
 
-  // Check if hybrid is enabled in settings and secondary is available
-  const hybridEnabled = loreHybridToggle.checked;
+  // Check if hybrid is enabled in settings and secondary is available.
+  // Only NovelAI + Ollama pair up (see pickSecondaryGenerateTextFn in main).
+  const hybridEnabled = loreHybridToggle.checked && provider !== 'perchance';
   let hybridLabel = '';
   if (hybridEnabled) {
     try {
@@ -2557,7 +2560,9 @@ export function init() {
       const llmConfig = await window.powertool.loreGetLlmProvider();
       loreLlmSelect.value = llmConfig.provider;
       if (novelaiTextModelSelect) novelaiTextModelSelect.value = llmConfig.novelaiTextModel || 'glm-4-6';
+      if (perchanceTextModelSelect) perchanceTextModelSelect.value = llmConfig.perchanceTextModel || 'perchance';
       loreNovelaiModelSettings.classList.toggle('u-hidden', llmConfig.provider !== 'novelai');
+      lorePerchanceModelSettings.classList.toggle('u-hidden', llmConfig.provider !== 'perchance');
       updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel, llmConfig.novelaiTextModel);
       if (llmConfig.provider === 'ollama') {
         loreOllamaSettings.classList.remove('u-hidden');
@@ -2594,10 +2599,16 @@ export function init() {
     const provider = loreLlmSelect.value;
     loreOllamaSettings.classList.toggle('u-hidden', provider !== 'ollama');
     loreNovelaiModelSettings.classList.toggle('u-hidden', provider !== 'novelai');
+    lorePerchanceModelSettings.classList.toggle('u-hidden', provider !== 'perchance');
     await window.powertool.loreSetLlmProvider({ provider });
     if (provider === 'ollama') await refreshOllamaModels();
     const llmConfig = await window.powertool.loreGetLlmProvider();
     updateLlmIndicator(llmConfig.provider, llmConfig.ollamaModel, llmConfig.novelaiTextModel);
+  });
+
+  perchanceTextModelSelect.addEventListener('change', async () => {
+    await window.powertool.loreSetLlmProvider({ perchanceTextModel: perchanceTextModelSelect.value });
+    updateLlmIndicator('perchance');
   });
 
   novelaiTextModelSelect.addEventListener('change', async () => {

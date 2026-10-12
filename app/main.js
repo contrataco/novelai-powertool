@@ -20,8 +20,10 @@ const perchanceProvider = require('./providers/perchance');
 const veniceProvider = require('./providers/venice');
 const puterProvider = require('./providers/puter');
 const comfyuiProvider = require('./providers/comfyui');
+const { sceneFormatGuideline } = require('./providers/comfyui-prompt');
 const openaiTextProvider = require('./providers/openai-text');
 const anthropicTextProvider = require('./providers/anthropic-text');
+const perchanceTextProvider = require('./providers/perchance-text');
 const storyboard = require('./storyboard');
 const loreCreator = require('./lore-creator');
 const scenePromptPipeline = require('./scene-prompt-pipeline');
@@ -63,6 +65,7 @@ const TEXT_PROVIDERS = {
   ollama: { id: 'ollama', name: 'Ollama' },
   openai: { id: 'openai', name: 'OpenAI', provider: openaiTextProvider },
   anthropic: { id: 'anthropic', name: 'Anthropic', provider: anthropicTextProvider },
+  perchance: { id: 'perchance', get name() { return `Perchance (${store.get('perchanceTextModel') || perchanceTextProvider.defaultModel})`; }, provider: perchanceTextProvider },
 };
 
 // Secure storage for API token and settings
@@ -89,6 +92,9 @@ const store = new Store({
     comfyuiCfg: { type: 'number', default: 6 },
     comfyuiSampler: { type: 'string', default: 'dpmpp_2m' },
     comfyuiScheduler: { type: 'string', default: 'karras' },
+    // Per-model prompt settings, keyed by the model id chosen in settings
+    // ('' for Auto): { style: ''|'tags'|'prose', positive, negative }.
+    comfyuiModelProfiles: { type: 'object', default: {} },
     veniceApiKey: { type: 'string', default: '' },
     veniceModel: { type: 'string', default: 'flux-2-max' },
     veniceSteps: { type: 'number', default: 25 },
@@ -133,6 +139,7 @@ const store = new Store({
       default: {}
     },
     loreLlmProvider: { type: 'string', default: 'novelai' },
+    perchanceTextModel: { type: 'string', default: 'perchance' },
     novelaiTextModel: { type: 'string', default: 'glm-4-6' },
     loreOllamaModel: { type: 'string', default: 'mistral:7b' },
     loreOllamaUrl: { type: 'string', default: 'http://localhost:11434' },
@@ -584,9 +591,11 @@ ipcMain.handle('generate-image', async (event, { prompt, negativePrompt, rawProm
   const providerId = store.get('provider') || 'novelai';
   const settings = store.get('imageSettings');
 
+  // imageSettings.model is NovelAI's model; providers that pick their own
+  // report what they actually ran.
   const makeMeta = (extra = {}) => ({
     provider: providerId,
-    model: settings.model || '',
+    model: (typeof provider.getActiveModelLabel === 'function' && provider.getActiveModelLabel()) || settings.model || '',
     resolution: { width: settings.width || 832, height: settings.height || 1216 },
     ...extra,
   });
@@ -760,6 +769,7 @@ ipcMain.handle('get-comfyui-settings', () => {
     cfg: store.get('comfyuiCfg') || 6,
     sampler: store.get('comfyuiSampler') || 'dpmpp_2m',
     scheduler: store.get('comfyuiScheduler') || 'karras',
+    modelProfiles: store.get('comfyuiModelProfiles') || {},
   };
 });
 
@@ -771,6 +781,10 @@ ipcMain.handle('set-comfyui-settings', (event, settings) => {
   if (Number.isFinite(settings.cfg)) store.set('comfyuiCfg', settings.cfg);
   if (settings.sampler !== undefined) store.set('comfyuiSampler', settings.sampler);
   if (settings.scheduler !== undefined) store.set('comfyuiScheduler', settings.scheduler);
+  // Merged per model: the modal only sends the models it touched.
+  if (settings.modelProfiles && typeof settings.modelProfiles === 'object') {
+    store.set('comfyuiModelProfiles', { ...(store.get('comfyuiModelProfiles') || {}), ...settings.modelProfiles });
+  }
   return { success: true };
 });
 
@@ -1619,7 +1633,12 @@ ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artS
     const artStyleId = ss?.novelaiArtStyle || store.get('novelaiArtStyle') || 'no-style';
     const resolvedArtStyle = provider.getArtStyleTags(artStyleId);
     const customTags = sceneSettings.artStyleTags || '';
-    const style = (customTags && provider.getArtStyleTags(customTags)) || customTags || resolvedArtStyle || 'anime style, detailed, high quality';
+    // Other image providers append their own art style at generation time,
+    // so writing NovelAI's into the prompt here would stack two styles.
+    const imageProviderId = ss?.imageProvider || store.get('provider') || 'novelai';
+    const style = imageProviderId === 'novelai'
+      ? ((customTags && provider.getArtStyleTags(customTags)) || customTags || resolvedArtStyle || 'anime style, detailed, high quality')
+      : customTags;
 
     // Build narrative context (shared)
     const narrativeContext = storyId
@@ -1774,9 +1793,11 @@ Guidelines:
 - Focus on the CURRENT scene, not backstory
 - Describe characters' appearance, poses, expressions
 - Include setting details (location, lighting, atmosphere)
-- Use comma-separated tags/descriptors
-- MANDATORY style: Include these exact style tags in the prompt: ${style}
-- Do NOT add any other style tags (no "anime style", "detailed", "high quality" unless they appear above)
+${sceneFormatGuideline(imageProviderId === 'comfyui' ? comfyuiProvider.getPromptStyle(store) : 'tags')}
+${style
+    ? `- MANDATORY style: Include these exact style tags in the prompt: ${style}
+- Do NOT add any other style tags (no "anime style", "detailed", "high quality" unless they appear above)`
+    : '- Do NOT add art style or quality tags (no "anime style", "detailed", "high quality") - the style is applied separately'}
 - Keep prompts under 200 words
 - For negativePrompt: list common image generation issues to avoid`;
 
@@ -2003,11 +2024,21 @@ function makeAnthropicGenerateTextFn() {
   };
 }
 
+function makePerchanceGenerateTextFn() {
+  return async (messages, options) => {
+    return perchanceTextProvider.generateText(messages, {
+      max_tokens: options.max_tokens || 300,
+      temperature: options.temperature || 0.4,
+    }, store);
+  };
+}
+
 const LLM_FACTORY = {
   novelai: makeNovelaiGenerateTextFn,
   ollama: makeOllamaGenerateTextFn,
   openai: makeOpenaiGenerateTextFn,
   anthropic: makeAnthropicGenerateTextFn,
+  perchance: makePerchanceGenerateTextFn,
 };
 
 function makeGenerateTextFn(providerName) {
@@ -2028,6 +2059,28 @@ async function isOllamaAvailable() {
   } catch {
     return false;
   }
+}
+
+/**
+ * The second provider for hybrid (parallel) scanning, or null. Only the
+ * NovelAI + Ollama pair is hybrid: any other primary (OpenAI, Anthropic,
+ * Perchance) runs alone rather than quietly sending half its calls to a
+ * NovelAI account that may not be set up.
+ */
+async function pickSecondaryGenerateTextFn(label) {
+  const primaryProvider = store.get('loreLlmProvider') || 'novelai';
+  if (primaryProvider === 'novelai') {
+    if (await isOllamaAvailable()) {
+      console.log(`[Main] ${label}: hybrid mode (NovelAI + Ollama)`);
+      return makeOllamaGenerateTextFn();
+    }
+    return null;
+  }
+  if (primaryProvider === 'ollama') {
+    console.log(`[Main] ${label}: hybrid mode (Ollama + NovelAI)`);
+    return makeNovelaiGenerateTextFn();
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2089,16 +2142,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
     // Check if secondary provider is available for hybrid scanning
     let secondaryGenerateTextFn = null;
     if (settings.hybridEnabled !== false) {
-      const primaryProvider = store.get('loreLlmProvider') || 'novelai';
-      if (primaryProvider === 'novelai') {
-        if (await isOllamaAvailable()) {
-          secondaryGenerateTextFn = makeOllamaGenerateTextFn();
-          console.log('[Main] Hybrid scan: NovelAI (primary) + Ollama (secondary)');
-        }
-      } else {
-        secondaryGenerateTextFn = makeNovelaiGenerateTextFn();
-        console.log('[Main] Hybrid scan: Ollama (primary) + NovelAI (secondary)');
-      }
+      secondaryGenerateTextFn = await pickSecondaryGenerateTextFn('Hybrid scan');
     }
 
     // Build comprehension context if available
@@ -2509,10 +2553,14 @@ ipcMain.handle('lore:get-llm-provider', () => {
     ollamaModel: store.get('loreOllamaModel') || 'mistral:7b',
     ollamaUrl: store.get('loreOllamaUrl') || 'http://localhost:11434',
     novelaiTextModel: store.get('novelaiTextModel') || 'glm-4-6',
+    perchanceTextModel: store.get('perchanceTextModel') || perchanceTextProvider.defaultModel,
   };
 });
 
-ipcMain.handle('lore:set-llm-provider', (event, { provider, ollamaModel, ollamaUrl, novelaiTextModel }) => {
+ipcMain.handle('lore:set-llm-provider', (event, { provider, ollamaModel, ollamaUrl, novelaiTextModel, perchanceTextModel }) => {
+  if (perchanceTextModel !== undefined && perchanceTextProvider.MODELS.includes(perchanceTextModel)) {
+    store.set('perchanceTextModel', perchanceTextModel);
+  }
   if (provider !== undefined) store.set('loreLlmProvider', provider);
   if (ollamaModel !== undefined) store.set('loreOllamaModel', ollamaModel);
   if (ollamaUrl !== undefined) store.set('loreOllamaUrl', ollamaUrl);
@@ -2556,16 +2604,7 @@ ipcMain.handle('lore:start-progressive-scan', async (event, { storyId, storyText
     let secondaryGenerateTextFn = null;
     const settings = store.get('loreSettings') || loreCreator.DEFAULT_SETTINGS;
     if (settings.hybridEnabled !== false) {
-      const primaryProvider = store.get('loreLlmProvider') || 'novelai';
-      if (primaryProvider === 'novelai') {
-        if (await isOllamaAvailable()) {
-          secondaryGenerateTextFn = makeOllamaGenerateTextFn();
-          console.log('[Main] Hybrid comprehension scan: NovelAI (primary) + Ollama (secondary)');
-        }
-      } else if (primaryProvider === 'ollama') {
-        secondaryGenerateTextFn = makeNovelaiGenerateTextFn();
-        console.log('[Main] Hybrid comprehension scan: Ollama (primary) + NovelAI (secondary)');
-      }
+      secondaryGenerateTextFn = await pickSecondaryGenerateTextFn('Hybrid comprehension scan');
     }
 
     // Build category registry for category-aware entity extraction
@@ -2654,12 +2693,7 @@ ipcMain.handle('lore:incremental-update', async (event, { storyId, storyText, ex
     let secondaryGenerateTextFn = null;
     const settings = store.get('loreSettings') || loreCreator.DEFAULT_SETTINGS;
     if (settings.hybridEnabled !== false) {
-      const primaryProvider = store.get('loreLlmProvider') || 'novelai';
-      if (primaryProvider === 'novelai') {
-        if (await isOllamaAvailable()) secondaryGenerateTextFn = makeOllamaGenerateTextFn();
-      } else if (primaryProvider === 'ollama') {
-        secondaryGenerateTextFn = makeNovelaiGenerateTextFn();
-      }
+      secondaryGenerateTextFn = await pickSecondaryGenerateTextFn('Incremental comprehension');
     }
 
     const loreState = db.getLoreState(storyId) || {};
@@ -2699,13 +2733,7 @@ ipcMain.handle('lore:optimize-entries', async (event, { entries, profileId, stor
     const generateTextFn = makeLoreGenerateTextFn();
 
     // Set up hybrid providers (same pattern as lore:scan)
-    let secondaryFn = null;
-    const primaryProvider = store.get('loreLlmProvider') || 'novelai';
-    if (primaryProvider === 'novelai') {
-      if (await isOllamaAvailable()) secondaryFn = makeOllamaGenerateTextFn();
-    } else {
-      secondaryFn = makeNovelaiGenerateTextFn();
-    }
+    const secondaryFn = await pickSecondaryGenerateTextFn('Lore pass');
     const hybrid = loreCreator.createHybridProviders(generateTextFn, secondaryFn);
 
     // Load entity profiles from comprehension state
@@ -2812,16 +2840,7 @@ ipcMain.handle('memory:force-refresh', async (event, { storyText, storyId }) => 
     let secondaryGenerateTextFn = null;
     const loreSettings = store.get('loreSettings') || {};
     if (loreSettings.hybridEnabled !== false) {
-      const primaryProvider = store.get('loreLlmProvider') || 'novelai';
-      if (primaryProvider === 'novelai') {
-        if (await isOllamaAvailable()) {
-          secondaryGenerateTextFn = makeOllamaGenerateTextFn();
-          console.log('[Main] Memory refresh: hybrid mode (NovelAI + Ollama)');
-        }
-      } else {
-        secondaryGenerateTextFn = makeNovelaiGenerateTextFn();
-        console.log('[Main] Memory refresh: hybrid mode (Ollama + NovelAI)');
-      }
+      secondaryGenerateTextFn = await pickSecondaryGenerateTextFn('Memory refresh');
     }
 
     let comprehensionContext = '';
@@ -2910,12 +2929,7 @@ ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, f
     let secondaryGenerateTextFn = null;
     const loreSettings = store.get('loreSettings') || {};
     if (loreSettings.hybridEnabled !== false) {
-      const primaryProvider = store.get('loreLlmProvider') || 'novelai';
-      if (primaryProvider === 'novelai') {
-        if (await isOllamaAvailable()) secondaryGenerateTextFn = makeOllamaGenerateTextFn();
-      } else {
-        secondaryGenerateTextFn = makeNovelaiGenerateTextFn();
-      }
+      secondaryGenerateTextFn = await pickSecondaryGenerateTextFn('Lore update');
     }
 
     // Build comprehension context

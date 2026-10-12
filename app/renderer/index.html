@@ -824,8 +824,19 @@
               <select id="loreLlmSelect">
                 <option value="novelai">NovelAI</option>
                 <option value="ollama">Ollama</option>
+                <option value="perchance">Perchance (local server)</option>
               </select>
             </label>
+            <div class="u-hidden" id="lorePerchanceModelSettings" style="margin-left: 16px">
+              <label>
+                Model:
+                <select id="perchanceTextModelSelect">
+                  <option value="perchance">Chat (general)</option>
+                  <option value="perchance-story">Story</option>
+                  <option value="perchance-code">Code</option>
+                </select>
+              </label>
+            </div>
             <div class="u-hidden" id="loreNovelaiModelSettings" style="margin-left: 16px">
               <label>
                 Model:
@@ -1284,6 +1295,7 @@
             <option value="ollama">Ollama</option>
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
+            <option value="perchance">Perchance (local server)</option>
           </select>
           <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">When set, Stage 1a and 1b run on different providers simultaneously.</div>
         </div>
@@ -1436,6 +1448,33 @@
             automatically.
           </span>
           <span id="comfyuiModelHint" class="u-hidden" style="font-size:12px;color:#ffd54f;display:block;margin-top:6px;"></span>
+        </div>
+        <div class="form-group">
+          <label>Prompt Format (this model)</label>
+          <select id="comfyuiPromptStyle">
+            <option value="">Auto</option>
+            <option value="prose">Natural language - sentences</option>
+            <option value="tags">Tags - comma-separated list</option>
+          </select>
+          <span style="font-size:11px;color:#888;display:block;margin-top:4px;">
+            Natural language suits Z-Image, Flux and photo models; tags suit
+            Pony and anime checkpoints. The scene's characters and setting are
+            rewritten to match - no extra LLM call.
+          </span>
+        </div>
+        <div class="form-group">
+          <label>Extra Descriptors (this model)</label>
+          <input type="text" id="comfyuiExtraPositive" placeholder="e.g. sharp focus, film grain, soft rim light" style="width:100%;">
+          <span style="font-size:11px;color:#888;display:block;margin-top:4px;">
+            Added to every prompt sent to the selected model.
+          </span>
+        </div>
+        <div class="form-group">
+          <label>Extra Negative (this model)</label>
+          <input type="text" id="comfyuiExtraNegative" placeholder="e.g. extra fingers, watermark" style="width:100%;">
+          <span id="comfyuiExtraNegativeHint" style="font-size:11px;color:#888;display:block;margin-top:4px;">
+            Kept out of every image from the selected model.
+          </span>
         </div>
         <div class="form-group">
           <label>Art Style</label>
@@ -1803,8 +1842,11 @@
     import { init as initPortraitQueue } from './modules/portrait-queue.js';
     import { init as initStorySelector } from './modules/story-selector.js';
     import { init as initScriptPanel } from './modules/script-panel.js';
+    import { init as initPanelResize } from './modules/panel-resize.js';
 
     // Boot sequence
+    // Layout only, and guarded: a failure here must not stop the inits below.
+    try { initPanelResize(); } catch (e) { console.error('[PowerTool] Panel resize init failed:', e); }
     initSettings();
     initImageGen();
     initSuggestions();
@@ -1827,6 +1869,3 @@
 
 </body>
 </html>
-    import { init as initPanelResize } from './modules/panel-resize.js';
-    // Layout only, and guarded: a failure here must not stop the inits below.
-    try { initPanelResize(); } catch (e) { console.error('[PowerTool] Panel resize init failed:', e); }
