@@ -115,11 +115,18 @@ function genderFromPitch(hz) {
   return 'unknown';
 }
 
-/** Pitch for each voice name, computed once per clip version and cached. */
+/**
+ * Pitch for each voice name, computed once per clip version and cached.
+ * Also detects renamed clips: a rename keeps the file's size and modified time,
+ * so a new name whose size:mtime matches exactly one vanished name is that voice.
+ * Returns { pitches: {name: hz}, renames: {oldName: newName} }.
+ */
 async function analyzeVoices(names, store) {
   const dir = getVoicesDir(store);
   if (!pitchCache) pitchCache = { ...(store.get('ttsChatterboxPitchCache') || {}) };
   let changed = false;
+  const listed = new Set(names);
+  const fresh = []; // [name, key] never seen before
   const out = {};
   for (const name of names) {
     if (name === 'default') continue;
@@ -127,6 +134,7 @@ async function analyzeVoices(names, store) {
     let st;
     try { st = fs.statSync(file); } catch { continue; } // folder not on this machine
     const key = `${st.size}:${Math.round(st.mtimeMs)}`;
+    if (!pitchCache[name]) fresh.push([name, key]);
     if (pitchCache[name]?.key !== key) {
       let pitch = null;
       try { pitch = medianPitch(readWavMono(file)); } catch (e) { console.warn('[Chatterbox] pitch failed for', name, e.message); }
@@ -136,8 +144,48 @@ async function analyzeVoices(names, store) {
     }
     out[name] = pitchCache[name].pitch;
   }
+  const gone = Object.keys(pitchCache).filter((n) => !listed.has(n));
+  const renames = {};
+  for (const [name, key] of fresh) {
+    const from = gone.filter((g) => pitchCache[g].key === key);
+    const twins = fresh.filter(([, k]) => k === key);
+    if (from.length === 1 && twins.length === 1) renames[from[0]] = name;
+  }
+  for (const g of gone) { delete pitchCache[g]; changed = true; }
   if (changed) store.set('ttsChatterboxPitchCache', pitchCache);
-  return out;
+  return { pitches: out, renames };
+}
+
+/** Move per-voice settings from old names to new ones after a rename. */
+function applyRenames(renames, store) {
+  const move = (key) => {
+    const map = store.get(key);
+    if (!map) return;
+    let moved = false;
+    for (const [from, to] of Object.entries(renames)) {
+      if (from in map) { if (!(to in map)) map[to] = map[from]; delete map[from]; moved = true; }
+    }
+    if (moved) store.set(key, map);
+  };
+  move('ttsChatterboxVoiceGenders');
+  move('ttsChatterboxVoiceTags');
+  for (const key of ['ttsNarratorVoice', 'ttsDialogueVoice']) {
+    const v = store.get(key);
+    if (typeof v === 'string' && renames[v]) store.set(key, renames[v]);
+  }
+}
+
+let renameHandler = null; // main.js: rewrite per-story voices in the database
+
+/** Tags are short lowercase words; at most 20 per voice. */
+function cleanTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  const out = [];
+  for (const t of tags) {
+    const w = String(t || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 30);
+    if (w && !out.includes(w)) out.push(w);
+  }
+  return out.slice(0, 20);
 }
 
 // name -> gender, from the last voice listing (used by main.js pronoun resolution)
@@ -166,13 +214,19 @@ module.exports = {
     return res.json();
   },
 
-  /** [{ id, name, gender, genderSource, pitch }] for every voice the server offers. */
+  /** [{ id, name, gender, genderSource, pitch, tags }] for every voice the server offers. */
   async getVoices(store) {
     const res = await fetchWithTimeout(`${getUrl(store)}/voices`, {}, 5000);
     if (!res.ok) throw new Error(`Chatterbox /voices failed (${res.status})`);
     const { voices = [] } = await res.json();
-    const pitches = await analyzeVoices(voices, store);
+    const { pitches, renames } = await analyzeVoices(voices, store);
+    if (Object.keys(renames).length) {
+      console.log('[Chatterbox] renamed voices:', renames);
+      applyRenames(renames, store);
+      try { renameHandler?.(renames); } catch (e) { console.warn('[Chatterbox] rename handler failed:', e.message); }
+    }
     const overrides = store.get('ttsChatterboxVoiceGenders') || {};
+    const allTags = store.get('ttsChatterboxVoiceTags') || {};
     const genders = {};
     const list = voices.map((id) => {
       const pitch = pitches[id] ?? null;
@@ -183,10 +237,24 @@ module.exports = {
       genders[id] = gender;
       const detail = [gender !== 'unknown' ? gender : null, pitch ? `${pitch} Hz` : null].filter(Boolean).join(', ');
       const label = id === 'default' ? 'default (Chatterbox built-in)' : (detail ? `${id} (${detail})` : id);
-      return { id, name: label, gender, genderSource, pitch };
+      return { id, name: label, gender, genderSource, pitch, tags: cleanTags(allTags[id]) };
     });
     lastGenders = genders;
     return list;
+  },
+
+  /** fn(renames) is called with {oldName: newName} when renamed clips are detected. */
+  onRenames(fn) {
+    renameHandler = fn;
+  },
+
+  /** Replace one voice's tags (empty list removes them). */
+  setVoiceTags(store, voiceId, tags) {
+    const all = store.get('ttsChatterboxVoiceTags') || {};
+    const clean = cleanTags(tags);
+    if (clean.length) all[voiceId] = clean; else delete all[voiceId];
+    store.set('ttsChatterboxVoiceTags', all);
+    return clean;
   },
 
   /** True when the last listing had this voice (false before any listing). */
@@ -225,4 +293,7 @@ module.exports = {
   _readWavMono: readWavMono,
   _genderFromName: genderFromName,
   _genderFromPitch: genderFromPitch,
+  _analyzeVoices: analyzeVoices,
+  _applyRenames: applyRenames,
+  _resetCache: () => { pitchCache = null; },
 };

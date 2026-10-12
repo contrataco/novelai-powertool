@@ -16,6 +16,11 @@ let aborted = false;
 let isNarrating = false;
 let cachedVoices = null;
 
+/** Forget the voice list so the next use re-reads it (e.g. after tags change). */
+export function invalidateVoiceCache() {
+  cachedVoices = null;
+}
+
 async function getVoices() {
   if (!cachedVoices) {
     // The story's own provider when it has one, so a per-story Chatterbox lists its voices.
@@ -332,7 +337,7 @@ async function autoAssignFromLore() {
       showToast(`Casting voices for ${todo.length} character${todo.length !== 1 ? 's' : ''}...`, 2500);
       const res = await window.powertool.ttsSmartAssign(
         todo.map(({ name, gender, description }) => ({ name, gender, description })),
-        voices.map((v) => ({ id: v.id, gender: voiceGenderOf(v), pitch: v.pitch || null })),
+        voices.map((v) => ({ id: v.id, gender: voiceGenderOf(v), pitch: v.pitch || null, tags: v.tags || [] })),
         [...usedVoices].filter((v) => typeof v === 'string'),
       );
       if (res?.error) console.warn('[TTS] AI casting failed, using gender pools:', res.error);

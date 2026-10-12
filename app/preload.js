@@ -292,6 +292,7 @@ contextBridge.exposeInMainWorld('powertool', {
   // Chatterbox
   chatterboxStatus: () => ipcRenderer.invoke('tts:chatterbox-status'),
   chatterboxWarm: () => ipcRenderer.invoke('tts:chatterbox-warm'),
+  chatterboxSetVoiceTags: (voiceId, tags) => ipcRenderer.invoke('tts:set-voice-tags', { voiceId, tags }),
   ttsGetState: (storyId) => ipcRenderer.invoke('tts:get-state', storyId),
   ttsSetState: (storyId, state) => ipcRenderer.invoke('tts:set-state', { storyId, state }),
   ttsSetCharacterVoice: (storyId, characterName, voiceId) =>

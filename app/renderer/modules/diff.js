@@ -133,6 +133,16 @@ function diffWithin(x, y, base) {
  * Applies a diff to a contenteditable element while preserving cursor position.
  * Returns the diff result so callers can update AI text range tracking.
  */
+/**
+ * Replace the editor's content with plain text, one <p> per line. Never assign
+ * innerText for this: it drops a trailing newline ("a\n" reads back as "a"),
+ * and AI text often ends in one mid-stream, so the editor would no longer match
+ * NovelAI and every sync would see phantom unsaved edits.
+ */
+export function setEditorText(el, text) {
+  el.innerHTML = buildRichHtml(text, [], []);
+}
+
 export function applyDiff(el, newText) {
   const oldText = editorText(el);
   if (oldText === newText) return { prefixLen: oldText.length, added: '', removed: '', suffixLen: 0 };
@@ -140,7 +150,7 @@ export function applyDiff(el, newText) {
   const cursorOffset = caretOffset(el);
   const diff = diffText(oldText, newText);
 
-  el.innerText = newText;
+  setEditorText(el, newText);
 
   if (cursorOffset !== -1) {
     let newOffset = cursorOffset;

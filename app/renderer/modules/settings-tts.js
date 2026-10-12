@@ -17,7 +17,7 @@ import {
   ttsChatterboxGenderList, ttsChatterboxGenderCount,
 } from './dom-refs.js';
 import { state } from './state.js';
-import { refreshVoiceMapUI } from './tts.js';
+import { refreshVoiceMapUI, invalidateVoiceCache } from './tts.js';
 import { showToast } from './utils.js';
 
 // Toggle v2 fields visibility based on TTS version and provider
@@ -359,10 +359,98 @@ async function saveChatterboxFields() {
 
 const SOURCE_TEXT = { name: 'from name', pitch: 'from pitch', override: 'set by you', none: 'not detected' };
 
+// Words that help the AI cast a voice. Users can add their own as well.
+const TAG_GROUPS = [
+  ['Sound', ['deep', 'low', 'high', 'light', 'raspy', 'gravelly', 'husky', 'breathy', 'smooth', 'nasal', 'booming']],
+  ['Age', ['child', 'youthful', 'young adult', 'mature', 'elderly']],
+  ['Tone', ['warm', 'cold', 'soft', 'hushed', 'lush', 'sultry', 'sensual', 'bright', 'crisp', 'dry']],
+  ['Personality', ['sarcastic', 'humorous', 'playful', 'flirty', 'lascivious', 'bubbly', 'high-strung', 'nervous', 'shy',
+    'confident', 'serious', 'stern', 'authoritative', 'calm', 'soothing', 'menacing', 'gruff', 'cheerful', 'melancholy']],
+  ['Accent', ['american', 'british', 'southern', 'irish', 'scottish', 'australian', 'foreign accent']],
+  ['Good for', ['narrator', 'hero', 'villain', 'mentor', 'comic relief', 'love interest']],
+];
+const PRESET_TAGS = new Set(TAG_GROUPS.flatMap(([, tags]) => tags));
+
+function tagsSummary(tags) {
+  return tags.length ? `Tags: ${tags.join(', ')}` : 'Add tags';
+}
+
+/** Chip editor for one voice. Saves on every change. */
+function buildTagEditor(v, summaryBtn) {
+  const box = document.createElement('div');
+  box.className = 'chatterbox-tag-editor u-hidden';
+  box.id = `tagEditor-${v.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  let tags = [...(v.tags || [])];
+
+  const save = async () => {
+    tags = await window.powertool.chatterboxSetVoiceTags(v.id, tags);
+    v.tags = tags;
+    summaryBtn.textContent = tagsSummary(tags);
+    invalidateVoiceCache();
+  };
+  const makeChip = (tag) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'tag-chip';
+    chip.textContent = tag;
+    chip.setAttribute('aria-pressed', String(tags.includes(tag)));
+    chip.addEventListener('click', async () => {
+      tags = tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag];
+      chip.setAttribute('aria-pressed', String(tags.includes(tag)));
+      await save();
+    });
+    return chip;
+  };
+  const addGroup = (label, list) => {
+    const g = document.createElement('div');
+    g.className = 'tag-group';
+    const h = document.createElement('div');
+    h.className = 'tag-group-label';
+    h.textContent = label;
+    const chips = document.createElement('div');
+    chips.className = 'tag-chips';
+    for (const t of list) chips.appendChild(makeChip(t));
+    g.appendChild(h);
+    g.appendChild(chips);
+    box.appendChild(g);
+    return chips;
+  };
+  for (const [label, list] of TAG_GROUPS) addGroup(label, list);
+  const ownChips = addGroup('Your tags', tags.filter((t) => !PRESET_TAGS.has(t)));
+
+  const addRow = document.createElement('div');
+  addRow.className = 'tag-add-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'Add your own tag';
+  input.setAttribute('aria-label', `Add your own tag for ${v.id}`);
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'btn-sm';
+  addBtn.textContent = 'Add';
+  const addOwn = async () => {
+    const t = input.value.trim().toLowerCase();
+    input.value = '';
+    if (!t || tags.includes(t)) return;
+    tags = [...tags, t];
+    if (!PRESET_TAGS.has(t)) ownChips.appendChild(makeChip(t));
+    else box.querySelectorAll('.tag-chip').forEach((c) => { if (c.textContent === t) c.setAttribute('aria-pressed', 'true'); });
+    await save();
+  };
+  addBtn.addEventListener('click', addOwn);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addOwn(); } });
+  addRow.appendChild(input);
+  addRow.appendChild(addBtn);
+  box.appendChild(addRow);
+  return box;
+}
+
 function renderChatterboxGenders(voices) {
   if (!ttsChatterboxGenderList) return;
   ttsChatterboxGenderList.innerHTML = '';
   const real = voices.filter((v) => v.id !== 'default');
+  // Overrides as the main process has them now (a detected rename may have moved some).
+  chatterboxGenderOverrides = Object.fromEntries(real.filter((v) => v.genderSource === 'override').map((v) => [v.id, v.gender]));
   const unknown = real.filter((v) => v.gender === 'unknown').length;
   if (ttsChatterboxGenderCount) {
     ttsChatterboxGenderCount.textContent = `(${real.length} voices${unknown ? `, ${unknown} unknown` : ''})`;
@@ -397,16 +485,34 @@ function renderChatterboxGenders(voices) {
       await loadTtsVoices();
     });
 
+    const tagsBtn = document.createElement('button');
+    tagsBtn.type = 'button';
+    tagsBtn.className = 'chatterbox-tags-btn';
+    tagsBtn.textContent = tagsSummary(v.tags || []);
+    tagsBtn.setAttribute('aria-expanded', 'false');
+    const editor = buildTagEditor(v, tagsBtn);
+    tagsBtn.setAttribute('aria-controls', editor.id);
+    tagsBtn.addEventListener('click', () => {
+      const open = editor.classList.toggle('u-hidden') === false;
+      tagsBtn.setAttribute('aria-expanded', String(open));
+    });
+
     const text = document.createElement('div');
+    text.className = 'chatterbox-gender-text';
     text.appendChild(name);
     text.appendChild(detail);
+    text.appendChild(tagsBtn);
     const controls = document.createElement('div');
     controls.className = 'chatterbox-gender-controls';
     controls.appendChild(makePreviewButton(() => v.id, `Play ${v.id} sample`, 'dialogue'));
     controls.appendChild(sel);
     row.appendChild(text);
     row.appendChild(controls);
-    ttsChatterboxGenderList.appendChild(row);
+    const item = document.createElement('div');
+    item.className = 'chatterbox-voice-item';
+    item.appendChild(row);
+    item.appendChild(editor);
+    ttsChatterboxGenderList.appendChild(item);
   }
 }
 

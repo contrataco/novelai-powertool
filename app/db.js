@@ -185,6 +185,12 @@ function setData(table, storyId, data) {
     .run(storyId, JSON.stringify(data), Date.now());
 }
 
+/** Story ids that have a row in one of the per-story tables. */
+function listDataStoryIds(table) {
+  if (!VALID_TABLES.has(table)) throw new Error(`Invalid table: ${table}`);
+  return db.prepare(`SELECT story_id FROM ${table}`).all().map((r) => r.story_id);
+}
+
 // --- Convenience wrappers ---
 
 const LORE_STATE_DEFAULTS = {
@@ -455,7 +461,7 @@ function close() {
 
 module.exports = {
   init, close, getDb,
-  upsertStory, getStory, listStories,
+  upsertStory, getStory, listStories, listDataStoryIds,
   getSceneState, setSceneState,
   getLoreState, setLoreState,
   getComprehension, setComprehension,

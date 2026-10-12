@@ -6410,3 +6410,62 @@
 .voice-preview-btn:disabled { opacity: 0.6; cursor: wait; }
 .chatterbox-gender-row .voice-preview-btn, .char-voice-row .voice-preview-btn { min-height: 28px; min-width: 32px; font-size: 14px; }
 .chatterbox-gender-controls { display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }
+
+/* Chatterbox voice tags */
+.chatterbox-voice-item { border-bottom: 1px solid var(--border-default); padding-bottom: 4px; }
+.chatterbox-voice-item .chatterbox-gender-row { border-bottom: none; }
+.chatterbox-gender-text { min-width: 0; }
+.chatterbox-tags-btn {
+  display: block;
+  margin-top: 3px;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.chatterbox-tag-editor {
+  margin: 6px 0 4px;
+  padding: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-base);
+}
+.tag-group + .tag-group { margin-top: 8px; }
+.tag-group-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.tag-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.tag-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tag-add-row { display: flex; gap: 6px; margin-top: 8px; }
+.tag-add-row input { flex: 1; min-width: 0; font-size: 13px; padding: 4px 8px; }
+
+/* Toast dismiss button */
+.toast-msg { flex: 1; min-width: 0; }
+.toast-close {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  min-width: 30px;
+  min-height: 30px;
+  margin: -4px -12px -4px 4px;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.toast-close:hover, .toast-close:focus-visible { background: rgba(0, 0, 0, 0.45); outline: 2px solid #fff; outline-offset: 1px; }

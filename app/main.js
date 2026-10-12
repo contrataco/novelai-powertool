@@ -1294,6 +1294,30 @@ ipcMain.handle('tts:plan-scene', async (_, { text, storyId, protagonistName }) =
 
 ipcMain.handle('tts:chatterbox-status', () => chatterboxProvider.getStatus(store));
 
+ipcMain.handle('tts:set-voice-tags', (_, { voiceId, tags }) => chatterboxProvider.setVoiceTags(store, voiceId, tags));
+
+// A renamed Chatterbox clip keeps its story assignments: rewrite every story's
+// character voices and per-story narrator/dialogue voices to the new name.
+chatterboxProvider.onRenames((renames) => {
+  for (const storyId of db.listDataStoryIds('tts_state')) {
+    const st = db.getTtsState(storyId);
+    let moved = false;
+    for (const [name, voice] of Object.entries(st.characterVoices || {})) {
+      if (typeof voice === 'string' && renames[voice]) { st.characterVoices[name] = renames[voice]; moved = true; }
+    }
+    if (moved) db.setTtsState(storyId, st);
+  }
+  for (const storyId of db.listDataStoryIds('story_settings')) {
+    const ss = db.getStorySettings(storyId);
+    if (!ss) continue;
+    let moved = false;
+    for (const key of ['ttsNarratorVoice', 'ttsDialogueVoice']) {
+      if (typeof ss[key] === 'string' && renames[ss[key]]) { ss[key] = renames[ss[key]]; moved = true; }
+    }
+    if (moved) db.setStorySettings(storyId, ss);
+  }
+});
+
 ipcMain.handle('tts:chatterbox-warm', async () => {
   try {
     return { success: true, ...(await chatterboxProvider.warm(store)) };
@@ -1364,7 +1388,8 @@ ipcMain.handle('tts:smart-assign', async (_, { characters, voices, avoidVoices }
   const voiceLines = voices.map((v) => {
     const bits = [v.gender && v.gender !== 'unknown' ? v.gender : 'gender unknown'];
     if (v.pitch) bits.push(`${v.pitch} Hz`);
-    return `- ${v.id} (${bits.join(', ')})`;
+    const tags = Array.isArray(v.tags) && v.tags.length ? ` - sounds: ${v.tags.join(', ')}` : '';
+    return `- ${v.id} (${bits.join(', ')})${tags}`;
   }).join('\n');
   const charLines = characters.map((c) =>
     `- ${c.name}${c.gender && c.gender !== 'unknown' ? ` [${c.gender}]` : ''}: ${(c.description || '').replace(/\s+/g, ' ').slice(0, 400)}`
@@ -1376,7 +1401,8 @@ ipcMain.handle('tts:smart-assign', async (_, { characters, voices, avoidVoices }
 
 Rules:
 - Match the character's gender. Infer it from the description when not given. Lower pitch (Hz) sounds deeper and more masculine; higher sounds lighter.
-- Use the voice names as hints for age, accent and personality (a famous actor's name means a voice like theirs).
+- "sounds:" tags were written by the user who listened to each voice. Trust them most when matching age, tone, accent and personality.
+- Use the voice names as weaker hints (a famous actor's name means a voice like theirs).
 - Give every character a different voice when there are enough voices.
 - Do not use these voices (narrator and already taken): ${(avoidVoices || []).join(', ') || 'none'}.
 - Only use voice ids exactly as listed.

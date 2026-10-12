@@ -6,7 +6,7 @@ import { loreCall } from './lore-creator.js';
 import { showToast } from './utils.js';
 import { togglePanel, setupPanelToggle } from './headless-panels.js';
 import { getCurrentEntries, selectLoreEntry } from './headless-lore-panel.js';
-import { editorText } from './diff.js';
+import { editorText, setEditorText } from './diff.js';
 
 const { webview, storyEditor } = refs;
 
@@ -127,7 +127,7 @@ function performReplace(all = false) {
   if (all) {
     const newText = currentText.split(findText).join(replaceText);
     if (newText !== currentText) {
-      storyEditor.innerText = newText;
+      setEditorText(storyEditor, newText);
       _deps.syncToWebview?.();
     }
   } else {

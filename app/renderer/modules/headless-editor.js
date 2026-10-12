@@ -5,7 +5,7 @@ import * as refs from './dom-refs.js';
 import { readStoryTextFromDOM } from './webview-polling.js';
 import { loreCall, switchPanelTab, refreshLoreKeywords } from './lore-creator.js';
 import { updateVisibility as updateStorySelectorVisibility } from './story-selector.js';
-import { applyDiff, annotateEditor, diffText, planEdits, shiftRuns, editorText, selectionOffsets, restoreCursor } from './diff.js';
+import { applyDiff, annotateEditor, diffText, planEdits, shiftRuns, editorText, setEditorText, selectionOffsets, restoreCursor } from './diff.js';
 import { injected, readRich, applyTextEdit, applyMarkEdit } from './nai-doc.js';
 import { showToast } from './utils.js';
 import * as imageEmbed from './headless-image-embed.js';
@@ -103,13 +103,23 @@ function reportNoView() {
  * but nothing typed in the headless editor disappears silently.
  */
 async function saveRecovery(localText) {
+  // Keep the last 5 copies (newest first) rather than overwriting the previous one.
+  const key = `powertool.recovery.${state.currentStoryId}`;
   try {
-    localStorage.setItem(`powertool.recovery.${state.currentStoryId}`, JSON.stringify({ at: Date.now(), text: localText }));
+    let list = [];
+    try {
+      const prev = JSON.parse(localStorage.getItem(key));
+      list = Array.isArray(prev) ? prev : prev ? [prev] : [];
+    } catch { /* unreadable old copy */ }
+    if (list[0]?.text === localText) return; // this exact text is already kept and was announced
+    list.unshift({ at: Date.now(), text: localText });
+    localStorage.setItem(key, JSON.stringify(list.slice(0, 5)));
   } catch { /* the clipboard copy below is the user-facing one */ }
   let copied = false;
   try { await navigator.clipboard.writeText(localText); copied = true; } catch { /* window not focused */ }
   showToast("NovelAI's copy of this story changed while the headless editor had unsaved changes, so NovelAI's version was kept. " +
-    (copied ? 'Your headless text was copied to the clipboard.' : 'Your headless text was saved for recovery.'),
+    (copied ? 'Your headless text was copied to the clipboard' : 'Your headless text was saved for recovery') +
+    ' (the app keeps the last 5 copies).',
     null, 'warn', { persistent: true });
 }
 
@@ -159,7 +169,7 @@ export async function syncFromWebview(force = false, { recovered = false } = {})
 
     if (changed) {
       console.log('[HeadlessSync] Syncing text from webview');
-      if (force) storyEditor.innerText = text;
+      if (force) setEditorText(storyEditor, text);
       else applyDiff(storyEditor, text);
       if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Ready';
       if (refs.editorAiIndicator) refs.editorAiIndicator.className = 'status-indicator';
@@ -550,7 +560,7 @@ export function scrollToSelection() {
 export function flattenEditorText() {
   if (!storyEditor) return;
   const text = editorText(storyEditor);
-  storyEditor.innerText = text;
+  setEditorText(storyEditor, text);
   syncToWebview();
   showToast('Editor text flattened');
 }
@@ -709,7 +719,7 @@ export function init() {
     if (!storyEditor || !cached || !cached.text) return;
     if (editorText(storyEditor).length < 10) {
       console.log('[HeadlessSync] Pre-filling editor with cached text:', cached.char_count, 'chars');
-      storyEditor.innerText = cached.text;
+      setEditorText(storyEditor, cached.text);
       // Display only: the cache may be older than NovelAI, so it is not a
       // baseline for writes. Nothing is pushed until a real read sets one.
       lastKnownWebviewText = null;

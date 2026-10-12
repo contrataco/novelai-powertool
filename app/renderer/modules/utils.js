@@ -43,18 +43,30 @@ export function showToast(msg, duration, variant = '', opts = {}) {
     duration = opts.persistent ? 0 : variant === 'error' ? 10000 : variant === 'warn' ? 5000 : 2500;
   }
 
+  // The same message already on screen: restart its timer instead of stacking a copy.
+  if (!opts.onUndo && !opts.onCancel) {
+    const same = activeToasts.find((t) => t.msg === msg && t.variant === variant && !t.hasActions);
+    if (same) {
+      if (same.timer) clearTimeout(same.timer);
+      same.timer = duration > 0 ? setTimeout(() => dismissToast(same.el), duration) : null;
+      return same.el;
+    }
+  }
+
   const el = document.createElement('div');
   el.className = 'toast' + (variant ? ' ' + variant : '');
   const icon = TOAST_ICONS[variant] || '';
-  let html = (icon ? `<span class="toast-icon">${icon}</span> ` : '') + escapeHtml(msg);
+  let html = (icon ? `<span class="toast-icon">${icon}</span> ` : '') + `<span class="toast-msg">${escapeHtml(msg)}</span>`;
   if (opts.onUndo) html += ` <button class="toast-undo">${escapeHtml(opts.undoLabel || 'Undo')}</button>`;
   if (opts.onCancel) html += ` <button class="toast-cancel">Cancel</button>`;
+  html += '<button type="button" class="toast-close" title="Dismiss" aria-label="Dismiss notification">&times;</button>';
   el.innerHTML = html;
+  el.querySelector('.toast-close').addEventListener('click', () => dismissToast(el), { once: true });
 
   toastContainer.appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
 
-  const entry = { el, timer: null, undoTimer: null };
+  const entry = { el, timer: null, undoTimer: null, msg, variant, hasActions: !!(opts.onUndo || opts.onCancel) };
   activeToasts.push(entry);
   pruneToasts();
 
