@@ -48,6 +48,7 @@
       "providers/**/*",
       "renderer/**/*",
       "node_modules/**/*",
+      "build/icon.png",
       "package.json"
     ],
     "mac": {

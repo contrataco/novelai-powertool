@@ -170,6 +170,9 @@ if (!gotTheLock) {
   app.quit();
 }
 
+// Same ID as build.appId, so a dev run groups on the taskbar under the app's own icon.
+if (process.platform === 'win32') app.setAppUserModelId('com.contrataco.novelai-powertool');
+
 let mainWindow;
 
 app.on('second-instance', () => {
@@ -189,7 +192,8 @@ function createWindow() {
       contextIsolation: true,
       webviewTag: true
     },
-    title: 'NovelAI PowerTool'
+    title: 'NovelAI PowerTool',
+    icon: path.join(__dirname, 'build', 'icon.png')
   });
 
   // Load the wrapper HTML that contains the webview
