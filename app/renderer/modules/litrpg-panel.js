@@ -33,7 +33,6 @@ import {
   rpgAlbumCounter, rpgAlbumSetActive, rpgAlbumDelete, rpgAlbumClose,
   rpgGenerateAllPortraits,
   graphToggleBtn, relationshipGraphContainer,
-  webview,
 } from './dom-refs.js';
 import { escapeHtml, showToast } from './utils.js';
 import { parseMetadataClient } from './metadata.js';
@@ -2064,6 +2063,15 @@ async function runRpgScan() {
   }
 }
 
+/**
+ * Lorebook entries by display name, read once through the lore proxy.
+ * (window.__loreCreator lives in NovelAI's script sandbox; the page cannot see it.)
+ */
+async function lorebookEntriesByName() {
+  const entries = await loreCall('getEntries');
+  return new Map((Array.isArray(entries) ? entries : []).map(e => [e.displayName, e]));
+}
+
 async function syncToLorebook() {
   const rpg = getRpgState();
   if (!rpg.enabled) return;
@@ -2071,43 +2079,33 @@ async function syncToLorebook() {
   if (rpgSyncLorebookBtn) rpgSyncLorebookBtn.disabled = true;
   try {
   const characters = Object.values(rpg.characters || {});
-  let synced = 0;
+  let synced = 0, failed = 0;
+  let byName;
+  try {
+    byName = await lorebookEntriesByName();
+  } catch (err) {
+    showToast('Could not read the lorebook: ' + err.message, 5000, 'error');
+    return;
+  }
 
   for (const char of characters) {
     if (!char.class && !char.level && Object.keys(char.stats || {}).length === 0) continue;
+    const entry = char.loreEntryName && byName.get(char.loreEntryName);
+    if (!entry) continue;
 
     try {
-      const entries = await webview.executeJavaScript(`
-        (function() {
-          if (window.__loreCreator && window.__loreCreator.getEntries) {
-            return window.__loreCreator.getEntries().filter(e => e.displayName === ${JSON.stringify(char.loreEntryName)});
-          }
-          return [];
-        })()
-      `);
-
-      if (entries.length === 0) continue;
-      const entry = entries[0];
-
       const updatedText = await window.powertool.litrpgBuildLorebookText(entry.text, char);
-
-      await webview.executeJavaScript(`
-        (function() {
-          if (window.__loreCreator && window.__loreCreator.updateEntry) {
-            window.__loreCreator.updateEntry({
-              displayName: ${JSON.stringify(char.loreEntryName)},
-              text: ${JSON.stringify(updatedText)}
-            });
-          }
-        })()
-      `);
-      synced++;
+      if (!updatedText || updatedText === entry.text) continue;
+      const ok = await loreCall('updateEntry', entry.id, { text: updatedText });
+      if (ok === false) failed++; else synced++;
     } catch (err) {
+      failed++;
       console.error(`[LitRPG] Sync failed for ${char.name}:`, err);
     }
   }
 
-  showToast(synced > 0 ? `Synced ${synced} character${synced > 1 ? 's' : ''} to lorebook` : 'No characters to sync');
+  const msg = synced > 0 ? `Synced ${synced} character${synced > 1 ? 's' : ''} to lorebook` : 'Lorebook already up to date';
+  showToast(failed ? `${msg}; ${failed} failed` : msg, failed ? 5000 : 3000, failed ? 'error' : undefined);
   } finally {
     if (rpgSyncLorebookBtn) rpgSyncLorebookBtn.disabled = false;
   }
@@ -2116,35 +2114,24 @@ async function syncToLorebook() {
 async function applyRoleUpdatesToLorebook(roleUpdates) {
   if (!roleUpdates || roleUpdates.length === 0) return;
   let updated = 0;
+  let byName;
+  try {
+    byName = await lorebookEntriesByName();
+  } catch (err) {
+    console.error('[LitRPG] Role update: could not read the lorebook:', err.message);
+    return;
+  }
 
   for (const { loreEntryName, role } of roleUpdates) {
     try {
-      const entries = await webview.executeJavaScript(`
-        (function() {
-          if (window.__loreCreator && window.__loreCreator.getEntries) {
-            return window.__loreCreator.getEntries().filter(e => e.displayName === ${JSON.stringify(loreEntryName)});
-          }
-          return [];
-        })()
-      `);
-
-      if (entries.length === 0) continue;
-      const entry = entries[0];
+      const entry = byName.get(loreEntryName);
+      if (!entry) continue;
 
       const updatedText = await window.powertool.litrpgBuildRoleUpdate(entry.text, role);
       if (!updatedText) continue; // already correct
 
-      await webview.executeJavaScript(`
-        (function() {
-          if (window.__loreCreator && window.__loreCreator.updateEntry) {
-            window.__loreCreator.updateEntry({
-              displayName: ${JSON.stringify(loreEntryName)},
-              text: ${JSON.stringify(updatedText)}
-            });
-          }
-        })()
-      `);
-      updated++;
+      const ok = await loreCall('updateEntry', entry.id, { text: updatedText });
+      if (ok !== false) updated++;
     } catch (err) {
       console.error(`[LitRPG] Role update failed for ${loreEntryName}:`, err);
     }
