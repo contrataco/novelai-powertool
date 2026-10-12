@@ -189,6 +189,11 @@ module.exports = {
     return list;
   },
 
+  /** True when the last listing had this voice (false before any listing). */
+  isListed(voiceId) {
+    return typeof voiceId === 'string' && Object.prototype.hasOwnProperty.call(lastGenders, voiceId);
+  },
+
   /** Gender from the last listing; 'unknown' when the voice was never listed. */
   voiceGender(voiceId) {
     return lastGenders[voiceId] || 'unknown';

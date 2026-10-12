@@ -1263,17 +1263,22 @@ async function planNarration(text, storyId, protagonistName) {
     genderMap[name] = classifyVoiceGender(voiceId);
   }
   const segments = parseTextForTTS(text, firstPerson, characterVoices, protagonistName, genderMap);
+  // A story cast under NovelAI keeps NovelAI voice names; Chatterbox would 404 on
+  // them and the line would go silent. Fall back to the dialogue voice, then default.
+  const usable = (v) => provider !== 'chatterbox' || chatterboxProvider.isListed(v);
+  const fallback = usable(dialogueVoice) ? dialogueVoice : 'default';
+  const pick = (v) => (usable(v) ? v : fallback);
   return {
     provider,
     segments: segments.map((seg) => {
       let voice;
       if (seg.type === 'narration' || seg.isProtagonist) {
-        voice = narratorVoice;
+        voice = usable(narratorVoice) ? narratorVoice : 'default';
       } else if (seg.speaker) {
         const mapped = matchSpeakerToVoice(seg.speaker, characterVoices);
-        voice = mapped ? mapped.voice : dialogueVoice;
+        voice = pick(mapped ? mapped.voice : dialogueVoice);
       } else {
-        voice = dialogueVoice;
+        voice = fallback;
       }
       return { ...seg, voice };
     }),

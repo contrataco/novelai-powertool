@@ -78,6 +78,29 @@ export function buildVoiceValue(selectEl, styleEl, intonationEl, cadenceEl, ttsV
   return preset || 'Cyllene';
 }
 
+// Seeds, custom seeds and v2 style/intonation/cadence are NovelAI-only. Other
+// providers take the listed voice id as is; the hidden v2 fields may still hold
+// an old NovelAI voice and must not leak into a Chatterbox or Venice setting.
+function readVoice(selectEl, ...novelaiArgs) {
+  // Still loading, or the list failed (server down): keep the saved voice rather
+  // than saving a placeholder.
+  const real = [...selectEl.options].filter((o) => o.value && !o.disabled && o.value !== '__custom__');
+  if (!real.length) return storedVoices[selectEl.id] ?? '';
+  if (ttsProviderSelect.value === 'novelai') return buildVoiceValue(selectEl, ...novelaiArgs);
+  const v = selectEl.value;
+  return v && v !== '__custom__' ? v : real[0].value;
+}
+
+// Voices as they were when the modal opened (see readVoice).
+let storedVoices = {};
+
+// Select a stored voice if this provider lists it, else the first voice (e.g. a
+// NovelAI voice left over after switching to Chatterbox).
+function selectListedVoice(selectEl, voice) {
+  const listed = typeof voice === 'string' && [...selectEl.options].some((o) => o.value === voice);
+  selectEl.value = listed ? voice : (selectEl.options[0]?.value || '');
+}
+
 // Populate a voice <select> with grouped voices (v2/v1/custom)
 function populateVoiceSelect(sel, voices, addCustomOption) {
   const prev = sel.value;
@@ -125,8 +148,8 @@ function populateVoiceSelect(sel, voices, addCustomOption) {
 
 // Load TTS voices into narrator and dialogue dropdowns
 async function loadTtsVoices() {
-  ttsNarratorVoiceSelect.innerHTML = '<option disabled selected>Loading voices...</option>';
-  ttsDialogueVoiceSelect.innerHTML = '<option disabled selected>Loading voices...</option>';
+  ttsNarratorVoiceSelect.innerHTML = '<option value="" disabled selected>Loading voices...</option>';
+  ttsDialogueVoiceSelect.innerHTML = '<option value="" disabled selected>Loading voices...</option>';
   try {
     const opts = { provider: ttsProviderSelect.value };
     if (ttsProviderSelect.value === 'venice' && veniceTtsModelSelect?.value) {
@@ -142,8 +165,8 @@ async function loadTtsVoices() {
     return voices;
   } catch (e) {
     console.error('Failed to load TTS voices:', e);
-    ttsNarratorVoiceSelect.innerHTML = '<option disabled selected>Failed to load voices</option>';
-    ttsDialogueVoiceSelect.innerHTML = '<option disabled selected>Failed to load voices</option>';
+    ttsNarratorVoiceSelect.innerHTML = '<option value="" disabled selected>Failed to load voices</option>';
+    ttsDialogueVoiceSelect.innerHTML = '<option value="" disabled selected>Failed to load voices</option>';
     showToast('Failed to load TTS voices', null, 'warn');
     return [];
   }
@@ -346,10 +369,13 @@ export async function loadTtsSettings(storySettings) {
         console.log('[Settings] Could not restore Venice TTS model:', e.message);
       }
     }
+    storedVoices = { [ttsNarratorVoiceSelect.id]: ttsSettings.ttsNarratorVoice, [ttsDialogueVoiceSelect.id]: ttsSettings.ttsDialogueVoice };
     const voices = await loadTtsVoices();
     // Load narrator voice — handle object values (v2 custom) or custom seed strings
     const narVoice = ttsSettings.ttsNarratorVoice;
-    if (narVoice && typeof narVoice === 'object' && narVoice.v === 2) {
+    if (ttsProviderSelect.value !== 'novelai') {
+      selectListedVoice(ttsNarratorVoiceSelect, narVoice);
+    } else if (narVoice && typeof narVoice === 'object' && narVoice.v === 2) {
       ttsNarratorVoiceSelect.value = '__custom__';
     } else if (narVoice && ![...ttsNarratorVoiceSelect.options].some(o => o.value === narVoice)) {
       ttsNarratorVoiceSelect.value = '__custom__';
@@ -361,7 +387,9 @@ export async function loadTtsSettings(storySettings) {
     populateV2Fields(narVoice, ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence);
     // Load dialogue voice — handle object values (v2 custom) or custom seed strings
     const dlgVoice = ttsSettings.ttsDialogueVoice;
-    if (dlgVoice && typeof dlgVoice === 'object' && dlgVoice.v === 2) {
+    if (ttsProviderSelect.value !== 'novelai') {
+      selectListedVoice(ttsDialogueVoiceSelect, dlgVoice);
+    } else if (dlgVoice && typeof dlgVoice === 'object' && dlgVoice.v === 2) {
       ttsDialogueVoiceSelect.value = '__custom__';
     } else if (dlgVoice && ![...ttsDialogueVoiceSelect.options].some(o => o.value === dlgVoice)) {
       ttsDialogueVoiceSelect.value = '__custom__';
@@ -386,8 +414,8 @@ export async function saveTtsSettings() {
     await window.powertool.ttsSetSettings({
       ttsProvider: ttsProviderSelect.value,
       ttsVersion: curTtsVersion,
-      ttsNarratorVoice: buildVoiceValue(ttsNarratorVoiceSelect, ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence, curTtsVersion, ttsNarratorCustomSeed),
-      ttsDialogueVoice: buildVoiceValue(ttsDialogueVoiceSelect, ttsDialogueStyle, ttsDialogueIntonation, ttsDialogueCadence, curTtsVersion, ttsDialogueCustomSeed),
+      ttsNarratorVoice: readVoice(ttsNarratorVoiceSelect, ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence, curTtsVersion, ttsNarratorCustomSeed),
+      ttsDialogueVoice: readVoice(ttsDialogueVoiceSelect, ttsDialogueStyle, ttsDialogueIntonation, ttsDialogueCadence, curTtsVersion, ttsDialogueCustomSeed),
       ttsSpeed: parseFloat(ttsSpeedSlider.value),
       ttsFirstPerson: ttsFirstPersonCheckbox.checked,
     });
@@ -408,8 +436,8 @@ export function buildPerStoryTtsSettings() {
   return {
     ttsProvider: ttsProviderSelect.value,
     ttsVersion: perStoryTtsVersion,
-    ttsNarratorVoice: buildVoiceValue(ttsNarratorVoiceSelect, ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence, perStoryTtsVersion, ttsNarratorCustomSeed),
-    ttsDialogueVoice: buildVoiceValue(ttsDialogueVoiceSelect, ttsDialogueStyle, ttsDialogueIntonation, ttsDialogueCadence, perStoryTtsVersion, ttsDialogueCustomSeed),
+    ttsNarratorVoice: readVoice(ttsNarratorVoiceSelect, ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence, perStoryTtsVersion, ttsNarratorCustomSeed),
+    ttsDialogueVoice: readVoice(ttsDialogueVoiceSelect, ttsDialogueStyle, ttsDialogueIntonation, ttsDialogueCadence, perStoryTtsVersion, ttsDialogueCustomSeed),
     ttsSpeed: parseFloat(ttsSpeedSlider.value),
     ttsFirstPerson: ttsFirstPersonCheckbox.checked,
   };

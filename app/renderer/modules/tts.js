@@ -20,7 +20,13 @@ async function getVoices() {
   if (!cachedVoices) {
     // The story's own provider when it has one, so a per-story Chatterbox lists its voices.
     const provider = state.storySettings?.ttsProvider;
-    cachedVoices = await window.powertool.ttsGetVoices(provider ? { provider } : undefined);
+    try {
+      cachedVoices = await window.powertool.ttsGetVoices(provider ? { provider } : undefined);
+    } catch (e) {
+      // A local server (Chatterbox) can be down; do not cache the empty list.
+      console.warn('[TTS] Voice list unavailable:', e.message);
+      return [];
+    }
   }
   return cachedVoices;
 }
@@ -167,6 +173,12 @@ export async function refreshVoiceMapUI() {
   }
 
   const voices = await getVoices();
+  if (!voices.length) {
+    const off = document.createElement('div');
+    off.style.cssText = 'font-size:12px;color:var(--warning);padding:4px 0;';
+    off.textContent = 'Voice list unavailable - is the TTS server running? Voices shown as saved.';
+    ttsVoiceList.appendChild(off);
+  }
 
   const makeCallbacks = () => ({
     onChange: async (name, newVoice) => {
@@ -286,15 +298,21 @@ async function autoAssignFromLore() {
     const existing = ttsState.characterVoices || {};
     let assigned = 0;
 
+    let globals = {};
+    try { globals = await window.powertool.ttsGetSettings(); } catch { /* optional */ }
+    const provider = state.storySettings?.ttsProvider || globals.ttsProvider;
     // Narrator and dialogue voices stay free so characters do not sound like the narration.
-    let narratorVoice = state.storySettings?.ttsNarratorVoice;
-    let dialogueVoice = state.storySettings?.ttsDialogueVoice;
-    if (!narratorVoice) {
-      try {
-        const s = await window.powertool.ttsGetSettings();
-        narratorVoice = s.ttsNarratorVoice;
-        dialogueVoice = dialogueVoice || s.ttsDialogueVoice;
-      } catch { /* optional */ }
+    const narratorVoice = state.storySettings?.ttsNarratorVoice || globals.ttsNarratorVoice;
+    const dialogueVoice = state.storySettings?.ttsDialogueVoice || globals.ttsDialogueVoice;
+
+    // Voices saved under another provider (NovelAI names on Chatterbox) cannot be
+    // spoken here, so those characters are recast. NovelAI accepts any seed text,
+    // so its assignments are always kept.
+    if (provider !== 'novelai') {
+      const listed = new Set(voices.map((v) => v.id));
+      for (const [name, voice] of Object.entries(existing)) {
+        if (!listed.has(voice)) delete existing[name];
+      }
     }
     const reserved = [narratorVoice, dialogueVoice].filter((v) => typeof v === 'string' && v);
     const usedVoices = new Set([...Object.values(existing), ...reserved]);
@@ -434,11 +452,16 @@ async function narrateScene() {
     };
     let next = render(segments[0]);
     let failed = 0;
+    let firstError = null;
     for (let i = 0; i < segments.length; i++) {
       if (aborted) break;
       const seg = segments[i];
       let audio = null;
-      try { audio = await next; } catch (e) { failed++; console.error('[TTS] Segment failed:', e); }
+      try { audio = await next; } catch (e) {
+        failed++;
+        firstError = firstError || e;
+        console.error('[TTS] Segment failed:', e);
+      }
       if (aborted) break;
       next = i + 1 < segments.length ? render(segments[i + 1]) : null;
       next?.catch(() => {}); // awaited on the next pass; avoid an unhandled rejection meanwhile
@@ -456,7 +479,10 @@ async function narrateScene() {
         audioEl.play().catch(reject);
       });
     }
-    if (failed === segments.length) throw new Error('every segment failed to generate');
+    if (failed === segments.length) throw firstError || new Error('every segment failed to generate');
+    if (failed && !aborted) {
+      showToast(`${failed} of ${segments.length} lines could not be spoken: ${friendlyApiError(firstError)}`, 6000, 'warn');
+    }
     ttsProgress.textContent = aborted ? 'Stopped' : 'Done';
   } catch (e) {
     if (aborted) { ttsProgress.textContent = 'Stopped'; return; } // Stop clears src, which fires error
