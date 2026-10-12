@@ -2755,7 +2755,18 @@ ipcMain.handle('lore:get-category-registry', (event, storyId) => {
 
 // Which lorebook categories overlap, and which one to keep: the renderer moves
 // entries and removes the emptied categories.
-ipcMain.handle('lore:plan-category-merges', (event, cats) => loreCreator.planCategoryMerges(cats));
+ipcMain.handle('lore:plan-category-merges', (event, cats, opts) => loreCreator.planCategoryMerges(cats, opts || {}));
+
+// Which lorebook categories to merge: same-name duplicates outright, merely
+// overlapping ones only when the lore model, reading their entries, agrees.
+ipcMain.handle('lore:decide-category-merges', async (event, { cats, keepApart }) => {
+  try {
+    return await loreCreator.decideCategoryMerges(cats, makeLoreGenerateTextFn(), keepApart || []);
+  } catch (e) {
+    console.warn('[Main] Category merge decision failed:', e.message);
+    return { merges: [], apart: [] };
+  }
+});
 
 ipcMain.handle('lore:add-custom-category', (event, { storyId, category }) => {
   const loreState = db.getLoreState(storyId) || {};

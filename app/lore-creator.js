@@ -104,29 +104,55 @@ function categoryHeads(name) {
   return heads;
 }
 
+/**
+ * Same category written differently: "Class" / "Classes", "NPC" / "NPCs".
+ * Always safe to merge, so only plural endings and case are ignored; synonyms
+ * ("Skills" ~ "Abilities") only nominate a pair for a judgment.
+ */
+function categoriesSameWords(a, b) {
+  const words = (n) => new Set(String(n || '').toLowerCase().split(/[^a-z0-9+]+/).filter(w => w && !CATEGORY_STOP_WORDS.has(w)).map(singularizeCategoryWord));
+  const ta = words(a), tb = words(b);
+  return ta.size > 0 && ta.size === tb.size && [...ta].every(t => tb.has(t));
+}
+
+/**
+ * Names that MAY cover the same things (same words, or a shared head noun).
+ * Only a nomination: whether two such categories really belong together is
+ * decided from their entries (judgeCategoryMerges), not from the names.
+ */
 function categoriesOverlap(a, b) {
+  if (categoriesSameWords(a, b)) return true;
   const ta = categoryTokens(a), tb = categoryTokens(b);
   if (!ta.size || !tb.size) return false;
-  if (ta.size === tb.size && [...ta].every(t => tb.has(t))) return true;
   const hb = categoryHeads(b);
   return [...categoryHeads(a)].some(h => hb.has(h));
 }
 
+/** Key for a pair of category names judged to stay apart. */
+function categoryPairKey(a, b) {
+  return [String(a).toLowerCase(), String(b).toLowerCase()].sort().join('||');
+}
+
 /**
- * Group overlapping categories and pick one to keep in each group.
+ * Group categories and pick one to keep in each group.
  * cats: [{ id, name, count?, builtin?, source? }]. The kept one is a built-in
  * category if the group has one, else the one holding the most entries, then
  * one the lorebook or user owns, then the shorter (more general) name, then
  * the one listed first.
+ * opts.exactOnly: only same-words duplicates. opts.keepApart: pair keys
+ * (categoryPairKey) never grouped.
  * Returns [{ keep, merge: [cat, ...] }] for groups of two or more.
  */
-function planCategoryMerges(cats) {
+function planCategoryMerges(cats, opts = {}) {
   const list = (cats || []).filter(c => c && c.id && c.name);
+  const apart = new Set(opts.keepApart || []);
+  const related = opts.exactOnly ? categoriesSameWords : categoriesOverlap;
   const parent = list.map((_, i) => i);
   const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
-      if (categoriesOverlap(list[i].name, list[j].name)) parent[find(i)] = find(j);
+      if (apart.has(categoryPairKey(list[i].name, list[j].name))) continue;
+      if (related(list[i].name, list[j].name)) parent[find(i)] = find(j);
     }
   }
   const groups = new Map();
@@ -135,23 +161,152 @@ function planCategoryMerges(cats) {
     if (!groups.has(r)) groups.set(r, []);
     groups.get(r).push(c);
   });
-  // Ties go to the category listed first (the one the story already had).
-  const order = new Map(list.map((c, i) => [c, i]));
+  const plans = [];
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    const keep = pickCategoryToKeep(g, list);
+    plans.push({ keep, merge: g.filter(c => c !== keep) });
+  }
+  return plans;
+}
+
+/** Which of several categories to keep (see planCategoryMerges). `order` breaks ties by position. */
+function pickCategoryToKeep(cats, order = cats) {
+  const pos = (c) => order.indexOf(c);
   // The more general name ("NPCs" over "Supporting NPCs") counts its words as written.
   const words = (c) => c.name.toLowerCase().split(/[^a-z0-9+]+/).filter(w => w && !CATEGORY_STOP_WORDS.has(w)).length;
-  const rank = (c) => [c.builtin ? 1 : 0, c.count || 0, (c.source === 'lorebook' || c.source === 'user') ? 1 : 0, -words(c), -order.get(c)];
+  const rank = (c) => [c.builtin ? 1 : 0, c.count || 0, (c.source === 'lorebook' || c.source === 'user') ? 1 : 0, -words(c), -pos(c)];
   const better = (a, b) => {
     const ra = rank(a), rb = rank(b);
     for (let k = 0; k < ra.length; k++) if (ra[k] !== rb[k]) return ra[k] > rb[k];
     return false;
   };
-  const plans = [];
-  for (const g of groups.values()) {
-    if (g.length < 2) continue;
-    const keep = g.reduce((best, c) => (better(c, best) ? c : best), g[0]);
-    plans.push({ keep, merge: g.filter(c => c !== keep) });
+  return cats.reduce((best, c) => (better(c, best) ? c : best), cats[0]);
+}
+
+const KEEP_APART_REASON = /\b(?:stay|stays|kept|keep|keeping|remain|remains)\s+(?:them\s+|it\s+)?(?:apart|separate)\b|\bshould not be merged\b|\bnot redundant\b/i;
+
+/**
+ * Read the judge's answers into Map(groupIndex -> { reason, together }).
+ * Small models often break the JSON (a stray bracket); then each group's
+ * object is read on its own, and a group that cannot be read is left
+ * unanswered rather than guessed.
+ */
+function readCategoryJudgments(raw, groupCount) {
+  const answers = new Map();
+  const take = (a) => {
+    const gi = Number(a && a.group) - 1;
+    if (Number.isInteger(gi) && gi >= 0 && gi < groupCount && Array.isArray(a.together) && !answers.has(gi)) {
+      answers.set(gi, { reason: String(a.reason || ''), together: a.together });
+    }
+  };
+  const parsed = raw ? recoverJSON(raw) : null;
+  if (parsed && Array.isArray(parsed.groups)) parsed.groups.forEach(take);
+  if (answers.size < groupCount && raw) {
+    const parts = raw.split(/(?="group"\s*:\s*\d+)/).slice(1);
+    for (const part of parts) {
+      const g = part.match(/^"group"\s*:\s*(\d+)/);
+      const at = part.search(/"together"\s*:/);
+      if (!g || at < 0) continue;
+      // Each inner list of names, read one by one, so a missing or stray
+      // outer bracket does not lose the answer.
+      const body = part.slice(at).split(/"reason"\s*:|\}/)[0];
+      const together = [];
+      let bad = false;
+      for (const m of body.matchAll(/\[\s*"(?:[^"\\]|\\.)*"(?:\s*,\s*"(?:[^"\\]|\\.)*")*\s*\]/g)) {
+        try { together.push(JSON.parse(m[0])); } catch (_) { bad = true; }
+      }
+      if (bad) continue;
+      const reason = (part.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)"/) || [])[1] || '';
+      take({ group: Number(g[1]), reason, together });
+    }
   }
-  return plans;
+  return answers;
+}
+
+/**
+ * Decide which lorebook categories to merge, smartly:
+ * - same name written differently ("Class" / "Classes"): merged, no question;
+ * - names that only overlap ("Main Cast" / "Supporting Cast"): the model reads
+ *   the entries in each and says which really hold the same kind of thing.
+ *   Pairs it keeps apart are returned in `apart` and never asked about again
+ *   (pass them back as keepApart). If the model cannot answer, nothing in
+ *   that group is merged and nothing is marked apart, so it is asked later.
+ * cats: [{ id, name, count, builtin, entries: [entry names] }].
+ * Returns { merges: [{ keep, merge: [cat], why }], apart: [pairKey] }.
+ */
+async function decideCategoryMerges(cats, generateTextFn, keepApart = []) {
+  const merges = [];
+  const apart = [];
+  let list = (cats || []).filter(c => c && c.id && c.name);
+
+  // 1. Duplicates by name.
+  for (const p of planCategoryMerges(list, { exactOnly: true })) {
+    merges.push({ keep: p.keep, merge: p.merge, why: 'same name' });
+    const gone = new Set(p.merge.map(m => m.id));
+    p.keep.count = (p.keep.count || 0) + p.merge.reduce((n, m) => n + (m.count || 0), 0);
+    p.keep.entries = [...(p.keep.entries || []), ...p.merge.flatMap(m => m.entries || [])];
+    list = list.filter(c => !gone.has(c.id));
+  }
+
+  // 2. Overlapping names: ask, with the entries as evidence.
+  const groups = planCategoryMerges(list, { keepApart }).map(p => [p.keep, ...p.merge]);
+  if (!groups.length || !generateTextFn) return { merges, apart };
+  const show = (c) => `- "${c.name}" (${c.count || 0} entries${c.builtin ? ', standard category' : ''}): ${(c.entries || []).slice(0, 12).join(', ') || 'no entries'}`;
+  const desc = groups.map((g, gi) => `Group ${gi + 1}:\n${g.map(show).join('\n')}`).join('\n\n');
+  const messages = [
+    { role: 'system', content: 'You organize a fiction lorebook. You decide whether lorebook categories with similar names really hold the same kind of thing. You never invent categories.' },
+    { role: 'user', content: `Each group lists lorebook categories whose names look similar, with the entries in each.
+
+${desc}
+
+For each group, list the categories that should become ONE category because they hold the same kind of thing, so keeping them apart only confuses the reader. Keep categories apart when the split is useful: main characters vs background characters, player classes vs the abilities they grant, enemies vs allies, places in different worlds. When unsure, keep them apart.
+
+Answer each group: first the reason, then the decision.
+Output JSON only: {"groups":[{"group":1,"reason":"one short sentence","together":[["Category A","Category B"]]}]}
+Use the category names exactly as written above. Each category appears in at most one "together" list. A group where everything stays apart has "together": [].` },
+  ];
+  let raw = '';
+  try {
+    const result = await callLLM(generateTextFn, messages, { maxTokens: 1500, temperature: 0.1, label: 'category-judge', timeout: 120000 });
+    raw = result.raw || '';
+  } catch (e) {
+    console.warn(`${LOG_PREFIX} Category judge failed: ${e.message}`);
+  }
+  const answers = readCategoryJudgments(raw, groups.length);
+  groups.forEach((g, gi) => {
+    const a = answers.get(gi);
+    if (!a) return; // unanswered: decide another time
+    const byName = new Map(g.map(c => [c.name.toLowerCase(), c]));
+    // A reason that argues for keeping them apart wins over a list that says otherwise.
+    const together = KEEP_APART_REASON.test(a.reason || '') ? [] : a.together;
+    // Lists that share a category are one list ("A+B" and "A+C" = "A+B+C").
+    let sets = [];
+    for (const set of together) {
+      if (!Array.isArray(set)) continue;
+      const members = new Set(set.map(n => byName.get(String(n).toLowerCase())).filter(Boolean));
+      if (members.size < 2) continue;
+      const touching = sets.filter(s => [...s].some(c => members.has(c)));
+      sets = sets.filter(s => !touching.includes(s));
+      for (const s of touching) s.forEach(c => members.add(c));
+      sets.push(members);
+    }
+    sets = sets.map(s => g.filter(c => s.has(c)));
+    for (const members of sets) {
+      const keep = pickCategoryToKeep(members, g);
+      merges.push({ keep, merge: members.filter(c => c !== keep), why: String(a.reason || '').slice(0, 200) });
+    }
+    // Every pair the model did not put together stays apart from now on.
+    const setOf = new Map();
+    sets.forEach((s, si) => s.forEach(c => setOf.set(c, si)));
+    for (let i = 0; i < g.length; i++) {
+      for (let j = i + 1; j < g.length; j++) {
+        const si = setOf.get(g[i]), sj = setOf.get(g[j]);
+        if (si === undefined || si !== sj) apart.push(categoryPairKey(g[i].name, g[j].name));
+      }
+    }
+  });
+  return { merges, apart };
 }
 
 // Categories a story keeps: added or imported by the user, or found in the
@@ -160,10 +315,10 @@ const KEPT_CATEGORY_SOURCES = new Set(['user', 'lorebook']);
 
 /**
  * Tidy a story's saved categories in place: drop scan proposals nothing uses,
- * and fold overlapping categories into one ("NPCs & Hostiles" into "NPCs",
- * "World Locations" into "Locations"). Categories the user added by hand are
- * never folded away. Merged names are remembered in categoryAliases so the
- * lorebook auto-detect does not bring them back. Returns the merges made.
+ * and fold same-name duplicates into one ("Classes" into "Class"). Categories
+ * that only overlap are left to the lorebook cleanup, which looks at their
+ * entries. Categories the user added by hand are never folded away. Merged
+ * names are remembered in categoryAliases. Returns the merges made.
  */
 function tidyStoryCategories(loreState) {
   const cats = loreState.customCategories || [];
@@ -173,7 +328,7 @@ function tidyStoryCategories(loreState) {
   const dropped = cats.length - kept.length;
 
   const builtins = BUILTIN_CATEGORIES.map(b => ({ id: b.id, name: b.displayName, builtin: true }));
-  const plans = planCategoryMerges([...builtins, ...kept.map(c => ({ id: c.id, name: c.displayName, source: c.source }))]);
+  const plans = planCategoryMerges([...builtins, ...kept.map(c => ({ id: c.id, name: c.displayName, source: c.source }))], { exactOnly: true });
   const aliases = { ...(loreState.categoryAliases || {}) };
   const merges = [];
   for (const plan of plans) {
@@ -197,9 +352,15 @@ function tidyStoryCategories(loreState) {
   return { dropped, merges };
 }
 
-/** The existing category a proposed name overlaps, or null. */
+/**
+ * The existing category a proposed name means, or null: one with the same
+ * name or the same words first, else an overlapping one.
+ */
 function findOverlappingCategory(name, existing) {
-  const hits = (existing || []).filter(c => c && c.name && categoriesOverlap(name, c.name));
+  const list = (existing || []).filter(c => c && c.name);
+  const same = list.find(c => c.name.toLowerCase() === String(name).toLowerCase()) || list.find(c => categoriesSameWords(name, c.name));
+  if (same) return same;
+  const hits = list.filter(c => categoriesOverlap(name, c.name));
   if (!hits.length) return null;
   const plan = planCategoryMerges([...hits, { id: '__new__', name }]);
   const keep = plan[0]?.keep;
@@ -2960,6 +3121,9 @@ module.exports = {
   __test: { pass7_semanticGrouping },
   // Overlapping categories
   categoriesOverlap,
+  categoriesSameWords,
+  categoryPairKey,
+  decideCategoryMerges,
   tidyStoryCategories,
   KEPT_CATEGORY_SOURCES,
   planCategoryMerges,

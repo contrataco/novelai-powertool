@@ -183,7 +183,8 @@ contextBridge.exposeInMainWorld('powertool', {
   loreGetCategoryRegistry: (storyId) => ipcRenderer.invoke('lore:get-category-registry', storyId),
   loreAddCustomCategory: (storyId, category) => ipcRenderer.invoke('lore:add-custom-category', { storyId, category }),
   loreRemoveCustomCategory: (storyId, categoryId) => ipcRenderer.invoke('lore:remove-custom-category', { storyId, categoryId }),
-  lorePlanCategoryMerges: (cats) => ipcRenderer.invoke('lore:plan-category-merges', cats),
+  lorePlanCategoryMerges: (cats, opts) => ipcRenderer.invoke('lore:plan-category-merges', cats, opts),
+  loreDecideCategoryMerges: (cats, keepApart) => ipcRenderer.invoke('lore:decide-category-merges', { cats, keepApart }),
   onLoreScanProgress: (callback) => {
     ipcRenderer.on('lore:scan-progress', (event, data) => callback(data));
   },

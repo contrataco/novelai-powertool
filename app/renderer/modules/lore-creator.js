@@ -224,8 +224,8 @@ export async function loadCategoryRegistry() {
           if (!name) continue;
           const id = slugifyCategory(name);
           if (!id || state.categoryRegistry.find(c => c.id === id || c.displayName.toLowerCase() === name.toLowerCase())) continue;
-          // A lorebook category overlapping one the story has is the same thing.
-          const plans = await window.powertool.lorePlanCategoryMerges([{ id, name }, ...state.categoryRegistry.map(c => ({ id: c.id, name: c.displayName, builtin: c.isBuiltin }))]);
+          // Same name written differently ("Classes" for "Class") is the same category.
+          const plans = await window.powertool.lorePlanCategoryMerges([...state.categoryRegistry.map(c => ({ id: c.id, name: c.displayName, builtin: c.isBuiltin })), { id, name }], { exactOnly: true });
           if (plans.some(p => p.keep.id === id || p.merge.some(m => m.id === id))) continue;
           const { singular, plural } = deriveSingularPlural(name);
           const res = await window.powertool.loreAddCustomCategory(state.currentStoryId, {
@@ -252,58 +252,124 @@ export async function loadCategoryRegistry() {
 const _categoryCleanupDone = new Set();
 
 /**
- * Fold overlapping lorebook categories together in NovelAI ("Crawler
- * Abilities" and "Abilities & Skills" into "Abilities"): move each entry to
- * the category kept, then remove the emptied category. Entry text is not
- * touched. Runs once per story per session unless forced.
+ * Merge lorebook categories that hold the same kind of thing, in NovelAI.
+ * Same-name duplicates ("Class" / "Classes") merge outright; categories whose
+ * names only overlap merge when the lore model, reading their entries, says
+ * they belong together (lore:decide-category-merges). Pairs it keeps apart
+ * are remembered (loreState.categoryKeepApart) and not asked about again.
+ * Entries move to the kept category, the emptied one is removed, entry text
+ * is never touched, and each merge is logged so Undo can put it back.
+ * Runs once per story per session unless forced.
  */
 export async function cleanupLorebookCategories({ force = false } = {}) {
   const storyId = state.currentStoryId;
-  if (!storyId || !state.loreProxyReady) return [];
+  if (!storyId || !state.loreProxyReady || !state.loreState) return [];
   if (!force && _categoryCleanupDone.has(storyId)) return [];
   _categoryCleanupDone.add(storyId);
   try {
     const cats = (await loreCall('getCategories') || []).filter(c => c && c.id && c.name);
     if (cats.length < 2) return [];
     const entries = await loreCall('getEntries') || [];
-    const counts = new Map();
-    for (const e of entries) if (e.category) counts.set(e.category, (counts.get(e.category) || 0) + 1);
+    const inCat = new Map();
+    for (const e of entries) {
+      if (!e.category) continue;
+      if (!inCat.has(e.category)) inCat.set(e.category, []);
+      inCat.get(e.category).push(e);
+    }
     const builtinNames = new Set((state.categoryRegistry || []).filter(c => c.isBuiltin).map(c => c.displayName.toLowerCase()));
-    const plans = await window.powertool.lorePlanCategoryMerges(cats.map(c => ({
-      id: c.id, name: c.name, count: counts.get(c.id) || 0, builtin: builtinNames.has(c.name.toLowerCase()),
-    })));
-    if (!plans.length || storyId !== state.currentStoryId) return [];
+    const decision = await window.powertool.loreDecideCategoryMerges(cats.map(c => ({
+      id: c.id, name: c.name,
+      count: (inCat.get(c.id) || []).length,
+      builtin: builtinNames.has(c.name.toLowerCase()),
+      entries: (inCat.get(c.id) || []).map(e => e.displayName).filter(Boolean),
+    })), state.loreState.categoryKeepApart || []);
+    if (storyId !== state.currentStoryId) return [];
 
-    const done = [];
-    for (const plan of plans) {
+    if (decision.apart?.length) {
+      state.loreState.categoryKeepApart = [...new Set([...(state.loreState.categoryKeepApart || []), ...decision.apart])];
+    }
+    const log = [];
+    for (const plan of decision.merges || []) {
       for (const m of plan.merge) {
-        let failed = 0;
-        for (const e of entries.filter(x => x.category === m.id)) {
+        const moving = inCat.get(m.id) || [];
+        const moved = [];
+        for (const e of moving) {
           const ok = await loreCall('updateEntry', e.id, { category: plan.keep.id });
-          if (ok === false) failed++;
+          if (ok === false) break;
+          moved.push(e.id);
         }
-        if (failed) {
-          console.warn(`[LoreCat] Could not move ${failed} entries out of "${m.name}"; left it in place`);
+        const step = { at: Date.now(), from: { id: m.id, name: m.name }, into: { id: plan.keep.id, name: plan.keep.name }, entryIds: moved, why: plan.why || '' };
+        if (moved.length < moving.length) {
+          console.warn(`[LoreCat] Moved ${moved.length} of ${moving.length} entries out of "${m.name}"; left the category in place`);
+          if (moved.length) log.push(step);
           continue;
         }
-        try { await loreCall('removeCategory', m.id); } catch (err) {
+        let removed = false;
+        try { removed = (await loreCall('removeCategory', m.id)) !== false; } catch (err) {
           console.log(`[LoreCat] "${m.name}" is empty but could not be removed (${err.message}); update the PowerTool script to remove it`);
         }
-        const ids = state.loreState?.loreCategoryIds || {};
+        step.removed = removed;
+        const ids = state.loreState.loreCategoryIds || {};
         for (const [n, id] of Object.entries(ids)) if (id === m.id) ids[n] = plan.keep.id;
-        done.push(`${m.name} into ${plan.keep.name}`);
+        // The app's saved list follows the lorebook.
+        try { await window.powertool.loreRemoveCustomCategory(storyId, slugifyCategory(m.name)); } catch (_) {}
+        log.push(step);
+        console.log(`[LoreCat] Merged "${m.name}" into "${plan.keep.name}" (${moved.length} entries): ${step.why}`);
       }
     }
-    if (done.length) {
-      await saveLoreState();
-      console.log(`[LoreCat] Merged lorebook categories: ${done.join('; ')}`);
-      showToast(`Merged overlapping lorebook categories: ${done.join('; ')}`, 10000, 'success');
+    if (log.length) {
+      state.loreState.categoryMergeLog = [...(state.loreState.categoryMergeLog || []), ...log].slice(-50);
     }
-    return done;
+    await saveLoreState();
+    if (log.length) {
+      const text = log.map(s => `${s.from.name} into ${s.into.name}`).join('; ');
+      showToast(`Merged lorebook categories: ${text}`, 0, 'success', {
+        persistent: true, undoLabel: 'Undo', onUndo: () => undoCategoryMerges(log),
+      });
+      await loadCategoryRegistry();
+    }
+    return log;
   } catch (e) {
     console.log('[LoreCat] Category cleanup skipped:', e.message);
     return [];
   }
+}
+
+/**
+ * Put merged categories back: recreate each removed category under its old
+ * name, move its entries back, and keep the pair apart from now on.
+ */
+export async function undoCategoryMerges(steps) {
+  const storyId = state.currentStoryId;
+  if (!storyId || !state.loreState) return;
+  const undone = [];
+  for (const s of [...steps].reverse()) {
+    try {
+      let catId = s.from.id;
+      if (s.removed !== false) {
+        catId = await loreCall('createCategory', { name: s.from.name });
+        if (!catId) throw new Error('could not recreate the category');
+      }
+      for (const id of s.entryIds) await loreCall('updateEntry', id, { category: catId });
+      const ids = state.loreState.loreCategoryIds || {};
+      if (ids[s.from.name] === s.into.id) ids[s.from.name] = catId;
+      await window.powertool.loreAddCustomCategory(storyId, {
+        id: slugifyCategory(s.from.name), displayName: s.from.name, singularName: deriveSingularPlural(s.from.name).singular,
+        color: '#607d8b', source: 'lorebook', explicit: true,
+      });
+      const key = [s.from.name.toLowerCase(), s.into.name.toLowerCase()].sort().join('||');
+      state.loreState.categoryKeepApart = [...new Set([...(state.loreState.categoryKeepApart || []), key])];
+      state.loreState.categoryMergeLog = (state.loreState.categoryMergeLog || []).filter(x => !(x.at === s.at && x.from.id === s.from.id));
+      undone.push(s.from.name);
+    } catch (e) {
+      console.warn(`[LoreCat] Undo of "${s.from.name}" failed: ${e.message}`);
+    }
+  }
+  await saveLoreState();
+  await loadCategoryRegistry();
+  showToast(undone.length === steps.length
+    ? `Put back: ${undone.join(', ')}. They will stay separate.`
+    : `Put back ${undone.length} of ${steps.length} categories; see the log for the rest.`, 6000, undone.length === steps.length ? 'success' : 'warn');
 }
 
 // =========================================================================
