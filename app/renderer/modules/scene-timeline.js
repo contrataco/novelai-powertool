@@ -20,6 +20,25 @@ function getAvatarColor(index) {
   return AVATAR_COLORS[index % AVATAR_COLORS.length];
 }
 
+/**
+ * A scene's full text from the story. Offsets were recorded at scan time, so
+ * if the story was edited above the scene they may have drifted: re-anchor on
+ * the scene's opening words and keep the same length.
+ */
+export function sceneFullText(scene, storyText) {
+  if (!storyText || !Number.isFinite(scene?.textStart) || !Number.isFinite(scene?.textEnd)) return '';
+  let start = scene.textStart;
+  const len = scene.textEnd - scene.textStart;
+  const anchor = (scene.boundaryExcerpt || '').slice(0, 40);
+  if (anchor && !storyText.slice(start).trimStart().startsWith(anchor)) {
+    // Nearest match at or after a point a little before the old position.
+    let found = storyText.indexOf(anchor, Math.max(0, start - 5000));
+    if (found < 0) found = storyText.indexOf(anchor);
+    if (found >= 0) start = found;
+  }
+  return storyText.slice(start, start + len).trim();
+}
+
 // =========================================================================
 // RENDER TIMELINE
 // =========================================================================
@@ -435,34 +454,22 @@ export function openSceneExplorer(sceneId) {
   const narrateBtn = sceneExplorerBody.querySelector('.scene-narrate-btn');
   if (narrateBtn) {
     narrateBtn.addEventListener('click', async () => {
-      const sceneText = scene.excerpt || scene.description || '';
+      // The whole scene, not scene.excerpt (a 200-character preview that
+      // stopped narration mid-sentence).
+      let sceneText = '';
+      try {
+        sceneText = sceneFullText(scene, (await readStoryTextFromDOM()) || '');
+      } catch (e) { console.warn('[Timeline] Could not read story text:', e); }
+      if (!sceneText) sceneText = scene.excerpt || scene.description || '';
       if (!sceneText || sceneText.length < 20) {
         showToast('Not enough scene text to narrate', 3000, 'warn');
         return;
       }
       narrateBtn.disabled = true;
-      narrateBtn.textContent = 'Generating…';
+      narrateBtn.textContent = 'Narrating…';
       try {
-        const segments = await window.powertool.ttsNarrateScene(
-          sceneText,
-          state.currentStoryId,
-          null
-        );
-        if (!segments || segments.length === 0) {
-          showToast('No audio generated for this scene', 3000, 'warn');
-          return;
-        }
-        // Play segments sequentially
-        const audioEl = document.createElement('audio');
-        for (const seg of segments) {
-          audioEl.src = seg.audioData;
-          await new Promise((resolve, reject) => {
-            audioEl.onended = resolve;
-            audioEl.onerror = reject;
-            audioEl.play();
-          });
-        }
-        showToast('Narration complete', 2000);
+        // Played by the TTS panel's player: streams line by line, Stop works.
+        await new Promise((resolve) => bus.emit('tts:narrate-text', { text: sceneText, done: resolve }));
       } catch (e) {
         console.error('[Timeline] Narrate error:', e);
         showToast('TTS error: ' + friendlyApiError(e), 4000, 'error');

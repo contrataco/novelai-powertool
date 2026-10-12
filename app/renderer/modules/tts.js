@@ -399,7 +399,20 @@ async function autoAssignFromLore() {
   }
 }
 
-async function narrateScene() {
+// The last ~3000 characters, starting at a paragraph or sentence boundary so
+// narration never opens mid-sentence.
+const NARRATE_TAIL = 3000;
+export function narrationTail(text) {
+  if (text.length <= NARRATE_TAIL) return text;
+  const tail = text.slice(-NARRATE_TAIL);
+  const para = tail.indexOf('\n');
+  if (para >= 0 && para < 1200) return tail.slice(para + 1);
+  const m = /[.!?]["”’)]*\s+/.exec(tail);
+  return m && m.index < 1200 ? tail.slice(m.index + m[0].length) : tail;
+}
+
+// textOverride: narrate exactly this text (e.g. a whole scene from the timeline).
+async function narrateScene(textOverride) {
   if (isNarrating) return;
   isNarrating = true;
   aborted = false;
@@ -407,8 +420,8 @@ async function narrateScene() {
   ttsStopBtn.classList.remove('u-hidden');
 
   try {
-    const storyText = await readStoryTextFromDOM();
-    if (!storyText || storyText.length < 50) {
+    const storyText = typeof textOverride === 'string' ? textOverride : narrationTail((await readStoryTextFromDOM()) || '');
+    if (!storyText || storyText.trim().length < 20) {
       showToast('Not enough text to narrate', 3000, 'warn');
       return;
     }
@@ -422,7 +435,7 @@ async function narrateScene() {
 
     ttsProgress.textContent = 'Generating audio...';
     const { provider, segments } = await window.powertool.ttsPlanScene(
-      storyText.slice(-3000),
+      storyText,
       state.currentStoryId,
       protagonistName
     );
@@ -534,7 +547,13 @@ async function addCharacterInline() {
 
 export function init() {
   if (!ttsNarrateBtn) return;
-  ttsNarrateBtn.addEventListener('click', narrateScene);
+  ttsNarrateBtn.addEventListener('click', () => narrateScene());
+  // Other panels (scene timeline) narrate their own text through this player,
+  // so it streams line by line and the Stop button works. Resolves when done.
+  bus.on('tts:narrate-text', ({ text, done } = {}) => {
+    if (isNarrating) { showToast('Narration is already playing - press Stop first', 3000, 'warn'); done?.(false); return; }
+    narrateScene(text).finally(() => done?.(true));
+  });
   ttsStopBtn.addEventListener('click', stopNarration);
   if (ttsAutoAssignBtn) {
     ttsAutoAssignBtn.addEventListener('click', autoAssignFromLore);
