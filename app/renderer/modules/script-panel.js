@@ -63,20 +63,20 @@ function renderScriptCard(script, bundledVersion) {
     toggleBtn.disabled = true;
     toggleBtn.textContent = 'Working...';
     try {
-      if (script.enabled) {
-        await window.powertool.scriptMgrDisableScript(script.name);
-      } else {
-        await window.powertool.scriptMgrEnableScript(script.name);
-      }
+      const res = script.enabled
+        ? await window.powertool.scriptMgrDisableScript(script.name)
+        : await window.powertool.scriptMgrEnableScript(script.name);
+      if (!res || res.success === false) throw new Error(res?.error || 'NovelAI did not respond');
       showToast(`${script.name} ${script.enabled ? 'disabled' : 'enabled'}`);
       // Close the script manager dialog in the webview
       await window.powertool.scriptMgrClose();
       // Refresh after a brief delay
       setTimeout(refreshScripts, 1000);
     } catch (e) {
-      showToast('Failed: ' + e.message);
-      toggleBtn.disabled = false;
-      toggleBtn.textContent = script.enabled ? 'Disable' : 'Enable';
+      // The click may still land after a slow save; re-read the real state
+      // rather than offering the same toggle again.
+      showToast('Not confirmed: ' + e.message + '. Rechecking...');
+      setTimeout(refreshScripts, 2000);
     }
   });
   actions.appendChild(toggleBtn);
@@ -92,13 +92,20 @@ function renderScriptCard(script, bundledVersion) {
       try {
         const bundled = await loadBundledInfo();
         if (!bundled.content) { showToast('Bundled script not found'); return; }
-        // Automated flow: disable old script, import new, refresh list
+        // NovelAI upgrades a script with the same id in place, so there is
+        // no old copy to turn off afterwards.
         try {
-          await window.powertool.scriptMgrDisableScript(POWERTOOL_SCRIPT_NAME);
-          await window.powertool.scriptMgrImportScript(bundled.content);
+          const imp = await window.powertool.scriptMgrImportScript(bundled.content);
+          if (!imp || imp.success === false) throw new Error(imp?.error || 'import did not complete');
+          if (!imp.enabled) await window.powertool.scriptMgrEnableScript(POWERTOOL_SCRIPT_NAME);
           await window.powertool.scriptMgrClose();
-          showToast(`Updated to ${bundledVersion}`, 3000, 'success');
           await refreshScripts();
+          const now = (cachedScripts || []).find(s => s.name === POWERTOOL_SCRIPT_NAME);
+          if (now && String(now.version).replace(/^v/, '') === String(bundledVersion).replace(/^v/, '')) {
+            showToast(`Updated to ${bundledVersion}`, 3000, 'success');
+          } else {
+            throw new Error(`NovelAI still lists version ${now ? now.version : 'none'}`);
+          }
         } catch (autoErr) {
           // Fallback: copy to clipboard for manual import
           console.warn('[Scripts] Auto-update failed, falling back to clipboard:', autoErr);
