@@ -454,6 +454,18 @@ async function directGetMemory() {
 // the webview DOM and communicate through them.
 // =========================================================================
 
+// executeJavaScript with a deadline kept HERE, not inside the page. The webview
+// is display:none in headless mode, and Chromium throttles a hidden page's
+// timers (to about once a minute after 5 minutes), so a timeout counted inside
+// it can take hours; a page that never answers would hang forever.
+function execInWebview(code, ms, label) {
+  let timer;
+  return Promise.race([
+    webview.executeJavaScript(code),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label}: NovelAI page did not answer in ${Math.round(ms / 1000)}s`)), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function proxyCall(cmdLabel, resPrefix, resEnd, method, args) {
   const reqId = 'r' + Date.now() + Math.random().toString(36).slice(2, 8);
   const payload = JSON.stringify({ id: reqId, method, args: args || [] });
@@ -540,7 +552,7 @@ async function proxyCall(cmdLabel, resPrefix, resEnd, method, args) {
       if (!cmdInput && !domCmdEl) { reject(new Error('Proxy not found (no panel or DOM channel)')); return; }
 
       // Poll for our response
-      var polls = 0;
+      var started = Date.now();
       function poll() {
         var raw = readResponse();
         if (raw && raw.length > 0) {
@@ -553,14 +565,15 @@ async function proxyCall(cmdLabel, resPrefix, resEnd, method, args) {
             }
           } catch(e) { /* not valid JSON yet, keep polling */ }
         }
-        if (++polls < 150) setTimeout(poll, 100);
+        // Wall clock, not a poll count: throttled timers make 150 polls far longer than 15s.
+        if (Date.now() - started < 15000) setTimeout(poll, 100);
         else reject(new Error('Proxy response timeout (15s)'));
       }
       setTimeout(poll, 50);
     })
   `;
 
-  return webview.executeJavaScript(code);
+  return execInWebview(code, 17000, `Proxy ${method}`);
 }
 
 // Smart wrappers -- try CDP first, then webview proxy, then direct fallbacks
@@ -639,7 +652,7 @@ export async function checkProxyStatus(cmdLabel, resPrefix) {
     const domCmdId = cmdLabel === '__LORE_PROXY_CMD__' ? '__lore_proxy_dom_cmd__' : '__memory_proxy_dom_cmd__';
     const domResId = cmdLabel === '__LORE_PROXY_CMD__' ? '__lore_proxy_dom_res__' : '__memory_proxy_dom_res__';
 
-    const proxyStatus = await webview.executeJavaScript(`
+    const proxyStatus = await execInWebview(`
       (function() {
         var CMD = ${JSON.stringify(cmdLabel)};
         var RES = ${JSON.stringify(resPrefix)};
@@ -664,7 +677,7 @@ export async function checkProxyStatus(cmdLabel, resPrefix) {
         if (foundCmd || foundRes) return 'partial';
         return 'not-found';
       })()
-    `);
+    `, 5000, 'Proxy status');
     return proxyStatus;
   } catch (e) {
     return 'check-error:' + (e.message || e);

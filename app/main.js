@@ -184,6 +184,12 @@ app.on('second-instance', () => {
   }
 });
 
+// The NovelAI webview is display:none in headless mode; without this Chromium
+// throttles its timers (down to once a minute), which stalls every proxy call.
+app.on('web-contents-created', (_e, contents) => {
+  if (contents.getType() === 'webview') contents.setBackgroundThrottling(false);
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
