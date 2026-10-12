@@ -550,6 +550,8 @@
     </div>
 
     <div class="image-panel" id="imagePanel">
+      <div class="panel-resize-handle" id="panelResizeHandle" role="separator" aria-orientation="vertical"
+        aria-label="Resize side panel" tabindex="0" title="Drag to resize - double-click to reset"></div>
       <div class="image-panel-header">
         <div class="panel-tabs">
           <button class="panel-tab active" data-tab="scene" id="sceneTab">Scene</button>
@@ -1825,3 +1827,6 @@
 
 </body>
 </html>
+    import { init as initPanelResize } from './modules/panel-resize.js';
+    // Layout only, and guarded: a failure here must not stop the inits below.
+    try { initPanelResize(); } catch (e) { console.error('[PowerTool] Panel resize init failed:', e); }
