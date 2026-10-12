@@ -239,12 +239,18 @@ function resolveCli(store) {
     }
   }
   const home = os.homedir();
-  const candidates = [
-    '/opt/homebrew/bin/perchance-chat',
-    '/usr/local/bin/perchance-chat',
-    path.join(home, '.local', 'bin', 'perchance-chat'),
-    path.join(home, 'Library', 'Python', '3.14', 'bin', 'perchance-chat'),
-  ];
+  const candidates = process.platform === 'win32'
+    ? [
+      path.join(home, '.local', 'bin', 'perchance-chat.exe'),
+      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python314', 'Scripts', 'perchance-chat.exe'),
+      'C:\\Program Files\\Python314\\Scripts\\perchance-chat.exe',
+    ]
+    : [
+      '/opt/homebrew/bin/perchance-chat',
+      '/usr/local/bin/perchance-chat',
+      path.join(home, '.local', 'bin', 'perchance-chat'),
+      path.join(home, 'Library', 'Python', '3.14', 'bin', 'perchance-chat'),
+    ];
   for (const c of candidates) {
     try {
       fs.accessSync(c, fs.constants.X_OK);
