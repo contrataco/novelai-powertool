@@ -11,6 +11,7 @@
 const {
   recoverJSON, FUZZY_MATCH_THRESHOLD, delay, generateId: _sharedGenerateId,
   levenshteinDistance, fuzzyNameScore, fuzzyFindEntry, fuzzyMatchInSet,
+  isNarratorPlaceholder, NARRATOR_RULE,
 } = require('./shared-utils');
 
 const { parseMetadata, setMetadata, hasMetadata, getEntryType, classifyEntryType, METADATA_VERSION } = require('./metadata');
@@ -163,7 +164,7 @@ ${existingLine}
 ${comprehensionBlock}RECENT STORY TEXT:
 ${processText}
 
-List up to ${storyText.length < 1500 ? Math.min(MAX_ELEMENTS_PER_SCAN, 8) : MAX_ELEMENTS_PER_SCAN} elements. For each, provide the name and category.${mergeInstruction}
+List up to ${storyText.length < 1500 ? Math.min(MAX_ELEMENTS_PER_SCAN, 8) : MAX_ELEMENTS_PER_SCAN} elements. For each, provide the name and category. ${NARRATOR_RULE}${mergeInstruction}
 Output ONLY this JSON format, no other text:
 {"elements":[{"name":"Element Name","category":"character"${mergeField}}]}`,
     },
@@ -183,7 +184,8 @@ Output ONLY this JSON format, no other text:
         .filter(el =>
           typeof el.name === 'string' &&
           el.name.length > 0 &&
-          enabledCats.includes(el.category)
+          enabledCats.includes(el.category) &&
+          !(el.category === 'character' && isNarratorPlaceholder(el.name))
         )
         .slice(0, MAX_ELEMENTS_PER_SCAN)
         .map(el => ({

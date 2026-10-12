@@ -7,7 +7,29 @@
  * `generateTextFn(messages, options)` callback (same pattern as lore-creator.js).
  */
 
-const { recoverJSON, delay, generateId: _sharedGenerateId } = require('./shared-utils');
+const { recoverJSON, delay, generateId: _sharedGenerateId, isNarratorPlaceholder, NARRATOR_RULE, normalizeCharacterName } = require('./shared-utils');
+
+/**
+ * Merge extracted {name: state} into a characters map: skip narrator stand-ins
+ * and fold names that differ only in case/spacing ("Suburban family" vs
+ * "Suburban Family") into the existing entry.
+ */
+function mergeCharacters(target, extracted, now = Date.now()) {
+  for (const [name, stateStr] of Object.entries(extracted || {})) {
+    if (isNarratorPlaceholder(name) || typeof stateStr !== 'string' || !stateStr.trim()) continue;
+    const key = Object.keys(target).find((k) => normalizeCharacterName(k) === normalizeCharacterName(name)) || name;
+    target[key] = { name: key, state: stateStr, lastUpdated: now };
+  }
+  return target;
+}
+
+/** Clean a stored characters map (entries saved before the narrator rule existed). */
+function cleanCharacters(chars) {
+  const out = {};
+  const sorted = Object.entries(chars || {}).sort((a, b) => (a[1]?.lastUpdated || 0) - (b[1]?.lastUpdated || 0));
+  for (const [name, c] of sorted) mergeCharacters(out, { [name]: c?.state || '' }, c?.lastUpdated || 0);
+  return out;
+}
 
 const LOG_PREFIX = '[MemoryManager]';
 
@@ -132,7 +154,7 @@ ${processText}
 
 Extract:
 1. Key events (plot developments, character actions, important revelations, location changes)
-2. Character states (current status, goals, relationships for any named characters)
+2. Character states (current status, goals, relationships for any named characters). ${NARRATOR_RULE} List each character once.
 3. Current situation (brief context of what's happening now)
 
 Respond with ONLY this JSON format, no other text:
@@ -141,8 +163,10 @@ Respond with ONLY this JSON format, no other text:
   ];
 
   try {
+    // 150 tokens cut the JSON off mid-object, and an unparseable reply was
+    // silently dropped: events + several character states need room.
     const response = await generateTextFn(messages, {
-      max_tokens: 150,
+      max_tokens: 700,
       temperature: 0.3,
     });
 
@@ -156,6 +180,7 @@ Respond with ONLY this JSON format, no other text:
         situation: typeof parsed.situation === 'string' ? parsed.situation : '',
       };
     }
+    console.warn(`${LOG_PREFIX} Extraction reply was not valid JSON (${content.length} chars), chunk skipped`);
   } catch (e) {
     console.error(`${LOG_PREFIX} Error extracting events:`, e.message || e);
   }
@@ -289,13 +314,7 @@ async function processNewContent(fullStoryText, state, settings, generateTextFn,
     });
   }
 
-  for (const [name, stateStr] of Object.entries(extracted.characters)) {
-    updatedState.characters[name] = {
-      name,
-      state: stateStr,
-      lastUpdated: Date.now(),
-    };
-  }
+  updatedState.characters = mergeCharacters(cleanCharacters(updatedState.characters), extracted.characters);
 
   if (extracted.situation) {
     updatedState.currentSituation = extracted.situation;
@@ -391,13 +410,7 @@ async function forceRefresh(fullStoryText, settings, generateTextFn, onProgress,
         });
       }
 
-      for (const [name, stateStr] of Object.entries(extracted.characters)) {
-        state.characters[name] = {
-          name,
-          state: stateStr,
-          lastUpdated: Date.now(),
-        };
-      }
+      mergeCharacters(state.characters, extracted.characters);
 
       if (chunkIndex === chunks.length - 1 && extracted.situation) {
         state.currentSituation = extracted.situation;
@@ -427,6 +440,10 @@ module.exports = {
   compileMemory,
   processNewContent,
   forceRefresh,
+
+  // Character map hygiene
+  mergeCharacters,
+  cleanCharacters,
 
   // Formatting
   formatMemoryText,

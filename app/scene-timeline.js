@@ -1,6 +1,6 @@
 'use strict';
 
-const { generateId, recoverJSON, fuzzyNameScore, callLLM } = require('./shared-utils');
+const { generateId, recoverJSON, fuzzyNameScore, callLLM, isNarratorPlaceholder, NARRATOR_RULE } = require('./shared-utils');
 
 const EXPLICIT_BREAK_REGEX = /\n\s*(\*\s*\*\s*\*|\*{3,}|-{3,}|={3,}|~{3,})\s*\n/g;
 const CHAPTER_HEADER_REGEX = /\n\s*(?:[—–-]+\s*)?(Chapter\s+(?:\d+|[IVXLC]+)|CHAPTER\s+(?:\d+|[IVXLC]+)|Part\s+(?:\d+|[IVXLC]+)|Act\s+(?:\d+|[IVXLC]+)|Scene\s+\d+|Prologue|Epilogue|Interlude|Intermission)[^\n]*/gi;
@@ -284,7 +284,7 @@ async function analyzeScenesBatch(provisionalScenes, storyText, generateTextFn, 
       },
       {
         role: 'user',
-        content: `Story segment (offsets ${batchStart}–${batchEnd}):\n\n${textChunk}\n\nHeuristic candidate boundaries:\n${candidateList}\n\nFor each confirmed scene in this segment, extract:\n- description (2-3 sentences, past tense)\n- location (place name or description)\n- timeOfDay (morning/afternoon/evening/night/unknown)\n- mood (1-2 words)\n- tone (genre/atmosphere descriptor)\n- weather (if mentioned, else null)\n- keyEvents (1-3 short bullet points)\n- characters (array of character names present)\n- boundaryType (location-change|time-skip|pov-shift|dramatic-shift)\n\nOutput JSON: {"scenes": [{ all fields above }]}`,
+        content: `Story segment (offsets ${batchStart}-${batchEnd}):\n\n${textChunk}\n\nHeuristic candidate boundaries:\n${candidateList}\n\nFor each confirmed scene in this segment, extract:\n- title (a short, specific scene title of 2-6 words, like a chapter heading, e.g. "The Door That Shouldn't Exist"; no quotes, no "Scene N")\n- description (2-3 sentences, past tense)\n- location (place name or description)\n- timeOfDay (morning/afternoon/evening/night/unknown)\n- mood (1-2 words)\n- tone (genre/atmosphere descriptor)\n- weather (if mentioned, else null)\n- keyEvents (1-3 short bullet points)\n- characters (array of character names present; ${NARRATOR_RULE})\n- boundaryType (location-change|time-skip|pov-shift|dramatic-shift)\n\nOutput JSON: {"scenes": [{ all fields above }]}`,
       },
     ];
 
@@ -299,6 +299,9 @@ async function analyzeScenesBatch(provisionalScenes, storyText, generateTextFn, 
           if (!llm) continue;
           const scene = scenes.find(s => s.id === batch[i].id);
           if (!scene) continue;
+          if (typeof llm.title === 'string' && llm.title.trim()) {
+            scene.title = llm.title.trim().replace(/^["'*\s]+|["'*\s.]+$/g, '').slice(0, 80);
+          }
           if (llm.description != null) scene.description = llm.description;
           if (llm.location != null) scene.location = llm.location;
           if (llm.timeOfDay != null) scene.timeOfDay = llm.timeOfDay;
@@ -306,7 +309,9 @@ async function analyzeScenesBatch(provisionalScenes, storyText, generateTextFn, 
           if (llm.tone != null) scene.tone = llm.tone;
           if (llm.weather !== undefined) scene.weather = llm.weather;
           if (Array.isArray(llm.keyEvents)) scene.keyEvents = llm.keyEvents;
-          if (Array.isArray(llm.characters)) scene.characters = llm.characters;
+          if (Array.isArray(llm.characters)) {
+            scene.characters = llm.characters.filter((c) => !isNarratorPlaceholder(typeof c === 'string' ? c : c?.name));
+          }
           if (llm.boundaryType != null) scene.boundaryType = llm.boundaryType;
           scene.status = 'confirmed';
           scene.updatedAt = Date.now();

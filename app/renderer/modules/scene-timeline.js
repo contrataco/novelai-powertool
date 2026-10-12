@@ -20,6 +20,37 @@ function getAvatarColor(index) {
   return AVATAR_COLORS[index % AVATAR_COLORS.length];
 }
 
+const HEADING_RE = /^[\s*#=_~\-]*\[?\s*((?:chapter|part|book|act|prologue|epilogue|interlude|introduction|intro)\b[^\]\n]{0,70})\s*\]?/i;
+
+function titleCase(s) {
+  const small = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to']);
+  // Small words stay lower case, except first and right after a colon.
+  return s.toLowerCase().replace(/\S+/g, (w, i, all) =>
+    (i > 0 && small.has(w) && !/:\s*$/.test(all.slice(0, i)) ? w : w.charAt(0).toUpperCase() + w.slice(1)));
+}
+
+/**
+ * A readable title, never the internal id: the AI's title, else a chapter
+ * heading the scene opens with, else the description's first sentence, else
+ * "Scene N: opening words...".
+ */
+export function sceneTitle(scene, index) {
+  if (scene?.title) return scene.title;
+  const opening = (scene?.boundaryExcerpt || scene?.excerpt || '').trim();
+  const h = HEADING_RE.exec(opening);
+  if (h) {
+    const head = h[1].replace(/[\s:\-]+$/, '').trim();
+    return /[a-z]/.test(head) ? head : titleCase(head);
+  }
+  if (scene?.description) {
+    const first = scene.description.split(/(?<=[.!?])\s/)[0].replace(/[.!?]$/, '');
+    return first.length > 70 ? first.slice(0, 67).replace(/\s+\S*$/, '') + '...' : first;
+  }
+  const n = Number.isFinite(scene?.order) ? scene.order + 1 : (index ?? 0) + 1;
+  const words = (scene?.excerpt || '').replace(/^[\s*#=_~\-[\]]+/, '').replace(/\s+/g, ' ').trim().split(' ').slice(0, 7).join(' ');
+  return words ? `Scene ${n}: ${words}...` : `Scene ${n}`;
+}
+
 /**
  * A scene's full text from the story. Offsets were recorded at scan time, so
  * if the story was edited above the scene they may have drifted: re-anchor on
@@ -133,8 +164,7 @@ function buildSceneCard(scene, isCurrent) {
   card.dataset.sceneId = scene.id;
 
   // Title
-  const rawTitle = scene.description ? scene.description.split('.')[0] : null;
-  const displayTitle = rawTitle || `Scene ${scene.index ?? scene.id}`;
+  const displayTitle = sceneTitle(scene, (state.timelineState?.scenes || []).indexOf(scene));
 
   // Description snippet
   const snippetSource = scene.description || scene.excerpt || '';
@@ -227,8 +257,7 @@ export function openSceneExplorer(sceneId) {
   const isCurrentScene = sceneIndex === scenes.length - 1;
 
   // Derive title
-  const rawTitle = scene.description ? scene.description.split('.')[0] : null;
-  const displayTitle = rawTitle || `Scene ${scene.index ?? sceneIndex + 1}`;
+  const displayTitle = sceneTitle(scene, sceneIndex);
 
   // Build header HTML
   const chapterNum = chapter ? ((timelineState.chapters || []).indexOf(chapter) + 1) : '?';
@@ -258,10 +287,10 @@ export function openSceneExplorer(sceneId) {
   const chars = scene.characters || [];
   const keyEvents = scene.keyEvents || [];
   const prevSceneTitle = prevScene
-    ? (prevScene.description ? prevScene.description.split('.')[0] : `Scene ${sceneIndex}`)
+    ? sceneTitle(prevScene, sceneIndex - 1)
     : null;
   const nextSceneTitle = nextScene
-    ? (nextScene.description ? nextScene.description.split('.')[0] : `Scene ${sceneIndex + 2}`)
+    ? sceneTitle(nextScene, sceneIndex + 1)
     : null;
 
   let bodyHTML = '';

@@ -8,7 +8,7 @@
 
 const { extractField, getTemplateForType, retryLLM } = require('./lore-creator');
 const { parseMetadata, setMetadata, getEntryType, METADATA_VERSION } = require('./metadata');
-const { FUZZY_MATCH_THRESHOLD, fuzzyNameScore, recoverJSON } = require('./shared-utils');
+const { FUZZY_MATCH_THRESHOLD, fuzzyNameScore, recoverJSON, isNarratorPlaceholder, NARRATOR_RULE } = require('./shared-utils');
 
 const LOG_PREFIX = '[LitRPG]';
 
@@ -1750,7 +1750,7 @@ async function r1_discoverCharactersFromText(ctx) {
     },
     {
       role: 'user',
-      content: `Identify all characters in this story text and extract their RPG data. Only include characters who are actual people/beings in the story (not game system names, place names, or abstract concepts).
+      content: `Identify all characters in this story text and extract their RPG data. Only include characters who are actual people/beings in the story (not game system names, place names, or abstract concepts). ${NARRATOR_RULE}
 
 Story text:
 ${scanText.slice(0, 6000)}
@@ -1778,7 +1778,7 @@ Be thorough — include ALL named characters that appear in the text. Include ev
     if (parsed?.characters && Array.isArray(parsed.characters)) {
       let discovered = 0;
       for (const char of parsed.characters) {
-        if (!char.name || typeof char.name !== 'string') continue;
+        if (!char.name || typeof char.name !== 'string' || isNarratorPlaceholder(char.name)) continue;
 
         // Check if character already exists
         const existingId = fuzzyMatchCharacter(char.name, state.characters);

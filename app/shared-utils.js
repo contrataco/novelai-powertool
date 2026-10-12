@@ -183,7 +183,33 @@ async function callLLM(genFn, messages, opts = {}) {
   return { raw, parsed };
 }
 
+// --- Narrator is not a character ---
+// LLM scans of first-person (or omniscient) prose like to list "Narrator",
+// "I" or "The protagonist" as a cast member. These are voices, not people.
+
+const NARRATOR_NAMES = /^(the\s+)?(narrator|protagonist|main\s+character|mc|pov(\s+character)?|point\s+of\s+view|unnamed\s+narrator|first[-\s]person\s+narrator|i|me|myself|you|yourself|we|us|reader)$/i;
+
+/** True when a name is only a stand-in for the narrator / viewpoint, not a real character. */
+function isNarratorPlaceholder(name) {
+  if (typeof name !== 'string') return false;
+  const n = name.replace(/[()[\]"'.:*]/g, ' ').replace(/\s+/g, ' ').trim();
+  return !n || NARRATOR_NAMES.test(n);
+}
+
+/** Prompt rule to add wherever an LLM lists characters. */
+const NARRATOR_RULE = 'The narrator is not a character. Never list "Narrator", "I", "Me", "Protagonist" or "Main Character" as a name: if the narrator is a person in the story, use their actual name when the text gives it (e.g. "My name is Carl" means Carl), otherwise leave them out.';
+
+/** Lowercased, space-collapsed, leading "the" dropped: for spotting "Suburban family" vs "Suburban Family". */
+function normalizeCharacterName(name) {
+  return String(name || '').toLowerCase().replace(/\s+/g, ' ').replace(/^the /, '').trim();
+}
+
 module.exports = {
+  // Narrator handling
+  isNarratorPlaceholder,
+  NARRATOR_RULE,
+  normalizeCharacterName,
+
   // Constants
   FUZZY_MATCH_THRESHOLD,
   LLM_TIMEOUT_MS,
