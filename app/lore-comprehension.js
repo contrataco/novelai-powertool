@@ -217,8 +217,9 @@ Output ONLY this JSON:
   ];
 
   try {
+    // 600 cut the entity list off mid-JSON (measured on a real 2500-char chunk).
     const response = await generateTextFn(messages, {
-      max_tokens: 600,
+      max_tokens: 1500,
       temperature: 0.3,
     });
 
@@ -507,7 +508,9 @@ function migrateState(state) {
  * @returns {object} Updated comprehension state
  */
 async function runProgressiveScan(storyText, existingState, generateTextFn, onProgress, shouldCancel, options = {}) {
-  const { secondaryGenerateTextFn, categories, knownEntries } = options;
+  // onCheckpoint(state): called after each batch so finished chunks are saved
+  // even if the scan later times out or the app closes.
+  const { secondaryGenerateTextFn, categories, knownEntries, onCheckpoint } = options;
 
   const state = existingState
     ? migrateState(JSON.parse(JSON.stringify(existingState)))
@@ -522,6 +525,15 @@ async function runProgressiveScan(storyText, existingState, generateTextFn, onPr
   // Set up hybrid providers
   const hybrid = createHybridProviders(generateTextFn, secondaryGenerateTextFn);
 
+  // Drop summaries of text that is no longer in the story (edited or deleted),
+  // or every rescan stacks fresh summaries on top of stale ones.
+  const currentIndex = new Map(allChunks.map(c => [c.hash, c.index]));
+  const before = state.chunks.length;
+  state.chunks = state.chunks
+    .filter(c => currentIndex.has(c.hash))
+    .map(c => ({ ...c, index: currentIndex.get(c.hash) }));
+  if (state.chunks.length < before) console.log(`${LOG_PREFIX} Dropped ${before - state.chunks.length} summaries of text no longer in the story`);
+
   // Determine which chunks are already processed (by hash match)
   const processedHashes = new Set(state.chunks.map(c => c.hash));
   const unprocessed = allChunks.filter(c => !processedHashes.has(c.hash));
@@ -535,6 +547,8 @@ async function runProgressiveScan(storyText, existingState, generateTextFn, onPr
 
   let processed = totalChunks - unprocessed.length;
   let chunksThisRound = 0;
+  let sinceConsolidation = 0;
+  let failed = 0;
   const chunkOptions = { categories, knownEntries };
 
   for (let i = 0; i < unprocessed.length;) {
@@ -574,6 +588,13 @@ async function runProgressiveScan(storyText, existingState, generateTextFn, onPr
 
     // Process results in order (important for sequential chunk indices)
     for (const { chunk, result } of results) {
+      // A failed chunk (unreadable or empty reply) is not recorded, so its
+      // hash stays unprocessed and the next scan tries it again.
+      if (!result.summary && result.entities.length === 0) {
+        console.log(`${LOG_PREFIX} Chunk ${chunk.index} got no usable result - will retry on the next scan`);
+        failed++;
+        continue;
+      }
       // Store chunk summary
       state.chunks.push({
         index: chunk.index,
@@ -593,10 +614,16 @@ async function runProgressiveScan(storyText, existingState, generateTextFn, onPr
 
       processed++;
       chunksThisRound++;
+      sinceConsolidation++;
     }
+    // A chunk retried on a later scan is appended; keep story order for summaries.
+    state.chunks.sort((a, b) => a.index - b.index);
 
-    // Consolidate summaries periodically (hierarchical)
-    if (chunksThisRound % CONSOLIDATION_INTERVAL === 0 || processed === totalChunks) {
+    console.log(`${LOG_PREFIX} Chunks done: ${processed}/${totalChunks}${failed ? ` (${failed} failed)` : ''}`);
+    // Consolidate summaries periodically (hierarchical). Batches of 2 never
+    // landed on a multiple of 5, so this used to run only at the very end.
+    if (sinceConsolidation >= CONSOLIDATION_INTERVAL || i >= unprocessed.length) {
+      sinceConsolidation = 0;
       if (onProgress) {
         onProgress({
           phase: 'consolidating',
@@ -608,6 +635,7 @@ async function runProgressiveScan(storyText, existingState, generateTextFn, onPr
       const summaries = state.chunks.map(c => c.summary).filter(s => s.length > 0);
       state.masterSummary = await consolidateSummaries(summaries, generateTextFn, { hybrid });
     }
+    if (onCheckpoint) { try { onCheckpoint(state); } catch (e) { console.error(`${LOG_PREFIX} Checkpoint save failed:`, e.message); } }
 
     // Brief delay between batches to avoid rate limiting
     if (i < unprocessed.length) {

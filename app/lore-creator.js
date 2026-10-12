@@ -11,7 +11,7 @@
 const {
   recoverJSON, FUZZY_MATCH_THRESHOLD, delay, generateId: _sharedGenerateId,
   levenshteinDistance, fuzzyNameScore, fuzzyFindEntry, fuzzyMatchInSet,
-  isNarratorPlaceholder, NARRATOR_RULE,
+  isNarratorPlaceholder, NARRATOR_RULE, callLLM,
 } = require('./shared-utils');
 
 const { parseMetadata, setMetadata, hasMetadata, getEntryType, classifyEntryType, METADATA_VERSION } = require('./metadata');
@@ -2330,7 +2330,7 @@ Output JSON: {"groups": [{"name": "Category Name", "color": "#hex", "isNovel": t
   ];
 
   try {
-    const result = await callLLM(generateTextFn, messages, { maxTokens: 800, label: 'pass7-semantic-grouping' });
+    const result = await callLLM(generateTextFn, messages, { maxTokens: 2000, label: 'pass7-semantic-grouping' });
     const parsed = recoverJSON(result.raw);
 
     if (parsed?.groups && Array.isArray(parsed.groups)) {

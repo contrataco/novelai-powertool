@@ -2223,6 +2223,9 @@ function makeOllamaGenerateTextFn() {
           model: ollamaModel,
           messages,
           stream: false,
+          // Thinking models (qwen3.5, gemma 4) otherwise spend the whole
+          // num_predict budget thinking and return empty content.
+          think: false,
           options: {
             num_predict: options.max_tokens || 300,
             temperature: options.temperature || 0.4,
@@ -2879,6 +2882,8 @@ ipcMain.handle('lore:start-progressive-scan', async (event, { storyId, storyText
           secondaryGenerateTextFn,
           categories,
           knownEntries: existingEntries || [],
+          // Save after every batch: a timeout or closed app keeps finished chunks.
+          onCheckpoint: (s) => db.setComprehension(storyId, s),
         }
       ),
       SCAN_TIMEOUT_MS,

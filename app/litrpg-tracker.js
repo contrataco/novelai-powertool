@@ -8,7 +8,7 @@
 
 const { extractField, getTemplateForType, retryLLM } = require('./lore-creator');
 const { parseMetadata, setMetadata, getEntryType, METADATA_VERSION } = require('./metadata');
-const { FUZZY_MATCH_THRESHOLD, fuzzyNameScore, recoverJSON, isNarratorPlaceholder, NARRATOR_RULE } = require('./shared-utils');
+const { FUZZY_MATCH_THRESHOLD, fuzzyNameScore, recoverJSON, isNarratorPlaceholder, NARRATOR_RULE, callLLM } = require('./shared-utils');
 
 const LOG_PREFIX = '[LitRPG]';
 
