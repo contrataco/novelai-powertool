@@ -21,6 +21,7 @@ export function init({ syncToWebview, syncFromWebview }) {
   // Clear generation indicator on completion
   bus.on('headless:generation-complete', () => {
     hideGenerationIndicator();
+    storyGenerating(false);
   });
 }
 
@@ -46,11 +47,18 @@ export async function triggerGeneration() {
   if (_syncToWebview) await _syncToWebview();
   state.isWaitingForGeneration = true;
 
+  // NovelAI runs one generation at a time: hold background AI work back and
+  // let any request already sent finish, so the story is not refused.
+  if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Waiting for background AI...';
+  await storyGenerating(true);
+  if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Generating...';
+
   // Safety timeout: if generation doesn't complete within 60s, reset state
   const genTimeout = setTimeout(() => {
     if (state.isWaitingForGeneration) {
       console.warn('[HeadlessSync] Generation timeout (60s), resetting state');
       state.isWaitingForGeneration = false;
+      storyGenerating(false);
       hideGenerationIndicator();
       if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Ready';
       if (refs.editorAiIndicator) refs.editorAiIndicator.className = 'status-indicator';
@@ -91,13 +99,20 @@ export async function triggerGeneration() {
     } else {
       console.warn('[HeadlessSync] ProseMirror editor not found in webview');
       state.isWaitingForGeneration = false;
+      storyGenerating(false);
       hideGenerationIndicator();
     }
   } catch (e) {
     console.error('[HeadlessSync] Error triggering generation:', e);
     state.isWaitingForGeneration = false;
+    storyGenerating(false);
     hideGenerationIndicator();
   }
+}
+
+/** Tell the main process the story is (not) generating; never throws. */
+async function storyGenerating(on) {
+  try { await window.powertool.novelaiStoryGenerating?.(on); } catch (e) { console.warn('[HeadlessSync] story-generating signal failed:', e); }
 }
 
 function showGenerationIndicator() {

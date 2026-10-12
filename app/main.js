@@ -1594,7 +1594,7 @@ ipcMain.handle('prompt-history:delete', (_, { storyId, id }) =>
 // Text actions — AI-powered text operations for the headless editor
 ipcMain.handle('text-action', async (event, { type, text, storyId }) => {
   try {
-    const generateFn = makeLoreGenerateTextFn();
+    const generateFn = makeLoreGenerateTextFn({ overflow: false });
     const prompts = {
       rewrite: `Rewrite the following passage to improve clarity and flow while preserving meaning and style:\n\n${text}`,
       expand: `Continue and expand the following passage, maintaining the established tone and style:\n\n${text}`,
@@ -1613,6 +1613,15 @@ ipcMain.handle('text-action', async (event, { type, text, storyId }) => {
     console.error('[Main] text-action error:', e);
     return { error: e.message };
   }
+});
+
+// Story generation owns NovelAI's one-at-a-time lock: while it runs, app text
+// calls queue (or overflow to Ollama). Turning it on waits briefly for an app
+// request already in flight, so the story's own generation is not refused.
+ipcMain.handle('novelai:story-generating', async (_event, on) => {
+  novelaiProvider.setStoryGenerating(on);
+  if (on) return { idle: await novelaiProvider.waitForTextIdle(30000) };
+  return { idle: true };
 });
 
 // Paragraph edits (the headless editor's per-paragraph star): one passage,
@@ -1648,7 +1657,7 @@ ipcMain.handle('text-action:paragraph', async (_event, { action, instruction, te
     // Generous floor: reasoning models (e.g. gemma 4 on Ollama) sometimes think
     // first, and a tight budget returns nothing or a passage cut off mid-sentence.
     const maxTokens = Math.min(4000, 1500 + Math.round(words * (action === 'expand' ? 4 : 2.5)));
-    const generateFn = makeLoreGenerateTextFn();
+    const generateFn = makeLoreGenerateTextFn({ overflow: false });
     const result = await generateFn(
       [{ role: 'system', content: system }, { role: 'user', content: parts.join('\n\n') }],
       { max_tokens: maxTokens, temperature: 0.8, label: `paragraph:${action}` }
@@ -2136,13 +2145,45 @@ const progressiveScans = new Map(); // storyId → {cancel: false, pause: false}
 // Lore Creator — LLM provider factory
 // ---------------------------------------------------------------------------
 
-function makeNovelaiGenerateTextFn() {
-  return async (messages, options) => {
-    return novelaiProvider.generateText(messages, {
-      model: store.get('novelaiTextModel') || 'glm-4-6',
-      max_tokens: options.max_tokens || 300,
-      temperature: options.temperature || 0.4,
-    }, store);
+// Ollama reachability, cached briefly: the overflow check runs per call.
+let _ollamaUpCache = { at: 0, up: false };
+async function ollamaUpCached() {
+  if (Date.now() - _ollamaUpCache.at < 30000) return _ollamaUpCache.up;
+  const up = await isOllamaAvailable();
+  _ollamaUpCache = { at: Date.now(), up };
+  return up;
+}
+
+/**
+ * NovelAI text calls. NovelAI runs one generation per account at a time, so
+ * the provider queues them. With `overflow` (background work: scans, memory,
+ * prompts) a call that would have to wait goes to Ollama instead, when hybrid
+ * is on and Ollama is reachable; if Ollama fails it falls back to waiting.
+ * Calls the user is watching (paragraph edits, text actions) pass
+ * overflow:false and wait for NovelAI so the chosen model is what answers.
+ */
+function makeNovelaiGenerateTextFn({ overflow = true } = {}) {
+  const viaNovelai = (messages, options) => novelaiProvider.generateText(messages, {
+    model: store.get('novelaiTextModel') || 'glm-4-6',
+    max_tokens: options.max_tokens || 300,
+    temperature: options.temperature || 0.4,
+    label: options.label,
+  }, store);
+  return async (messages, options = {}) => {
+    const hybridOn = (store.get('loreSettings') || {}).hybridEnabled !== false;
+    if (overflow && hybridOn && novelaiProvider.textBusy() && await ollamaUpCached()) {
+      try {
+        const out = await makeOllamaGenerateTextFn()(messages, options);
+        if (out?.output?.trim()) {
+          console.log(`[Main] NovelAI busy - ${options.label || 'request'} handled by Ollama`);
+          return out;
+        }
+      } catch (e) {
+        console.warn(`[Main] Ollama overflow failed (${e.message}) - waiting for NovelAI`);
+        _ollamaUpCache = { at: 0, up: false };
+      }
+    }
+    return viaNovelai(messages, options);
   };
 }
 
@@ -2224,14 +2265,15 @@ const LLM_FACTORY = {
   perchance: makePerchanceGenerateTextFn,
 };
 
-function makeGenerateTextFn(providerName) {
+function makeGenerateTextFn(providerName, opts) {
   const factory = LLM_FACTORY[providerName] || LLM_FACTORY.novelai;
-  return factory();
+  return factory(opts);
 }
 
-function makeLoreGenerateTextFn() {
+/** opts.overflow:false for calls the user is waiting on (see makeNovelaiGenerateTextFn). */
+function makeLoreGenerateTextFn(opts) {
   const llmProvider = store.get('loreLlmProvider') || 'novelai';
-  return makeGenerateTextFn(llmProvider);
+  return makeGenerateTextFn(llmProvider, opts);
 }
 
 async function isOllamaAvailable() {

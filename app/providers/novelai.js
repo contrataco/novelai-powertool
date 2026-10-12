@@ -378,7 +378,78 @@ module.exports = {
    * Generate text via NovelAI's OpenAI-compatible chat API (GLM-4-6 / Xialong).
    * Endpoint streams SSE chunks; we accumulate delta.content text.
    */
+  // --- One text request at a time -----------------------------------------
+  // NovelAI allows one generation per account at a time and answers a second
+  // with 429 "Concurrent generation is locked". Every app call queues here
+  // (FIFO), waits while the story itself is generating, and retries the 429
+  // (which the NovelAI page's own generation can still cause) with backoff.
+
+  _gate: { held: false, inFlight: false, waiters: [], storyGenerating: false, storyGenSince: 0 },
+
+  /** True when a text call made now would have to wait. */
+  textBusy() {
+    const g = this._gate;
+    return g.held || g.waiters.length > 0 || this._storyGenActive();
+  },
+
+  /** Renderer reports story generation start/end (headless editor). */
+  setStoryGenerating(on) {
+    const g = this._gate;
+    g.storyGenerating = !!on;
+    g.storyGenSince = on ? Date.now() : 0;
+  },
+
+  /** Wait (up to maxMs) for an app text request already sent to finish. */
+  async waitForTextIdle(maxMs = 30000) {
+    const end = Date.now() + maxMs;
+    while (this._gate.inFlight && Date.now() < end) await new Promise((r) => setTimeout(r, 250));
+    return !this._gate.inFlight;
+  },
+
+  _storyGenActive() {
+    const g = this._gate;
+    // Safety: never block for more than 2 minutes on a missed "ended" signal.
+    if (g.storyGenerating && Date.now() - g.storyGenSince > 120000) g.storyGenerating = false;
+    return g.storyGenerating;
+  },
+
+  async _acquireText() {
+    const g = this._gate;
+    if (g.held || g.waiters.length) await new Promise((resolve) => g.waiters.push(resolve));
+    g.held = true;
+    while (this._storyGenActive()) await new Promise((r) => setTimeout(r, 500));
+  },
+
+  _releaseText() {
+    const g = this._gate;
+    const next = g.waiters.shift();
+    if (next) next(); else g.held = false;
+  },
+
   async generateText(messages, options, store) {
+    await this._acquireText();
+    try {
+      const delays = [2000, 4000, 6000, 8000, 10000, 10000, 10000, 10000, 10000, 10000]; // ~80s
+      for (let attempt = 0; ; attempt++) {
+        try {
+          this._gate.inFlight = true;
+          return await this._generateTextOnce(messages, options, store);
+        } catch (e) {
+          this._gate.inFlight = false;
+          const locked = /error 429/.test(e.message || '');
+          if (!locked || attempt >= delays.length) throw e;
+          if (attempt === 0) console.log(`[NovelAI] Text generation locked (another generation is running) - waiting and retrying${options.label ? ` (${options.label})` : ''}`);
+          await new Promise((r) => setTimeout(r, delays[attempt]));
+          while (this._storyGenActive()) await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+    } finally {
+      this._gate.inFlight = false;
+      this._releaseText();
+    }
+  },
+
+  async _generateTextOnce(messages, options, store) {
     const apiToken = store.get('apiToken');
     if (!apiToken) throw new Error('No API token available');
 
