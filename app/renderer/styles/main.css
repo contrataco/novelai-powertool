@@ -6305,3 +6305,55 @@
 }
 .history-item-row:hover { background: rgba(255,255,255,0.04); color: #ddd; }
 .history-item-label { font-size: 12px; }
+
+/* ============================================================
+   NovelAI text origins and formatting (all themes)
+   Colors come from the live NovelAI theme (headless-theme.js sets the
+   --nai-* variables); the fallbacks are NovelAI's defaults as measured.
+   ============================================================ */
+.story-editor .nai-user { color: var(--nai-user, rgb(156, 220, 255)); }
+.story-editor .nai-ai { color: var(--nai-ai, rgb(255, 255, 255)); }
+.story-editor .nai-edit { color: var(--nai-edit, rgb(247, 191, 255)); }
+.story-editor .nai-prompt { color: var(--nai-prompt, rgb(245, 243, 194)); }
+.story-editor .nai-script { color: var(--nai-script, rgb(190, 255, 190)); }
+.story-editor .nai-dialogue {
+  color: var(--nai-dialogue, inherit);
+  font-style: var(--nai-dialogue-style, italic);
+}
+.story-editor .nai-highlight { background: var(--nai-highlight, rgba(255, 235, 59, 0.25)); }
+.story-editor .nai-link { color: var(--nai-link, inherit); }
+.story-editor code.nai-code { font-family: Consolas, 'Courier New', monospace; font-size: 0.9em; }
+
+/* --- NovelAI (default) --- */
+#editorContainer.theme-novelai {
+  background: var(--nai-bg, transparent);
+}
+
+.theme-novelai .story-editor {
+  font-family: var(--nai-font, "Source Sans Pro", "Source Sans 3", "Segoe UI", sans-serif);
+  font-size: var(--nai-size, 18px);
+  line-height: var(--nai-line-height, 1.8);
+  color: var(--nai-color, #fff);
+  --editor-h-padding: 35px;
+}
+
+.theme-novelai .story-editor p,
+.theme-novelai .story-editor div:not(.scene-break) {
+  text-indent: var(--nai-indent, 10px);
+  margin: 0;
+  padding-bottom: var(--nai-para-gap, 0.5em);
+}
+
+/* NovelAI shows a break marker as the text that was typed. */
+.theme-novelai .story-editor .scene-break {
+  text-align: left;
+  text-indent: var(--nai-indent, 10px);
+  margin: 0;
+  padding-bottom: var(--nai-para-gap, 0.5em);
+}
+.theme-novelai .story-editor .scene-break::before {
+  content: attr(data-original);
+  color: inherit;
+  letter-spacing: normal;
+  font-size: 1em;
+}

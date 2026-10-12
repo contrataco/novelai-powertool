@@ -5,6 +5,7 @@ import { state, bus } from './state.js';
 import { memoryCall } from './lore-creator.js';
 import { showToast } from './utils.js';
 import { setupPanelToggle } from './headless-panels.js';
+import { editorText } from './diff.js';
 
 const { webview } = refs;
 
@@ -593,7 +594,7 @@ export function init({ saveCustomizationToStore, flattenEditorText }) {
 
   const summariseBtn = document.getElementById('memorySummariseBtn');
   if (summariseBtn) summariseBtn.addEventListener('click', async () => {
-    const storyText = refs.storyEditor?.innerText?.slice(-4000) || '';
+    const storyText = refs.storyEditor ? editorText(refs.storyEditor).slice(-4000) : '';
     if (!storyText.trim()) { showToast('No story text to summarise', 2000); return; }
     summariseBtn.textContent = 'Summarising…';
     summariseBtn.disabled = true;

@@ -6,6 +6,7 @@ import { loreCall } from './lore-creator.js';
 import { showToast } from './utils.js';
 import { togglePanel, setupPanelToggle } from './headless-panels.js';
 import { getCurrentEntries, selectLoreEntry } from './headless-lore-panel.js';
+import { editorText } from './diff.js';
 
 const { webview, storyEditor } = refs;
 
@@ -122,10 +123,10 @@ function performReplace(all = false) {
   const replaceText = refs.editorReplaceInput?.value || '';
   if (!findText) return;
 
-  const editorText = storyEditor.innerText;
+  const currentText = editorText(storyEditor);
   if (all) {
-    const newText = editorText.split(findText).join(replaceText);
-    if (newText !== editorText) {
+    const newText = currentText.split(findText).join(replaceText);
+    if (newText !== currentText) {
       storyEditor.innerText = newText;
       _deps.syncToWebview?.();
     }
@@ -314,7 +315,7 @@ async function _restoreHistoryItem(index, rowEl) {
 // --- Story Stats ---
 
 export function showStoryStats() {
-  const text = storyEditor?.innerText || '';
+  const text = storyEditor ? editorText(storyEditor) : '';
   const words = text.trim() ? text.trim().split(/\s+/).length : 0;
   const chars = text.length;
   const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim()).length;

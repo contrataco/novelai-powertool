@@ -110,15 +110,18 @@ export function init() {
       } else if (e.key === 'p' && e.shiftKey) {
         e.preventDefault();
         commandPalette.showCommandPalette();
-      } else if (e.shiftKey && e.key === '1') {
+      } else if (e.shiftKey && e.code === 'Digit0') {
         e.preventDefault();
-        theme.setTheme('manuscript');
-      } else if (e.shiftKey && e.key === '2') {
+        theme.setTheme('novelai', true);
+      } else if (e.shiftKey && (e.key === '1' || e.code === 'Digit1')) {
         e.preventDefault();
-        theme.setTheme('editorial');
-      } else if (e.shiftKey && e.key === '3') {
+        theme.setTheme('manuscript', true);
+      } else if (e.shiftKey && (e.key === '2' || e.code === 'Digit2')) {
         e.preventDefault();
-        theme.setTheme('graphic-novel');
+        theme.setTheme('editorial', true);
+      } else if (e.shiftKey && (e.key === '3' || e.code === 'Digit3')) {
+        e.preventDefault();
+        theme.setTheme('graphic-novel', true);
       } else if (e.shiftKey && e.key === 'L') {
         e.preventDefault();
         panels.togglePanel(refs.headlessLorePanel);

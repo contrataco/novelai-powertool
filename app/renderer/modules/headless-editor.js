@@ -1,31 +1,37 @@
-// headless-editor.js — Core text sync, editor modes, metrics, customization
+// headless-editor.js - Core text sync, editor modes, metrics, customization
 
 import { state, bus } from './state.js';
 import * as refs from './dom-refs.js';
 import { readStoryTextFromDOM } from './webview-polling.js';
 import { loreCall, switchPanelTab, refreshLoreKeywords } from './lore-creator.js';
 import { updateVisibility as updateStorySelectorVisibility } from './story-selector.js';
-import { applyDiff, annotateEditor, mergeRanges, shiftRangesAfterEdit, diffText } from './diff.js';
+import { applyDiff, annotateEditor, diffText, planEdits, shiftRuns, editorText, selectionOffsets, restoreCursor } from './diff.js';
+import { injected, readRich, applyTextEdit, applyMarkEdit } from './nai-doc.js';
 import { showToast } from './utils.js';
 import * as imageEmbed from './headless-image-embed.js';
+import { getNovelaiStyle } from './headless-theme.js';
 
 const { webview, storyEditor } = refs;
 
 let isSyncingToWebview = false;
 let isSyncingFromWebview = false;
+// NovelAI's text as of the last read or successful write. Every write is
+// checked against it, so a stale headless copy can never overwrite NovelAI.
 let lastKnownWebviewText = '';
-
-// Annotation tracking
-let textBeforeGeneration = '';   // snapshot before generation starts (to compute AI range)
-let pendingGenerationSync = false;
 let annotationTimeout = null;
 let lastEditorTextForAnnotation = '';
+let noViewWarned = false;
+// True once the font or line-spacing slider is moved for this story.
+let typographyCustomized = false;
 
 function scheduleAnnotation() {
   if (annotationTimeout) clearTimeout(annotationTimeout);
   annotationTimeout = setTimeout(() => {
-    if (storyEditor) annotateEditor(storyEditor, state.aiTextRanges, state.loreKeywords);
     annotationTimeout = null;
+    if (!storyEditor) return;
+    const figures = imageEmbed.detachFigures();
+    annotateEditor(storyEditor, state.naiRuns || [], state.loreKeywords || []);
+    imageEmbed.reattachFigures(figures);
   }, 300);
 }
 
@@ -45,7 +51,7 @@ function flushCacheWrite() {
   if (cacheWriteTimeout && state.currentStoryId && storyEditor) {
     clearTimeout(cacheWriteTimeout);
     cacheWriteTimeout = null;
-    window.powertool.storyTextSet(state.currentStoryId, storyEditor.innerText || '', 'editor');
+    window.powertool.storyTextSet(state.currentStoryId, editorText(storyEditor), 'editor');
   }
 }
 
@@ -64,51 +70,110 @@ function hideLoadingBar() {
   if (refs.editorLoadingBar) refs.editorLoadingBar.classList.add('u-hidden');
 }
 
+function setSyncStatus(text, cls) {
+  if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = text;
+  if (refs.editorSyncIndicator) refs.editorSyncIndicator.className = `status-indicator ${cls}`;
+}
+
+// --- NovelAI document access ---
+
+/** NovelAI's story as { text, runs, paraIds }, or null if the editor is unreachable. */
+async function readRichFromWebview() {
+  try {
+    const r = await webview.executeJavaScript(injected(readRich));
+    if (r && !r.noView && typeof r.text === 'string') return r;
+  } catch (e) {
+    console.warn('[HeadlessSync] Rich read failed:', e.message);
+  }
+  return null;
+}
+
+function reportNoView() {
+  setSyncStatus('Not synced', 'error');
+  if (noViewWarned) return;
+  noViewWarned = true;
+  showToast("Couldn't reach NovelAI's editor, so headless edits are not being saved to NovelAI. " +
+    'Switch to webview mode to keep writing safely.', null, 'error');
+}
+
+/**
+ * Keep headless text that is about to be replaced by NovelAI's newer copy:
+ * in localStorage (powertool.recovery.<storyId>) and on the clipboard, with a
+ * toast saying so. Used whenever both sides changed - NovelAI's version wins,
+ * but nothing typed in the headless editor disappears silently.
+ */
+async function saveRecovery(localText) {
+  try {
+    localStorage.setItem(`powertool.recovery.${state.currentStoryId}`, JSON.stringify({ at: Date.now(), text: localText }));
+  } catch { /* the clipboard copy below is the user-facing one */ }
+  let copied = false;
+  try { await navigator.clipboard.writeText(localText); copied = true; } catch { /* window not focused */ }
+  showToast("NovelAI's copy of this story changed while the headless editor had unsaved changes, so NovelAI's version was kept. " +
+    (copied ? 'Your headless text was copied to the clipboard.' : 'Your headless text was saved for recovery.'),
+    null, 'warn', { persistent: true });
+}
+
+/** A write was refused as stale: keep the local text, then take NovelAI's. */
+async function handleSyncConflict(localText) {
+  await saveRecovery(localText);
+  await syncFromWebview(true, { recovered: true });
+}
+
+/** Refresh colors and formatting from NovelAI without touching the text. */
+async function refreshMarks() {
+  const rich = await readRichFromWebview();
+  if (rich && rich.text === editorText(storyEditor)) {
+    state.naiRuns = rich.runs;
+    lastKnownWebviewText = rich.text;
+    lastEditorTextForAnnotation = rich.text;
+    scheduleAnnotation();
+  }
+}
+
 // --- Sync Functions ---
 
 /**
- * Fetch text from NovelAI's ProseMirror and update the native editor.
+ * Fetch the story (text and marks) from NovelAI and update the native editor.
  * @param {boolean} force - If true, replaces entire content without diffing.
  */
-export async function syncFromWebview(force = false) {
+export async function syncFromWebview(force = false, { recovered = false } = {}) {
   if (isSyncingToWebview) return;
   isSyncingFromWebview = true;
+  let pushInstead = false;
 
   try {
-    const text = await readStoryTextFromDOM();
-    if (text !== null && text !== storyEditor.innerText) {
+    const rich = await readRichFromWebview();
+    const text = rich ? rich.text : await readStoryTextFromDOM();
+    if (text === null || text === undefined) return;
+
+    // Headless edits not yet pushed (a read landed inside the typing
+    // debounce, or a push failed). If NovelAI has not changed, push them
+    // instead of reading over them. If both changed, keep a copy first.
+    const local = editorText(storyEditor);
+    const unsent = lastKnownWebviewText !== null && local !== lastKnownWebviewText;
+    if (unsent && text === lastKnownWebviewText) { pushInstead = true; return; }
+    if (unsent && text !== local && !recovered) await saveRecovery(local);
+
+    if (rich) state.naiRuns = rich.runs;
+    const changed = text !== local;
+
+    if (changed) {
       console.log('[HeadlessSync] Syncing text from webview');
-
-      const isPostGen = pendingGenerationSync;
-      pendingGenerationSync = false;
-
-      if (force) {
-        storyEditor.innerText = text;
-      } else {
-        const diff = applyDiff(storyEditor, text);
-        // Track newly generated AI text range
-        if (isPostGen && diff.added.length > 0) {
-          const newRange = { start: diff.prefixLen, end: diff.prefixLen + diff.added.length };
-          state.aiTextRanges = mergeRanges([...state.aiTextRanges, newRange]);
-        }
-      }
-
+      if (force) storyEditor.innerText = text;
+      else applyDiff(storyEditor, text);
       if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Ready';
       if (refs.editorAiIndicator) refs.editorAiIndicator.className = 'status-indicator';
-      if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'In Sync';
-      if (refs.editorSyncIndicator) refs.editorSyncIndicator.className = 'status-indicator active';
-
       updateStatusMetrics();
+      debouncedCacheWrite(text, rich ? 'doc-model' : (state._lastTextReadSource || 'webview'));
+    }
 
-      lastKnownWebviewText = text;
-      lastEditorTextForAnnotation = text;
-      state.lastKnownStoryLength = text.length;
+    lastKnownWebviewText = text;
+    lastEditorTextForAnnotation = text;
+    state.lastKnownStoryLength = text.length;
+    setSyncStatus('In Sync', 'active');
 
-      // Update cache
-      debouncedCacheWrite(text, state._lastTextReadSource || 'webview');
-
-      // Re-annotate after sync
-      scheduleAnnotation();
+    scheduleAnnotation();
+    if (changed) {
       await imageEmbed.restoreFigures();
       bus.emit('headless:synced-from-webview');
     }
@@ -117,68 +182,92 @@ export async function syncFromWebview(force = false) {
   } finally {
     isSyncingFromWebview = false;
   }
+  if (pushInstead) await syncToWebview();
 }
 
 /**
- * Push native editor text into NovelAI's ProseMirror.
+ * Push the native editor's changes into NovelAI as one minimal ProseMirror
+ * edit, marked the way NovelAI marks typing (user_text, or edit_text inside AI
+ * text). Never rewrites the whole document and never falls back to the DOM.
  */
 export async function syncToWebview() {
-  if (isSyncingFromWebview) return;
+  if (isSyncingFromWebview || isSyncingToWebview) return;
+  // No confirmed read of NovelAI's text yet (story still loading, or only
+  // cached text shown): there is no safe baseline to diff against.
+  if (lastKnownWebviewText === null) { setSyncStatus('Waiting for NovelAI', 'busy'); return; }
+  const text = editorText(storyEditor);
+  if (text === lastKnownWebviewText) return;
   isSyncingToWebview = true;
+  let conflict = false;
 
   try {
-    const text = storyEditor.innerText;
-    if (text === lastKnownWebviewText) return;
-    imageEmbed.stripFigures();
-
     console.log('[HeadlessSync] Syncing text to webview');
-    if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'Syncing...';
-    if (refs.editorSyncIndicator) refs.editorSyncIndicator.className = 'status-indicator busy';
+    setSyncStatus('Syncing...', 'busy');
 
-    // Escape text for injection into executeJavaScript
-    const escapedText = JSON.stringify(text);
-    const success = await webview.executeJavaScript(`
-      (function() {
-        var editor = document.querySelector('.ProseMirror');
-        if (!editor) return false;
+    const base = lastKnownWebviewText;
+    const res = await webview.executeJavaScript(injected(applyTextEdit, {
+      expected: base,
+      edits: planEdits(base, text),
+    }));
 
-        var view = editor.pmViewDesc && editor.pmViewDesc.view;
-        if (view && view.state && view.state.schema) {
-          try {
-            // Build paragraph-aware document to preserve ProseMirror structure
-            var schema = view.state.schema;
-            var lines = ${escapedText}.split('\\n');
-            var paragraphs = lines.map(function(line) {
-              if (!line) return schema.nodes.paragraph.create();
-              return schema.nodes.paragraph.create(null, [schema.text(line)]);
-            });
-            var newDoc = schema.nodes.doc.create(null, paragraphs);
-            var tr = view.state.tr.replaceWith(0, view.state.doc.content.size, newDoc.content);
-            view.dispatch(tr);
-            return true;
-          } catch(e) {
-            console.error('[PowerToolSync] PM paragraph replace error:', e);
-          }
-        }
-
-        // Fallback: direct innerText + input event (loses PM state but works)
-        editor.innerText = ${escapedText};
-        editor.dispatchEvent(new Event('input', { bubbles: true }));
-        editor.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      })()
-    `);
-
-    if (success) {
-      lastKnownWebviewText = text;
-      if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'In Sync';
-      if (refs.editorSyncIndicator) refs.editorSyncIndicator.className = 'status-indicator active';
+    if (!res || res.noView) { reportNoView(); return; }
+    if (res.stale) { conflict = true; return; }
+    if (res.error) {
+      // NovelAI rejected the edit; its document is unchanged, so the edit
+      // stays in the headless editor and is retried with the next change.
+      console.error('[HeadlessSync] NovelAI rejected the edit:', res.error);
+      setSyncStatus('Not synced', 'error');
+      return;
     }
+
+    lastKnownWebviewText = res.text;
+    if (res.text !== text) console.warn('[HeadlessSync] NovelAI text differs from the editor after the write');
+    setSyncStatus('In Sync', 'active');
   } catch (e) {
     console.error('[HeadlessSync] Error syncing to webview:', e);
+    setSyncStatus('Not synced', 'error');
   } finally {
     isSyncingToWebview = false;
   }
+
+  if (conflict) await handleSyncConflict(text);
+  else await refreshMarks();
+}
+
+/** Every text position in [start, end) is covered by a run carrying `mark`. */
+function markCovers(text, runs, start, end, mark) {
+  for (let i = start; i < end; i++) {
+    if (text[i] === '\n') continue;
+    if (!runs.some((r) => r.s <= i && r.e > i && r.m.includes(mark))) return false;
+  }
+  return true;
+}
+
+/**
+ * Bold/italic/underline/strikethrough over the selection, as NovelAI marks:
+ * on when any part of the selection lacks it, off when all of it has it.
+ */
+export async function toggleFormat(mark) {
+  const sel = selectionOffsets(storyEditor);
+  if (!sel || sel.start === sel.end) { showToast('Select some text to format'); return; }
+  await syncToWebview();
+  const text = editorText(storyEditor);
+  if (text !== lastKnownWebviewText) { showToast('Still syncing with NovelAI - try again in a moment', null, 'warn'); return; }
+  const add = !markCovers(text, state.naiRuns || [], sel.start, sel.end, mark);
+  let res;
+  try {
+    res = await webview.executeJavaScript(injected(applyMarkEdit, {
+      expected: lastKnownWebviewText, from: sel.start, to: sel.end, mark, add,
+    }));
+  } catch (e) {
+    console.error('[HeadlessSync] Format failed:', e);
+    return;
+  }
+  if (!res || res.noView) { reportNoView(); return; }
+  if (res.stale) { await handleSyncConflict(text); return; }
+  if (res.error) { console.warn('[HeadlessSync]', res.error); return; }
+  await refreshMarks();
+  setTimeout(() => restoreCursor(storyEditor, sel.end), 320);
 }
 
 // --- Scroll-to-load: force NovelAI to load all story chunks ---
@@ -316,7 +405,7 @@ async function scrollToLoadAll() {
     if (result && result.success) {
       // Final sync with the now-complete text
       await syncFromWebview(true);
-      console.log('[HeadlessSync] Full story loaded:', (storyEditor.innerText || '').length, 'chars');
+      console.log('[HeadlessSync] Full story loaded:', editorText(storyEditor).length, 'chars');
     }
 
     if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'In Sync';
@@ -338,7 +427,7 @@ async function scrollToLoadAll() {
 
 export function updateStatusMetrics() {
   if (!storyEditor) return;
-  const text = storyEditor.innerText || '';
+  const text = editorText(storyEditor);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
   const charCount = text.length;
 
@@ -357,12 +446,21 @@ export function updateStatusMetrics() {
 export function updateEditorStyles() {
   if (!storyEditor) return;
 
+  // In the NovelAI theme, NovelAI's own size and spacing apply until the
+  // sliders are moved for this story; the sliders then show those values.
+  const followNovelai = !typographyCustomized && refs.editorContainer?.classList.contains('theme-novelai');
+  if (followNovelai) {
+    const nai = getNovelaiStyle();
+    if (nai?.fontSize && refs.headlessFontSizeSlider) refs.headlessFontSizeSlider.value = Math.round(nai.fontSize);
+    if (nai?.lineHeight && refs.headlessLineHeightSlider) refs.headlessLineHeightSlider.value = Math.round(nai.lineHeight * 10) / 10;
+  }
+
   const fontSize = refs.headlessFontSizeSlider?.value || 16;
   const lineHeight = refs.headlessLineHeightSlider?.value || 1.8;
   const maxWidth = refs.headlessWidthSlider?.value || 1100;
 
-  storyEditor.style.fontSize = `${fontSize}px`;
-  storyEditor.style.lineHeight = lineHeight;
+  storyEditor.style.fontSize = followNovelai ? '' : `${fontSize}px`;
+  storyEditor.style.lineHeight = followNovelai ? '' : lineHeight;
   storyEditor.style.maxWidth = `${maxWidth}px`;
 
   if (refs.headlessFontSizeValue) refs.headlessFontSizeValue.textContent = `${fontSize}px`;
@@ -374,7 +472,9 @@ export async function saveCustomizationToStore() {
   const settings = {
     fontSize: refs.headlessFontSizeSlider?.value,
     lineHeight: refs.headlessLineHeightSlider?.value,
-    editorWidth: refs.headlessWidthSlider?.value
+    editorWidth: refs.headlessWidthSlider?.value,
+    // Only a moved font or spacing slider overrides the NovelAI theme.
+    typography: typographyCustomized,
   };
 
   try {
@@ -397,6 +497,7 @@ export async function loadCustomizationFromStore() {
       editorWidth: 1100
     };
 
+    typographyCustomized = !!storySettings?.editorCustomization?.typography;
     if (refs.headlessFontSizeSlider) refs.headlessFontSizeSlider.value = settings.fontSize;
     if (refs.headlessLineHeightSlider) refs.headlessLineHeightSlider.value = settings.lineHeight;
     if (refs.headlessWidthSlider) refs.headlessWidthSlider.value = settings.editorWidth;
@@ -448,7 +549,7 @@ export function scrollToSelection() {
 
 export function flattenEditorText() {
   if (!storyEditor) return;
-  const text = storyEditor.innerText;
+  const text = editorText(storyEditor);
   storyEditor.innerText = text;
   syncToWebview();
   showToast('Editor text flattened');
@@ -470,6 +571,11 @@ export function handleStreamingText(text) {
   if (!storyEditor || isSyncingToWebview) return;
   isSyncingFromWebview = true;
   try {
+    const local = editorText(storyEditor);
+    if (lastKnownWebviewText !== null && local !== lastKnownWebviewText && text !== local) saveRecovery(local);
+    // New text stays uncolored until the post-generation read brings its marks.
+    const d = diffText(lastEditorTextForAnnotation || local, text);
+    state.naiRuns = shiftRuns(state.naiRuns || [], d.prefixLen, d.removed.length, d.added.length);
     applyDiff(storyEditor, text);
     lastKnownWebviewText = text;
     lastEditorTextForAnnotation = text;
@@ -496,18 +602,26 @@ export function init() {
     }, 500);
     updateStatusMetrics();
 
-    // Shift AI text ranges to account for user edits
-    if (state.aiTextRanges.length > 0 && lastEditorTextForAnnotation) {
-      const currentText = storyEditor.innerText;
+    // Keep NovelAI's colors lined up with the text until the next read
+    // replaces them with what NovelAI actually recorded.
+    const currentText = editorText(storyEditor);
+    if (lastEditorTextForAnnotation) {
       const diff = diffText(lastEditorTextForAnnotation, currentText);
-      if (diff.added.length !== diff.removed.length) {
-        const delta = diff.added.length - diff.removed.length;
-        state.aiTextRanges = shiftRangesAfterEdit(state.aiTextRanges, diff.prefixLen, delta);
-      }
-      lastEditorTextForAnnotation = currentText;
+      state.naiRuns = shiftRuns(state.naiRuns || [], diff.prefixLen, diff.removed.length, diff.added.length);
     }
+    lastEditorTextForAnnotation = currentText;
 
     scheduleAnnotation();
+  });
+
+  // Formatting shortcuts go through NovelAI marks too; the browser's own
+  // bold/italic would only live until the next re-render.
+  storyEditor.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    const mark = { b: 'bold', i: 'italic', u: 'underline' }[e.key.toLowerCase()];
+    if (!mark) return;
+    e.preventDefault();
+    toggleFormat(mark);
   });
 
   // Typewriter mode scroll listeners
@@ -532,15 +646,13 @@ export function init() {
     }
   });
 
-  // Bold/Italic/Underline toolbar buttons
-  if (refs.editorBoldBtn) {
-    refs.editorBoldBtn.addEventListener('click', () => { document.execCommand('bold'); syncToWebview(); });
-  }
-  if (refs.editorItalicBtn) {
-    refs.editorItalicBtn.addEventListener('click', () => { document.execCommand('italic'); syncToWebview(); });
-  }
-  if (refs.editorUnderlineBtn) {
-    refs.editorUnderlineBtn.addEventListener('click', () => { document.execCommand('underline'); syncToWebview(); });
+  // Bold/Italic/Underline toolbar buttons. mousedown is cancelled so the
+  // click does not move focus out of the editor and drop the selection.
+  const formatButtons = [[refs.editorBoldBtn, 'bold'], [refs.editorItalicBtn, 'italic'], [refs.editorUnderlineBtn, 'underline']];
+  for (const [btn, mark] of formatButtons) {
+    if (!btn) continue;
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+    btn.addEventListener('click', () => toggleFormat(mark));
   }
 
   // Focus mode button
@@ -556,12 +668,14 @@ export function init() {
   // Customization sliders
   if (refs.headlessFontSizeSlider) {
     refs.headlessFontSizeSlider.addEventListener('input', () => {
+      typographyCustomized = true;
       if (refs.headlessFontSizeValue) refs.headlessFontSizeValue.textContent = `${refs.headlessFontSizeSlider.value}px`;
       updateEditorStyles();
     });
   }
   if (refs.headlessLineHeightSlider) {
     refs.headlessLineHeightSlider.addEventListener('input', () => {
+      typographyCustomized = true;
       if (refs.headlessLineHeightValue) refs.headlessLineHeightValue.textContent = refs.headlessLineHeightSlider.value;
       updateEditorStyles();
     });
@@ -593,21 +707,24 @@ export function init() {
   // Immediate display from cache when bulk data arrives
   bus.on('story:text-cached', (cached) => {
     if (!storyEditor || !cached || !cached.text) return;
-    if ((storyEditor.innerText || '').length < 10) {
+    if (editorText(storyEditor).length < 10) {
       console.log('[HeadlessSync] Pre-filling editor with cached text:', cached.char_count, 'chars');
       storyEditor.innerText = cached.text;
-      lastKnownWebviewText = cached.text;
+      // Display only: the cache may be older than NovelAI, so it is not a
+      // baseline for writes. Nothing is pushed until a real read sets one.
+      lastKnownWebviewText = null;
       lastEditorTextForAnnotation = cached.text;
       updateStatusMetrics();
       scheduleAnnotation();
     }
   });
 
-  // Clear annotation state on story switch
+  // Clear sync and mark state on story switch
   bus.on('story:changed', () => {
-    state.aiTextRanges = [];
-    pendingGenerationSync = false;
+    state.naiRuns = [];
+    lastKnownWebviewText = null;
     lastEditorTextForAnnotation = '';
+    noViewWarned = false;
   });
 
   // Story change: keep overlay visible with loading status until text is ready
@@ -645,14 +762,10 @@ export function init() {
       if (attempts >= maxAttempts) {
         clearInterval(pollInterval);
         // Last resort: use whatever ProseMirror has
-        const partialText = await readStoryTextFromDOM();
-        if (partialText && partialText.length > 0) {
-          console.log('[HeadlessSync] Timeout — using partial text:', partialText.length, 'chars');
-          storyEditor.innerText = partialText;
-          lastKnownWebviewText = partialText;
-          lastEditorTextForAnnotation = partialText;
-          updateStatusMetrics();
-          scheduleAnnotation();
+        await syncFromWebview(true);
+        const partialText = lastKnownWebviewText;
+        if (partialText) {
+          console.log('[HeadlessSync] Timeout - using partial text:', partialText.length, 'chars');
           window.powertool.storyTextSet(storyId, partialText, 'partial');
           finishStoryLoad(storyId);
         } else {
@@ -674,25 +787,25 @@ export function init() {
 
         if (state.currentStoryId !== storyId) return;
 
-        // Now read the full text — try Script API first, then DOM
-        let fullText = '';
-        try {
-          fullText = await loreCall('getStoryText');
-          console.log('[HeadlessSync] Script API text after scroll:', (fullText || '').length, 'chars');
-        } catch(e) {}
-
-        if (!fullText || fullText.length < 100) {
-          fullText = await readStoryTextFromDOM();
-          console.log('[HeadlessSync] DOM text after scroll:', (fullText || '').length, 'chars');
+        // scrollToLoadAll ends with a read of NovelAI's own document (text
+        // and marks). That read is what the editor shows and what writes are
+        // checked against; the Script API copy only warns about a partial load.
+        let fullText = lastKnownWebviewText;
+        if (!fullText) {
+          await syncFromWebview(true);
+          fullText = lastKnownWebviewText;
         }
+        try {
+          const apiText = await loreCall('getStoryText');
+          if (apiText && fullText && apiText.length > fullText.length + 50) {
+            showToast(`NovelAI has only part of this story loaded (${fullText.length.toLocaleString()} of ` +
+              `${apiText.length.toLocaleString()} characters), so the headless editor shows that part. ` +
+              'Reopen the story to load the rest.', null, 'warn');
+          }
+        } catch (e) { /* proxy not ready: nothing to compare against */ }
 
         if (fullText && fullText.length > 0) {
           console.log('[HeadlessSync] Full story loaded:', fullText.length, 'chars');
-          storyEditor.innerText = fullText;
-          lastKnownWebviewText = fullText;
-          lastEditorTextForAnnotation = fullText;
-          updateStatusMetrics();
-          scheduleAnnotation();
           window.powertool.storyTextSet(storyId, fullText, 'scroll-to-load');
           finishStoryLoad(storyId);
           await imageEmbed.loadStoryImages(state.currentStoryId);
@@ -719,8 +832,22 @@ export function init() {
       if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'In Sync';
       if (refs.editorSyncIndicator) refs.editorSyncIndicator.className = 'status-indicator active';
       refreshLoreKeywords();
+      bus.emit('headless:story-loaded', storyId);
     }, 500);
   }
+
+  // Theme and NovelAI-look changes decide whether the sliders apply.
+  bus.on('headless:theme-changed', updateEditorStyles);
+  bus.on('headless:novelai-style', updateEditorStyles);
+
+  // Webview <-> headless switch. Leaving: push pending headless edits so
+  // NovelAI shows them. Entering: re-read, because the story may have been
+  // edited or generated in webview mode meanwhile.
+  bus.on('headless:mode-changed', async (headless) => {
+    if (!state.currentStoryId || !state.storyTextLoaded) return;
+    if (headless) await syncFromWebview(true);
+    else await syncToWebview();
+  });
 
   // Flush cache on story leave
   bus.on('headless:dashboard-state-changed', (isActive) => {
@@ -730,12 +857,11 @@ export function init() {
   // Streaming text from generation poll
   bus.on('headless:text-updated', handleStreamingText);
 
-  // Generation complete — re-read, cache, and mark AI text
+  // Generation complete: re-read text and marks, so the new AI text gets
+  // NovelAI's own ai_text coloring.
   bus.on('headless:generation-complete', async () => {
     if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Ready';
     if (refs.editorAiIndicator) refs.editorAiIndicator.className = 'status-indicator';
-    // Flag the next syncFromWebview as post-generation so it records AI text ranges
-    pendingGenerationSync = true;
     await syncFromWebview(false);
   });
 }

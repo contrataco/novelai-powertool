@@ -30,31 +30,119 @@ export function diffText(oldText, newText) {
   };
 }
 
+// Words, runs of spaces, and single other characters: the units a
+// within-paragraph diff works in, so a replaced word is one small edit.
+function tokenize(s) {
+  return s.match(/\w+|\s+|[^\w\s]/g) || [];
+}
+
+/**
+ * Edits [{from, to, insert}] (offsets in oldText, ascending, non-overlapping)
+ * that turn oldText into newText while touching as little as possible.
+ * Unchanged paragraphs are never inside an edit; changed paragraphs are
+ * diffed word by word. This keeps NovelAI's marks on everything between two
+ * edits - a single prefix/suffix region would re-mark all of it (Replace All
+ * across a story would recolor the whole span).
+ */
+export function planEdits(oldText, newText) {
+  if (oldText === newText) return [];
+  const a = oldText.split('\n');
+  const b = newText.split('\n');
+  const starts = [];
+  for (let i = 0, o = 0; i < a.length; i++) { starts.push(o); o += a[i].length + 1; }
+
+  // Unchanged paragraphs at both ends.
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+
+  const edits = [];
+  if (a.length - head - tail === b.length - head - tail) {
+    // Same paragraph count: diff each changed paragraph on its own.
+    for (let i = head; i < a.length - tail; i++) {
+      if (a[i] !== b[i]) edits.push(...diffWithin(a[i], b[i], starts[i]));
+    }
+    return edits;
+  }
+
+  // Paragraphs added or removed: one edit over the changed block, from the
+  // first changed paragraph's start to the last one's end.
+  const from = head < a.length ? starts[head] : oldText.length;
+  const oldEnd = a.length - tail;
+  const to = oldEnd > head ? starts[oldEnd - 1] + a[oldEnd - 1].length : from;
+  const inserted = b.slice(head, b.length - tail).join('\n');
+  if (b.length - tail === head) {
+    // Paragraphs only removed: take one separator with them.
+    if (head > 0) return [{ from: starts[head] - 1, to, insert: '' }];
+    return [{ from: 0, to: starts[oldEnd], insert: '' }];
+  }
+  if (oldEnd > head) return [{ from, to, insert: inserted }];
+  // Pure insertion of whole paragraphs between unchanged ones.
+  if (head > 0) return [{ from: starts[head - 1] + a[head - 1].length, to: starts[head - 1] + a[head - 1].length, insert: '\n' + inserted }];
+  return [{ from: 0, to: 0, insert: inserted + '\n' }];
+}
+
+/** Word-level edits turning paragraph x into y, offsets shifted by base. */
+function diffWithin(x, y, base) {
+  const p = tokenize(x);
+  const q = tokenize(y);
+  // Trim equal tokens at both ends, then LCS over what is left.
+  let s = 0;
+  while (s < p.length && s < q.length && p[s] === q[s]) s++;
+  let e = 0;
+  while (e < p.length - s && e < q.length - s && p[p.length - 1 - e] === q[q.length - 1 - e]) e++;
+  const P = p.slice(s, p.length - e);
+  const Q = q.slice(s, q.length - e);
+  let offset = base;
+  for (let i = 0; i < s; i++) offset += p[i].length;
+
+  // Too large for a table: one edit for the changed middle.
+  if (P.length * Q.length > 400000) {
+    return [{ from: offset, to: offset + P.join('').length, insert: Q.join('') }];
+  }
+  const L = Array.from({ length: P.length + 1 }, () => new Uint32Array(Q.length + 1));
+  for (let i = P.length - 1; i >= 0; i--) {
+    for (let j = Q.length - 1; j >= 0; j--) {
+      L[i][j] = P[i] === Q[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    }
+  }
+  const edits = [];
+  let i = 0;
+  let j = 0;
+  let pos = offset;
+  let cur = null;
+  const flush = () => { if (cur) { edits.push(cur); cur = null; } };
+  while (i < P.length || j < Q.length) {
+    if (i < P.length && j < Q.length && P[i] === Q[j]) {
+      flush();
+      pos += P[i].length; i++; j++;
+    } else if (j < Q.length && (i >= P.length || L[i][j + 1] >= L[i + 1][j])) {
+      if (!cur) cur = { from: pos, to: pos, insert: '' };
+      cur.insert += Q[j]; j++;
+    } else {
+      if (!cur) cur = { from: pos, to: pos, insert: '' };
+      pos += P[i].length; cur.to = pos; i++;
+    }
+  }
+  flush();
+  return edits;
+}
+
 /**
  * Applies a diff to a contenteditable element while preserving cursor position.
  * Returns the diff result so callers can update AI text range tracking.
  */
 export function applyDiff(el, newText) {
-  const oldText = el.innerText;
+  const oldText = editorText(el);
   if (oldText === newText) return { prefixLen: oldText.length, added: '', removed: '', suffixLen: 0 };
 
-  const selection = window.getSelection();
-  let cursorOffset = -1;
-  let isFocused = document.activeElement === el;
-
-  if (isFocused && selection.rangeCount > 0) {
-    const range = selection.getRangeAt(0);
-    const preCursorRange = range.cloneRange();
-    preCursorRange.selectNodeContents(el);
-    preCursorRange.setEnd(range.endContainer, range.endOffset);
-    cursorOffset = preCursorRange.toString().length;
-  }
-
+  const cursorOffset = caretOffset(el);
   const diff = diffText(oldText, newText);
 
   el.innerText = newText;
 
-  if (isFocused && cursorOffset !== -1) {
+  if (cursorOffset !== -1) {
     let newOffset = cursorOffset;
 
     if (cursorOffset > diff.prefixLen) {
@@ -110,213 +198,271 @@ export function shiftRangesAfterEdit(ranges, editPos, delta) {
 
 // --- Annotation System ---
 
+// Escapes quotes too: the result also goes into attribute values.
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 
+// --- NovelAI mark rendering ---
+
+// NovelAI mark -> how the headless editor draws it. Order is nesting order,
+// outermost first, so every segment gets the same well-formed structure.
+const MARK_RENDER = [
+  ['user_text', '<span class="nai-user">', '</span>'],
+  ['ai_text', '<span class="nai-ai">', '</span>'],
+  ['edit_text', '<span class="nai-edit">', '</span>'],
+  ['prompt_text', '<span class="nai-prompt">', '</span>'],
+  ['script_text', '<span class="nai-script">', '</span>'],
+  ['highlight', '<span class="nai-highlight">', '</span>'],
+  ['dialogue', '<span class="nai-dialogue">', '</span>'],
+  ['bold', '<strong>', '</strong>'],
+  ['italic', '<em>', '</em>'],
+  ['underline', '<u>', '</u>'],
+  ['strikethrough', '<s>', '</s>'],
+  ['inline_code', '<code class="nai-code">', '</code>'],
+];
+
 /**
- * Builds an annotated HTML string from plain text + annotation data.
- * aiRanges: [{start, end}] — character offsets of AI-generated text
- * keywords: [{text, entryId, displayName}] — lorebook keywords to underline
+ * Shift mark runs ({s, e, m}) for a local edit that replaced `removed`
+ * characters at `pos` with `added` characters. Text typed inside a run
+ * stretches it, as NovelAI's own colors will once the edit is synced.
  */
-export function buildAnnotatedHtml(text, aiRanges, keywords) {
+export function shiftRuns(runs, pos, removed, added) {
+  const delta = added - removed;
+  const cut = pos + removed;
+  return runs
+    .map((r) => {
+      if (r.e <= pos) return r;
+      if (r.s >= cut) return { ...r, s: r.s + delta, e: r.e + delta };
+      const s = Math.min(r.s, pos);
+      const e = r.e <= cut ? pos + added : r.e + delta;
+      return { ...r, s, e };
+    })
+    .filter((r) => r.e > r.s);
+}
+
+/**
+ * Paragraph HTML from text + NovelAI mark runs + lorebook keywords.
+ * runs: [{s, e, m: [markName], link}] in text offsets (paragraphs joined by
+ * '\n'), as nai-doc.readRich returns them. Each paragraph is cut into
+ * segments at every run and keyword boundary, and each segment is wrapped in
+ * its own tags, so overlapping marks can never produce mis-nested HTML.
+ */
+export function buildRichHtml(text, runs, keywords) {
   if (!text) return '';
-
-  // Split into paragraphs; track each paragraph's absolute start offset
-  const paragraphs = [];
-  let offset = 0;
-  for (const line of text.split('\n')) {
-    paragraphs.push({ text: line, start: offset });
-    offset += line.length + 1; // +1 for the '\n' separator
-  }
-
-  // Collect annotation spans (last-paragraph is now a <p> class, not a span)
-  const allSpans = [];
-
-  // AI text ranges (priority 1)
-  for (const { start, end } of aiRanges) {
-    if (start >= 0 && end <= text.length && start < end) {
-      allSpans.push({
-        start, end,
-        openTag: '<span class="ai-text">',
-        closeTag: '</span>',
-        priority: 1,
-      });
-    }
-  }
-
-  // Lorebook keyword matches (priority 2, innermost)
   const lowerText = text.toLowerCase();
-  for (const kw of keywords) {
+
+  // Keyword hits, same matching rules as before: whole words, 3+ chars.
+  const hits = [];
+  for (const kw of keywords || []) {
     if (!kw.text || kw.text.length < 3) continue;
     const lowerKw = kw.text.toLowerCase();
     let idx = 0;
     while ((idx = lowerText.indexOf(lowerKw, idx)) !== -1) {
-      const kwStart = idx;
-      const kwEnd = idx + lowerKw.length;
-      idx = kwEnd;
-      const charBefore = kwStart > 0 ? lowerText[kwStart - 1] : ' ';
-      const charAfter = kwEnd < lowerText.length ? lowerText[kwEnd] : ' ';
-      if (/\w/.test(charBefore) || /\w/.test(charAfter)) continue;
-      const hasPartialOverlap = aiRanges.some(ar =>
-        kwStart < ar.end && kwEnd > ar.start &&
-        !(kwStart >= ar.start && kwEnd <= ar.end)
-      );
-      if (hasPartialOverlap) continue;
-      allSpans.push({
-        start: kwStart,
-        end: kwEnd,
-        openTag: `<span class="lore-keyword" data-entry-id="${escapeHtml(String(kw.entryId))}" data-display-name="${escapeHtml(String(kw.displayName || kw.text))}">`,
-        closeTag: '</span>',
-        priority: 2,
-      });
+      const s = idx;
+      const e = idx + lowerKw.length;
+      idx = e;
+      const before = s > 0 ? lowerText[s - 1] : ' ';
+      const after = e < lowerText.length ? lowerText[e] : ' ';
+      if (/\w/.test(before) || /\w/.test(after)) continue;
+      hits.push({ s, e, kw });
     }
   }
 
-  const lastParaIndex = paragraphs.length - 1;
+  const lines = text.split('\n');
+  let offset = 0;
+  const out = lines.map((line, i) => {
+    const start = offset;
+    const end = start + line.length;
+    offset = end + 1;
+    const cls = i === lines.length - 1 ? ' class="last-paragraph"' : '';
+    if (!line) return `<p${cls}><br></p>`;
 
-  const parts = paragraphs.map((para, i) => {
-    const { text: paraText, start: paraStart } = para;
-    const paraEnd = paraStart + paraText.length;
-    const isLast = i === lastParaIndex;
-
-    // Empty paragraph — <br> placeholder prevents height collapse in contenteditable
-    if (!paraText) {
-      return isLast ? '<p class="last-paragraph"><br></p>' : '<p><br></p>';
-    }
-
-    // Collect spans that overlap this paragraph, clamped to paragraph-local offsets
-    const localSpans = [];
-    for (const span of allSpans) {
-      if (span.end <= paraStart || span.start >= paraEnd) continue;
-      localSpans.push({
-        ...span,
-        start: Math.max(span.start, paraStart) - paraStart,
-        end: Math.min(span.end, paraEnd) - paraStart,
-      });
-    }
-
-    // Build open/close events for this paragraph
-    const events = [];
-    for (const span of localSpans) {
-      events.push({ pos: span.start, type: 'open',  tag: span.openTag,  priority: span.priority });
-      events.push({ pos: span.end,   type: 'close', tag: span.closeTag, priority: span.priority });
-    }
-    events.sort((a, b) => {
-      if (a.pos !== b.pos) return a.pos - b.pos;
-      if (a.type !== b.type) return a.type === 'close' ? -1 : 1;
-      if (a.type === 'open') return a.priority - b.priority;
-      return b.priority - a.priority;
-    });
+    const localRuns = (runs || []).filter((r) => r.e > start && r.s < end);
+    const localHits = hits.filter((h) => h.e > start && h.s < end);
+    const cuts = new Set([0, line.length]);
+    for (const r of localRuns) { cuts.add(Math.max(r.s, start) - start); cuts.add(Math.min(r.e, end) - start); }
+    for (const h of localHits) { cuts.add(Math.max(h.s, start) - start); cuts.add(Math.min(h.e, end) - start); }
+    const points = [...cuts].sort((a, b) => a - b);
 
     let inner = '';
-    let textPos = 0;
-    for (const ev of events) {
-      if (ev.pos > textPos) {
-        inner += escapeHtml(paraText.slice(textPos, ev.pos));
-        textPos = ev.pos;
+    for (let k = 0; k < points.length - 1; k++) {
+      const a = points[k];
+      const b = points[k + 1];
+      if (b <= a) continue;
+      const absA = start + a;
+      const active = new Set();
+      let link = null;
+      for (const r of localRuns) {
+        if (r.s <= absA && r.e > absA) {
+          r.m.forEach((m) => active.add(m));
+          if (r.link) link = r.link;
+        }
       }
-      inner += ev.tag;
+      const hit = localHits.find((h) => h.s <= absA && h.e > absA);
+      let open = '';
+      let close = '';
+      for (const [name, o, c] of MARK_RENDER) {
+        if (active.has(name)) { open += o; close = c + close; }
+      }
+      if (link) {
+        open += `<span class="nai-link" data-lore-id="${escapeHtml(String(link))}">`;
+        close = '</span>' + close;
+      }
+      if (hit) {
+        open += `<span class="lore-keyword" data-entry-id="${escapeHtml(String(hit.kw.entryId))}" data-display-name="${escapeHtml(String(hit.kw.displayName || hit.kw.text))}">`;
+        close = '</span>' + close;
+      }
+      inner += open + escapeHtml(line.slice(a, b)) + close;
     }
-    if (textPos < paraText.length) {
-      inner += escapeHtml(paraText.slice(textPos));
-    }
-
-    return isLast
-      ? `<p class="last-paragraph">${inner}</p>`
-      : `<p>${inner}</p>`;
+    return `<p${cls}>${inner}</p>`;
   });
-
-  return parts.join('');
+  return out.join('');
 }
 
 /**
- * Re-annotates a contenteditable element with AI text highlighting and lore keywords,
- * preserving the cursor position.
+ * Re-renders a contenteditable element from NovelAI mark runs and lore
+ * keywords, preserving the cursor position.
  */
-export function annotateEditor(el, aiRanges, keywords) {
-  const text = el.innerText;
+export function annotateEditor(el, runs, keywords) {
+  const text = editorText(el);
   if (!text) return;
-
-  // If nothing to annotate, rebuild paragraph structure and bail
-  const hasAnnotations = aiRanges.length > 0 || keywords.length > 0;
-  if (!hasAnnotations) {
-    if (el.querySelector('.ai-text, .lore-keyword, .last-paragraph')) {
-      el.innerHTML = buildAnnotatedHtml(text, [], []);
-    }
-    return;
-  }
-
-  const selection = window.getSelection();
-  let cursorOffset = -1;
-  const isFocused = document.activeElement === el;
-
-  if (isFocused && selection.rangeCount > 0) {
-    const range = selection.getRangeAt(0);
-    const pre = range.cloneRange();
-    pre.selectNodeContents(el);
-    pre.setEnd(range.startContainer, range.startOffset);
-    cursorOffset = pre.toString().length;
-  }
-
-  el.innerHTML = buildAnnotatedHtml(text, aiRanges, keywords);
-
-  if (isFocused && cursorOffset >= 0) {
-    restoreCursor(el, cursorOffset);
-  }
+  const cursorOffset = caretOffset(el);
+  el.innerHTML = buildRichHtml(text, runs, keywords);
+  if (cursorOffset >= 0) restoreCursor(el, cursorOffset);
 }
+
+// --- Text <-> DOM position model ---
+//
+// innerText cannot be used for the editor text: once the editor holds <p>
+// paragraphs it reports a blank line between every pair ("a\n\nb"), which
+// would push extra empty paragraphs into NovelAI and skew every offset.
+// linearize() defines the one text model everything uses: each top-level
+// block is one line joined by a single '\n', a <br> is a line break unless it
+// is the placeholder that keeps an empty paragraph open, and image embeds
+// (non-editable elements) contribute nothing. Scene-break blocks contribute
+// their original marker text.
 
 const BLOCK_ELEMENTS = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE']);
 
-function restoreCursor(el, offset) {
-  const selection = window.getSelection();
-  const range = document.createRange();
+function isSkipped(node) {
+  return node.nodeType === 1 && !node.classList.contains('scene-break') &&
+    (node.tagName === 'FIGURE' || node.getAttribute('contenteditable') === 'false');
+}
 
-  let currentOffset = 0;
-  let found = false;
+function isPlaceholderBr(br) {
+  const parent = br.parentNode;
+  return !br.nextSibling && parent && parent.nodeType === 1 && BLOCK_ELEMENTS.has(parent.tagName);
+}
 
-  function traverse(node) {
-    if (found) return;
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      const len = node.textContent.length;
-      if (currentOffset + len >= offset) {
-        range.setStart(node, offset - currentOffset);
-        range.setEnd(node, offset - currentOffset);
-        found = true;
+/** { text, entries: Map(node -> {start, end}) } in document order. */
+export function linearize(el) {
+  let text = '';
+  const entries = new Map();
+  const walkInline = (node) => {
+    const start = text.length;
+    if (node.nodeType === 3) {
+      text += node.textContent;
+    } else if (node.nodeType === 1 && !isSkipped(node)) {
+      if (node.tagName === 'BR') {
+        if (!isPlaceholderBr(node)) text += '\n';
       } else {
-        currentOffset += len;
+        if (BLOCK_ELEMENTS.has(node.tagName) && text.length && !text.endsWith('\n')) text += '\n';
+        node.childNodes.forEach(walkInline);
       }
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      // Block elements following another block sibling contribute an implicit '\n'
-      // to innerText / Range.toString() — account for it in the offset count.
-      if (BLOCK_ELEMENTS.has(node.tagName) &&
-          node.previousElementSibling &&
-          BLOCK_ELEMENTS.has(node.previousElementSibling.tagName)) {
-        if (currentOffset + 1 > offset) {
-          // Cursor sits exactly at the block boundary — place at start of this element
-          const target = node.firstChild || node;
-          range.setStart(target, 0);
-          range.setEnd(target, 0);
-          found = true;
-          return;
-        }
-        currentOffset += 1;
-      }
-      for (let i = 0; i < node.childNodes.length; i++) {
-        traverse(node.childNodes[i]);
+    }
+    entries.set(node, { start, end: text.length });
+  };
+  let any = false;
+  let prevBlock = false;
+  el.childNodes.forEach((n) => {
+    if (isSkipped(n)) { entries.set(n, { start: text.length, end: text.length }); return; }
+    const isBlock = n.nodeType === 1 && (BLOCK_ELEMENTS.has(n.tagName) || n.classList.contains('scene-break'));
+    if (isBlock) {
+      if (any) text += '\n';
+      const start = text.length;
+      if (n.classList.contains('scene-break')) text += n.dataset.original || n.textContent;
+      else n.childNodes.forEach(walkInline);
+      entries.set(n, { start, end: text.length });
+    } else {
+      if (prevBlock) text += '\n';
+      walkInline(n);
+    }
+    prevBlock = isBlock;
+    any = true;
+  });
+  return { text, entries };
+}
+
+/** The editor's text in the model NovelAI uses: paragraphs joined by '\n'. */
+export function editorText(el) {
+  return el ? linearize(el).text : '';
+}
+
+/** Text offset of a DOM position (container + offset) inside `el`. */
+export function offsetOf(el, node, offset) {
+  const { text, entries } = linearize(el);
+  if (node === el) {
+    const child = el.childNodes[offset];
+    return child ? (entries.get(child)?.start ?? text.length) : text.length;
+  }
+  const entry = entries.get(node);
+  if (!entry) return -1;
+  if (node.nodeType === 3) return entry.start + Math.min(offset, node.textContent.length);
+  const child = node.childNodes[offset];
+  return child ? (entries.get(child)?.start ?? entry.end) : entry.end;
+}
+
+/** Caret offset in `el`, or -1 when the editor is not focused. */
+export function caretOffset(el) {
+  const sel = window.getSelection();
+  if (document.activeElement !== el || !sel.rangeCount) return -1;
+  const r = sel.getRangeAt(0);
+  return offsetOf(el, r.startContainer, r.startOffset);
+}
+
+/** Selection as text offsets {start, end}, or null when not inside `el`. */
+export function selectionOffsets(el) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  if (!el.contains(r.startContainer) || !el.contains(r.endContainer)) return null;
+  const a = offsetOf(el, r.startContainer, r.startOffset);
+  const b = offsetOf(el, r.endContainer, r.endOffset);
+  if (a < 0 || b < 0) return null;
+  return { start: Math.min(a, b), end: Math.max(a, b) };
+}
+
+/** Put the caret at a text offset, using the same model as editorText. */
+export function restoreCursor(el, offset) {
+  const { entries } = linearize(el);
+  const range = document.createRange();
+  let placed = false;
+  for (const [node, { start, end }] of entries) {
+    if (node.nodeType === 3 && offset >= start && offset <= end) {
+      range.setStart(node, offset - start);
+      placed = true;
+      break;
+    }
+  }
+  if (!placed) {
+    // An empty paragraph has no text node: put the caret inside the block.
+    for (const [node, { start }] of entries) {
+      if (node.nodeType === 1 && node.parentNode === el && start === offset) {
+        range.setStart(node, 0);
+        placed = true;
+        break;
       }
     }
   }
-
-  traverse(el);
-
-  if (!found) {
+  if (!placed) {
     range.selectNodeContents(el);
     range.collapse(false);
+  } else {
+    range.collapse(true);
   }
-
+  const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
 }

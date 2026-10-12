@@ -5,6 +5,7 @@ import * as refs from './dom-refs.js';
 import { getCurrentEntries, selectLoreEntry } from './headless-lore-panel.js';
 import { togglePanel } from './headless-panels.js';
 import { showToast } from './utils.js';
+import { editorText } from './diff.js';
 
 const { storyEditor } = refs;
 
@@ -196,7 +197,7 @@ async function executeSelectedCommand() {
         togglePanel(refs.headlessPreamblePanel);
         break;
       case 'summarise-memory': {
-        const storyText = (refs.storyEditor?.innerText || '').slice(-4000).trim();
+        const storyText = (refs.storyEditor ? editorText(refs.storyEditor) : '').slice(-4000).trim();
         if (!storyText) { showToast('No story text', 2000); break; }
         const result = await window.powertool.textAction('summarise-memory', storyText, state.currentStoryId);
         if (result?.output) {

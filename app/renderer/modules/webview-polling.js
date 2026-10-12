@@ -442,7 +442,11 @@ export function init() {
   // Listen for force webview display (e.g., "Create New Story" or "Go to NovelAI Dashboard")
   bus.on('headless:force-webview', (show) => {
     if (show) {
+      const wasHeadless = state.headlessMode;
       state.headlessMode = false;
+      // Same signal as updateWebviewModeUI() in settings-modal, which this
+      // path cannot import (circular dependency).
+      if (wasHeadless) bus.emit('headless:mode-changed', false);
       window.powertool.setSceneSettings({ interfaceShowWebview: true, headlessMode: false });
       const mainContainer = document.querySelector('.main-container');
       if (mainContainer) mainContainer.classList.add('webview-active');

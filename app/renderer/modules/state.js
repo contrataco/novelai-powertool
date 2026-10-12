@@ -57,7 +57,7 @@ export const state = {
   availableStories: [],    // list of stories found on dashboard
 
   // Text annotation state
-  aiTextRanges: [],   // [{start, end}] character offsets of AI-generated text in current editor
+  naiRuns: [],        // [{s, e, m: [markName], link}] NovelAI marks (origin, formatting) in editor text offsets
   loreKeywords: [],   // [{text, entryId, displayName}] active lorebook keywords for highlighting
 
   // Backward-compat accessors

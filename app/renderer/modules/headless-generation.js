@@ -3,7 +3,7 @@
 import { state, bus } from './state.js';
 import * as refs from './dom-refs.js';
 import { showToast } from './utils.js';
-import { mergeRanges } from './diff.js';
+import { editorText } from './diff.js';
 
 const { webview, storyEditor } = refs;
 
@@ -188,7 +188,7 @@ export async function triggerAiAction(type) {
     if (!selectedText) { showToast('Select some text first', 2000); return; }
   } else {
     // Expand: use last 500 chars of the editor as context
-    selectedText = (editor.innerText || '').slice(-500).trim();
+    selectedText = editorText(editor).slice(-500).trim();
     if (!selectedText) { showToast('No story text to expand', 2000); return; }
   }
 
@@ -224,16 +224,6 @@ export async function triggerAiAction(type) {
     showToast(`${_actionLabel(type)} applied`);
     if (_syncToWebview) await _syncToWebview();
 
-    // Track new text as AI-generated range
-    const newStart = selectionRange
-      ? _getCaretOffset(editor, selectionRange.startContainer, selectionRange.startOffset)
-      : (editor.innerText || '').length - output.length;
-    if (newStart >= 0) {
-      state.aiTextRanges = mergeRanges([
-        ...state.aiTextRanges,
-        { start: newStart, end: newStart + output.length },
-      ]);
-    }
   } catch (e) {
     console.error('[Generation] AI action error:', e);
     showToast(`${_actionLabel(type)} failed`, 3000, 'error');

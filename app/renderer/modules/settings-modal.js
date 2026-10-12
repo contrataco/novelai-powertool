@@ -180,6 +180,10 @@ export function init() {
 
 function updateWebviewModeUI() {
   const mainContainer = document.querySelector('.main-container');
+  // The headless editor re-reads NovelAI on the way in (the story may have
+  // changed in webview mode) and flushes its edits on the way out.
+  const wasHeadless = !mainContainer.classList.contains('webview-active');
+  if (wasHeadless !== state.headlessMode) bus.emit('headless:mode-changed', state.headlessMode);
   if (state.headlessMode) {
     mainContainer.classList.remove('webview-active');
     toggleWebviewBtn.textContent = 'Show Webview';

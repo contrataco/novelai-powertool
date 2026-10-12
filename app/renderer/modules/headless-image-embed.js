@@ -56,6 +56,41 @@ export async function restoreFigures() {
 }
 
 /**
+ * Lift the figures out before the editor's HTML is rebuilt, remembering how
+ * many text paragraphs preceded each. Pair with reattachFigures(): the same
+ * elements go back after the same paragraphs, so a re-render never drops an
+ * image or reloads it.
+ */
+export function detachFigures() {
+  const editor = refs.storyEditor;
+  if (!editor) return [];
+  const out = [];
+  for (const fig of editor.querySelectorAll('figure[data-image-id]')) {
+    let after = 0;
+    for (const n of editor.children) {
+      if (n === fig) break;
+      if (!n.matches('figure[data-image-id]')) after++;
+    }
+    out.push({ fig, after });
+  }
+  out.forEach(({ fig }) => fig.remove());
+  return out;
+}
+
+export function reattachFigures(list) {
+  const editor = refs.storyEditor;
+  if (!editor || !list?.length) return;
+  // Reverse, so figures sharing a paragraph keep their order: each is placed
+  // directly after the paragraph, ahead of the ones already put back.
+  for (const { fig, after } of [...list].reverse()) {
+    const blocks = Array.from(editor.children).filter((n) => !n.matches('figure[data-image-id]'));
+    if (after <= 0) editor.prepend(fig);
+    else if (after > blocks.length) editor.appendChild(fig);
+    else blocks[after - 1].after(fig);
+  }
+}
+
+/**
  * Count block-level child nodes before `target` inside `editor`.
  * Used to compute paragraph_index for a figure element.
  */

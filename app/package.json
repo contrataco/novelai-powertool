@@ -26,6 +26,7 @@
     "electron-builder": "^24.9.1"
   },
   "dependencies": {
+    "@fontsource/source-sans-3": "^5.3.1",
     "adm-zip": "^0.5.10",
     "better-sqlite3": "^12.6.2",
     "electron-store": "^8.1.0"

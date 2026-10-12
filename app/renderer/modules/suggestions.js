@@ -2,6 +2,7 @@
 
 import { state } from './state.js';
 import { syncToWebview } from './headless-sync.js';
+import { editorText } from './diff.js';
 import {
   webview, storyEditor,
   suggestionsBtn, suggestionsBadge, suggestionsPopover,
@@ -130,10 +131,10 @@ async function insertSuggestionIntoEditor(suggestion) {
           sel.removeAllRanges();
           sel.addRange(range);
         } else {
-          storyEditor.innerText += (storyEditor.innerText.endsWith('\n') ? '' : '\n') + text;
+          { const current = editorText(storyEditor); storyEditor.innerText = current + (current.endsWith('\n') ? '' : '\n') + text; }
         }
       } else {
-        storyEditor.innerText += (storyEditor.innerText.endsWith('\n') ? '' : '\n') + text;
+        { const current = editorText(storyEditor); storyEditor.innerText = current + (current.endsWith('\n') ? '' : '\n') + text; }
       }
       // Trigger sync to webview
       await syncToWebview();
