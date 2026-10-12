@@ -4,7 +4,7 @@ id: e02be7b4-4993-4ebf-abc0-ca7ed996744f
 name: NovelAI PowerTool
 createdAt: 1766945065236
 updatedAt: 1774381797637
-version: 4.1.1
+version: 4.1.2
 author: Contrataco
 description: Unified PowerTool script — story relay, lorebook proxy, memory proxy, suggestion insertion
 memoryLimit: 16
@@ -316,6 +316,24 @@ async function proxyGetCategories(): Promise<any[]> {
   }
 }
 
+// Remove a category, only when no entry is in it (the app moves entries first).
+async function proxyRemoveCategory(id: string): Promise<boolean> {
+  try {
+    const entries = await api.v1.lorebook.entries();
+    const left = entries.filter((e: any) => e.category === id).length;
+    if (left > 0) {
+      api.v1.log(`${LOG_PREFIX} Category ${id} still has ${left} entries; not removed`);
+      return false;
+    }
+    await (api.v1.lorebook as any).removeCategory(id);
+    api.v1.log(`${LOG_PREFIX} Removed empty category ${id}`);
+    return true;
+  } catch (e) {
+    api.v1.error(`${LOG_PREFIX} Error removing category ${id}:`, e);
+    return false;
+  }
+}
+
 async function proxyGetStoryText(): Promise<string> {
   try {
     const scanResults = await api.v1.document.scan();
@@ -476,6 +494,7 @@ async function handleLoreRequest(req: { id: string; method: string; args: any[] 
     case 'deleteEntry': return proxyDeleteEntry(req.args[0]);
     case 'createCategory': return proxyCreateCategory(req.args[0]);
     case 'getCategories': return proxyGetCategories();
+    case 'removeCategory': return proxyRemoveCategory(req.args[0]);
     case 'getStoryText': return proxyGetStoryText();
     case 'getEntriesExpanded': return proxyGetEntriesExpanded();
     case 'inspectEntry': return proxyInspectEntry();

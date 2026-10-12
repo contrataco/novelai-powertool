@@ -2419,7 +2419,17 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
     // Apply scan options (category filter, relationships-only)
     // Inject custom categories from lore state so registry is available during scan
     const loreState = db.getLoreState(storyId) || {};
+    // Tidy the copy the scan saves (`state`), then mirror its categories here.
+    tidyStoryCategories(state);
+    loreState.customCategories = state.customCategories || [];
+    loreState.categoryAliases = state.categoryAliases || {};
     const effectiveSettings = { ...settings, customCategories: loreState.customCategories || [] };
+    // Categories the story already has, so the scan reuses them (Pass 7).
+    effectiveSettings._existingCategories = [
+      ...loreCreator.BUILTIN_CATEGORIES.map(b => ({ id: b.id, name: b.displayName, builtin: true })),
+      ...(loreState.customCategories || []).filter(c => KEPT_CATEGORY_SOURCES.has(c.source)).map(c => ({ id: c.id, name: c.displayName, source: c.source })),
+      ...Object.keys(loreState.loreCategoryIds || {}).map(n => ({ id: 'lorebook:' + n, name: n, source: 'lorebook' })),
+    ];
     if (scanOptions) {
       if (scanOptions.fullRescan) {
         effectiveSettings._fullRescan = true;
@@ -2727,11 +2737,25 @@ ipcMain.handle('lore:set-settings', (event, settings) => {
   return { success: true };
 });
 
+// Categories the story keeps: ones the user added or imported ('user') and ones
+// found in the NovelAI lorebook ('lorebook'). Categories a lore scan only
+// proposed (Pass 7, no source) stay out of the list; they pile up across scans.
+const KEPT_CATEGORY_SOURCES = loreCreator.KEPT_CATEGORY_SOURCES;
+
+const tidyStoryCategories = (loreState) => loreCreator.tidyStoryCategories(loreState);
+
 ipcMain.handle('lore:get-category-registry', (event, storyId) => {
-  // Custom categories are session-only — don't restore from DB.
-  // They can be re-detected from the lorebook via "Detect Categories".
-  return loreCreator.buildCategoryRegistry([]);
+  if (!storyId) return loreCreator.buildCategoryRegistry([]);
+  const loreState = db.getLoreState(storyId);
+  if (!loreState) return loreCreator.buildCategoryRegistry([]);
+  if (tidyStoryCategories(loreState)) db.setLoreState(storyId, loreState);
+  const saved = loreState.customCategories || [];
+  return loreCreator.buildCategoryRegistry(saved.filter(c => KEPT_CATEGORY_SOURCES.has(c.source)));
 });
+
+// Which lorebook categories overlap, and which one to keep: the renderer moves
+// entries and removes the emptied categories.
+ipcMain.handle('lore:plan-category-merges', (event, cats) => loreCreator.planCategoryMerges(cats));
 
 ipcMain.handle('lore:add-custom-category', (event, { storyId, category }) => {
   const loreState = db.getLoreState(storyId) || {};
@@ -2741,7 +2765,23 @@ ipcMain.handle('lore:add-custom-category', (event, { storyId, category }) => {
   if (!category || !category.id) return { success: false, error: 'Category ID required' };
   const builtinIds = loreCreator.BUILTIN_CATEGORIES.map(c => c.id);
   if (builtinIds.includes(category.id)) return { success: false, error: 'Cannot override builtin category' };
-  if (loreState.customCategories.find(c => c.id === category.id)) return { success: false, error: 'Category already exists' };
+  const source = category.source === 'lorebook' ? 'lorebook' : 'user';
+  const removed = new Set(loreState.removedCategoryIds || []);
+  // A category the user removed is not brought back by lorebook auto-detect,
+  // only by adding or importing it on purpose.
+  if (source === 'lorebook' && !category.explicit && removed.has(category.id)) return { success: false, skipped: true, error: 'Removed by user' };
+  if (removed.delete(category.id)) loreState.removedCategoryIds = [...removed];
+
+  const existing = loreState.customCategories.find(c => c.id === category.id);
+  if (existing) {
+    // Already saved (often a scan proposal with no source): keep it from now on.
+    if (KEPT_CATEGORY_SOURCES.has(existing.source) && !(existing.source === 'lorebook' && source === 'user')) {
+      return { success: false, error: 'Category already exists' };
+    }
+    existing.source = source;
+    db.setLoreState(storyId, loreState);
+    return { success: true };
+  }
 
   loreState.customCategories.push({
     id: category.id,
@@ -2750,6 +2790,7 @@ ipcMain.handle('lore:add-custom-category', (event, { storyId, category }) => {
     color: category.color,
     isBuiltin: false,
     template: null,
+    source,
   });
   db.setLoreState(storyId, loreState);
 
@@ -2770,6 +2811,7 @@ ipcMain.handle('lore:remove-custom-category', (event, { storyId, categoryId }) =
   if (builtinIds.includes(categoryId)) return { success: false, error: 'Cannot remove builtin category' };
 
   loreState.customCategories = loreState.customCategories.filter(c => c.id !== categoryId);
+  loreState.removedCategoryIds = [...new Set([...(loreState.removedCategoryIds || []), categoryId])];
   db.setLoreState(storyId, loreState);
 
   // Also remove from enabled categories
@@ -2792,6 +2834,14 @@ ipcMain.handle('lore:get-state', (event, storyId) => {
 });
 
 ipcMain.handle('lore:set-state', (event, { storyId, state }) => {
+  // The saved category list belongs to the main process (add/remove/tidy and
+  // the lore scan write it); the renderer's copy can be stale, so keep ours.
+  const current = db.getLoreState(storyId);
+  if (current && state) {
+    for (const k of ['customCategories', 'categoryAliases', 'removedCategoryIds']) {
+      if (current[k] !== undefined) state[k] = current[k];
+    }
+  }
   db.setLoreState(storyId, state);
   return { success: true };
 });

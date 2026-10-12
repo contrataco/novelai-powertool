@@ -208,28 +208,35 @@ export async function loadCategoryRegistry() {
     ];
   }
 
-  // Auto-detect lorebook categories and merge non-builtin ones into the registry
-  // (session-only, not persisted — re-detected on each story load)
+  // Lorebook categories: first fold overlapping ones together in the lorebook
+  // (once per story per session), then save any the story does not know yet,
+  // so they load straight from the saved story next time.
   try {
     if (state.loreProxyReady) {
+      await cleanupLorebookCategories();
       const lorebookCats = await loreCall('getCategories');
       if (Array.isArray(lorebookCats) && lorebookCats.length > 0) {
-        const existingNames = new Set(state.categoryRegistry.map(c => c.displayName.toLowerCase()));
         const autoColors = ['#ff9900', '#00bcd4', '#e91e63', '#8bc34a', '#9c27b0', '#ff5722', '#607d8b', '#cddc39'];
         let colorIdx = 0;
+        let added = 0;
         for (const cat of lorebookCats) {
           const name = (cat.name || '').trim();
-          if (!name || existingNames.has(name.toLowerCase())) continue;
+          if (!name) continue;
           const id = slugifyCategory(name);
-          if (!id || state.categoryRegistry.find(c => c.id === id)) continue;
+          if (!id || state.categoryRegistry.find(c => c.id === id || c.displayName.toLowerCase() === name.toLowerCase())) continue;
+          // A lorebook category overlapping one the story has is the same thing.
+          const plans = await window.powertool.lorePlanCategoryMerges([{ id, name }, ...state.categoryRegistry.map(c => ({ id: c.id, name: c.displayName, builtin: c.isBuiltin }))]);
+          if (plans.some(p => p.keep.id === id || p.merge.some(m => m.id === id))) continue;
           const { singular, plural } = deriveSingularPlural(name);
-          state.categoryRegistry.push({
+          const res = await window.powertool.loreAddCustomCategory(state.currentStoryId, {
             id, displayName: plural, singularName: singular,
-            color: autoColors[colorIdx++ % autoColors.length],
-            isBuiltin: false, template: null,
+            color: autoColors[colorIdx++ % autoColors.length], source: 'lorebook',
           });
-          existingNames.add(name.toLowerCase());
-          console.log(`[Lore] Auto-detected lorebook category: ${name} → ${id}`);
+          if (res?.success) added++;
+        }
+        if (added) {
+          console.log(`[Lore] Saved ${added} lorebook categories to the story`);
+          state.categoryRegistry = await window.powertool.loreGetCategoryRegistry(state.currentStoryId);
         }
       }
     }
@@ -239,6 +246,64 @@ export async function loadCategoryRegistry() {
 
   injectCategoryStyles();
   rebuildCategoryUI();
+}
+
+// Stories whose lorebook categories were already tidied this session.
+const _categoryCleanupDone = new Set();
+
+/**
+ * Fold overlapping lorebook categories together in NovelAI ("Crawler
+ * Abilities" and "Abilities & Skills" into "Abilities"): move each entry to
+ * the category kept, then remove the emptied category. Entry text is not
+ * touched. Runs once per story per session unless forced.
+ */
+export async function cleanupLorebookCategories({ force = false } = {}) {
+  const storyId = state.currentStoryId;
+  if (!storyId || !state.loreProxyReady) return [];
+  if (!force && _categoryCleanupDone.has(storyId)) return [];
+  _categoryCleanupDone.add(storyId);
+  try {
+    const cats = (await loreCall('getCategories') || []).filter(c => c && c.id && c.name);
+    if (cats.length < 2) return [];
+    const entries = await loreCall('getEntries') || [];
+    const counts = new Map();
+    for (const e of entries) if (e.category) counts.set(e.category, (counts.get(e.category) || 0) + 1);
+    const builtinNames = new Set((state.categoryRegistry || []).filter(c => c.isBuiltin).map(c => c.displayName.toLowerCase()));
+    const plans = await window.powertool.lorePlanCategoryMerges(cats.map(c => ({
+      id: c.id, name: c.name, count: counts.get(c.id) || 0, builtin: builtinNames.has(c.name.toLowerCase()),
+    })));
+    if (!plans.length || storyId !== state.currentStoryId) return [];
+
+    const done = [];
+    for (const plan of plans) {
+      for (const m of plan.merge) {
+        let failed = 0;
+        for (const e of entries.filter(x => x.category === m.id)) {
+          const ok = await loreCall('updateEntry', e.id, { category: plan.keep.id });
+          if (ok === false) failed++;
+        }
+        if (failed) {
+          console.warn(`[LoreCat] Could not move ${failed} entries out of "${m.name}"; left it in place`);
+          continue;
+        }
+        try { await loreCall('removeCategory', m.id); } catch (err) {
+          console.log(`[LoreCat] "${m.name}" is empty but could not be removed (${err.message}); update the PowerTool script to remove it`);
+        }
+        const ids = state.loreState?.loreCategoryIds || {};
+        for (const [n, id] of Object.entries(ids)) if (id === m.id) ids[n] = plan.keep.id;
+        done.push(`${m.name} into ${plan.keep.name}`);
+      }
+    }
+    if (done.length) {
+      await saveLoreState();
+      console.log(`[LoreCat] Merged lorebook categories: ${done.join('; ')}`);
+      showToast(`Merged overlapping lorebook categories: ${done.join('; ')}`, 10000, 'success');
+    }
+    return done;
+  } catch (e) {
+    console.log('[LoreCat] Category cleanup skipped:', e.message);
+    return [];
+  }
 }
 
 // =========================================================================
@@ -921,6 +986,41 @@ function showLoreError(msg) {
   loreError.classList.remove('u-hidden');
 }
 
+// The lorebook category to use for a name: the one the app made before, else a
+// lorebook category with that name or an overlapping one ("Abilities" for
+// "Crawler Abilities"), else a new one. Never makes a near-copy of a category
+// the lorebook already has.
+async function findOrCreateLorebookCategory(catName) {
+  if (!state.loreState) return undefined;
+  if (!state.loreState.loreCategoryIds) state.loreState.loreCategoryIds = {};
+  const known = state.loreState.loreCategoryIds[catName];
+  if (known) return known;
+  try {
+    const cats = (await loreCall('getCategories') || []).filter(c => c && c.id && c.name);
+    const exact = cats.find(c => c.name.toLowerCase() === catName.toLowerCase());
+    let match = exact || null;
+    if (!match && cats.length) {
+      const plans = await window.powertool.lorePlanCategoryMerges([...cats.map(c => ({ id: c.id, name: c.name })), { id: '__new__', name: catName }]);
+      const plan = plans.find(p => p.keep.id === '__new__' || p.merge.some(m => m.id === '__new__'));
+      if (plan) match = cats.find(c => c.id === (plan.keep.id === '__new__' ? plan.merge.find(m => m.id !== '__new__')?.id : plan.keep.id)) || null;
+    }
+    if (match) {
+      state.loreState.loreCategoryIds[catName] = match.id;
+      return match.id;
+    }
+  } catch (e) {
+    console.warn('[Lore] Lorebook category lookup failed:', e.message);
+  }
+  try {
+    const catId = await loreCall('createCategory', { name: catName });
+    if (catId) state.loreState.loreCategoryIds[catName] = catId;
+    return catId || undefined;
+  } catch (e) {
+    console.error('[Lore] Failed to create category:', catName, e.message);
+    return undefined;
+  }
+}
+
 // Get or create a lorebook category for an entry type
 async function getCategoryForType(entryType) {
   if (!state.loreState) return undefined;
@@ -932,17 +1032,7 @@ async function getCategoryForType(entryType) {
 
   const catName = getCategoryDisplayName(entryType);
   if (state.loreState.loreCategoryIds[catName]) return state.loreState.loreCategoryIds[catName];
-
-  try {
-    const catId = await loreCall('createCategory', { name: catName });
-    if (catId) {
-      state.loreState.loreCategoryIds[catName] = catId;
-      return catId;
-    }
-  } catch (e) {
-    console.error('[Lore] Failed to create category:', catName, e.message);
-  }
-  return undefined;
+  return findOrCreateLorebookCategory(catName);
 }
 
 // Accept entry: write to lorebook via proxy
@@ -979,17 +1069,7 @@ async function acceptEntry(entryId) {
     let categoryId;
     if (categoryName) {
       // Use semantic sub-category name (e.g., "Party Members" instead of "Characters")
-      if (state.loreState.loreCategoryIds[categoryName]) {
-        categoryId = state.loreState.loreCategoryIds[categoryName];
-      } else {
-        try {
-          categoryId = await loreCall('createCategory', { name: categoryName });
-          if (categoryId) state.loreState.loreCategoryIds[categoryName] = categoryId;
-        } catch (e) {
-          console.warn('[Lore] Sub-category creation failed, falling back to type:', e.message);
-          categoryId = null;
-        }
-      }
+      categoryId = (await findOrCreateLorebookCategory(categoryName)) || null;
     }
     if (!categoryId) {
       let entryCategory = entry.category;
@@ -1361,14 +1441,7 @@ async function runLoreScan(scanType = 'all') {
           try {
             for (const move of result.pendingCategoryMoves) {
               // Get or create the NovelAI category for the proposed name
-              let catId = state.loreState.loreCategoryIds?.[move.proposedCategory];
-              if (!catId) {
-                catId = await loreCall('createCategory', { name: move.proposedCategory });
-                if (catId) {
-                  if (!state.loreState.loreCategoryIds) state.loreState.loreCategoryIds = {};
-                  state.loreState.loreCategoryIds[move.proposedCategory] = catId;
-                }
-              }
+              const catId = await findOrCreateLorebookCategory(move.proposedCategory);
               if (catId && catId !== move.currentCategory) {
                 // Move entry to new category via proxy
                 await loreCall('updateEntry', move.entryId, { category: catId });
@@ -1377,6 +1450,7 @@ async function runLoreScan(scanType = 'all') {
             }
             await saveLoreState();
             console.log(`[LoreCat] Applied ${result.pendingCategoryMoves.length} category reassignments`);
+            await cleanupLorebookCategories({ force: true });
           } catch (e) {
             console.log('[LoreCat] Failed to apply category moves:', e.message);
           }
@@ -2697,6 +2771,8 @@ export function init() {
         if (!state.categoryRegistry) await loadCategoryRegistry();
 
         await checkLoreProxy();
+        await cleanupLorebookCategories({ force: true });
+        await loadCategoryRegistry();
         const lorebookCats = await loreCall('getCategories');
         if (!lorebookCats || lorebookCats.length === 0) {
           showToast('No lorebook categories found');
@@ -2736,6 +2812,8 @@ export function init() {
             displayName: plural,
             singularName: singular,
             color: autoColors[colorIdx % autoColors.length],
+            source: 'lorebook',
+            explicit: true,
           });
           existingIds.add(id);
           colorIdx++;

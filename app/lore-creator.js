@@ -51,6 +51,161 @@ function getCategoryIds(registry) {
   return registry.map(c => c.id);
 }
 
+// ----------------------------------------------------------------------------
+// Overlapping categories ("NPCs" / "NPCs & Hostiles", "Abilities" / "Crawler
+// Abilities", "Main Cast" / "Characters"). Two categories overlap when their
+// names reduce to the same words, or when they share a head noun: the last
+// word of the name, or of either side of "X & Y". A trailing container word
+// ("Class Tiers") hands the head to the word before it.
+// ----------------------------------------------------------------------------
+const MAX_NEW_CATEGORIES_PER_SCAN = 3;
+const CATEGORY_STOP_WORDS =new Set(['and', 'the', 'of', 'a', 'an', 'my', 'our']);
+const CATEGORY_CONTAINER_WORDS = new Set(['tier', 'type', 'list', 'rank', 'kind', 'category', 'group', 'set']);
+const CATEGORY_SYNONYMS = {
+  locale: 'location', place: 'location', area: 'location', region: 'location',
+  cast: 'character', crawler: 'character', people: 'character', person: 'character',
+  hero: 'character', member: 'character',
+  skill: 'ability', power: 'ability', spell: 'ability',
+  monster: 'mob', enemy: 'mob', creature: 'mob',
+  rule: 'system', mechanic: 'system',
+  organization: 'faction', guild: 'faction',
+};
+
+function singularizeCategoryWord(w) {
+  if (w.length <= 3 || w.endsWith('ss')) return w;
+  if (w.endsWith('ies')) return w.slice(0, -3) + 'y';
+  if (/(?:ch|sh|x|ss)es$/.test(w) || w.endsWith('sses')) return w.slice(0, -2);
+  if (w.endsWith('s')) return w.slice(0, -1);
+  return w;
+}
+
+function categoryWord(w) {
+  const s = singularizeCategoryWord(w);
+  return CATEGORY_SYNONYMS[s] || s;
+}
+
+function categoryParts(name) {
+  return String(name || '').toLowerCase().split(/\s*(?:&|\band\b|,|\/)\s*/)
+    .map(p => p.split(/[^a-z0-9+]+/).filter(w => w && !CATEGORY_STOP_WORDS.has(w)).map(categoryWord))
+    .filter(p => p.length);
+}
+
+function categoryTokens(name) {
+  return new Set(categoryParts(name).flat());
+}
+
+function categoryHeads(name) {
+  const heads = new Set();
+  for (const words of categoryParts(name)) {
+    let i = words.length - 1;
+    while (i > 0 && CATEGORY_CONTAINER_WORDS.has(words[i])) i--;
+    heads.add(words[i]);
+  }
+  return heads;
+}
+
+function categoriesOverlap(a, b) {
+  const ta = categoryTokens(a), tb = categoryTokens(b);
+  if (!ta.size || !tb.size) return false;
+  if (ta.size === tb.size && [...ta].every(t => tb.has(t))) return true;
+  const hb = categoryHeads(b);
+  return [...categoryHeads(a)].some(h => hb.has(h));
+}
+
+/**
+ * Group overlapping categories and pick one to keep in each group.
+ * cats: [{ id, name, count?, builtin?, source? }]. The kept one is a built-in
+ * category if the group has one, else the one holding the most entries, then
+ * one the lorebook or user owns, then the shorter (more general) name, then
+ * the one listed first.
+ * Returns [{ keep, merge: [cat, ...] }] for groups of two or more.
+ */
+function planCategoryMerges(cats) {
+  const list = (cats || []).filter(c => c && c.id && c.name);
+  const parent = list.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      if (categoriesOverlap(list[i].name, list[j].name)) parent[find(i)] = find(j);
+    }
+  }
+  const groups = new Map();
+  list.forEach((c, i) => {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(c);
+  });
+  // Ties go to the category listed first (the one the story already had).
+  const order = new Map(list.map((c, i) => [c, i]));
+  // The more general name ("NPCs" over "Supporting NPCs") counts its words as written.
+  const words = (c) => c.name.toLowerCase().split(/[^a-z0-9+]+/).filter(w => w && !CATEGORY_STOP_WORDS.has(w)).length;
+  const rank = (c) => [c.builtin ? 1 : 0, c.count || 0, (c.source === 'lorebook' || c.source === 'user') ? 1 : 0, -words(c), -order.get(c)];
+  const better = (a, b) => {
+    const ra = rank(a), rb = rank(b);
+    for (let k = 0; k < ra.length; k++) if (ra[k] !== rb[k]) return ra[k] > rb[k];
+    return false;
+  };
+  const plans = [];
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    const keep = g.reduce((best, c) => (better(c, best) ? c : best), g[0]);
+    plans.push({ keep, merge: g.filter(c => c !== keep) });
+  }
+  return plans;
+}
+
+// Categories a story keeps: added or imported by the user, or found in the
+// lorebook. Scan proposals (no source) are not kept.
+const KEPT_CATEGORY_SOURCES = new Set(['user', 'lorebook']);
+
+/**
+ * Tidy a story's saved categories in place: drop scan proposals nothing uses,
+ * and fold overlapping categories into one ("NPCs & Hostiles" into "NPCs",
+ * "World Locations" into "Locations"). Categories the user added by hand are
+ * never folded away. Merged names are remembered in categoryAliases so the
+ * lorebook auto-detect does not bring them back. Returns the merges made.
+ */
+function tidyStoryCategories(loreState) {
+  const cats = loreState.customCategories || [];
+  const pending = loreState.pendingEntries || [];
+  const used = new Set(pending.map(e => (e.proposedSubCategory || '').toLowerCase()).filter(Boolean));
+  let kept = cats.filter(c => KEPT_CATEGORY_SOURCES.has(c.source) || used.has((c.displayName || '').toLowerCase()));
+  const dropped = cats.length - kept.length;
+
+  const builtins = BUILTIN_CATEGORIES.map(b => ({ id: b.id, name: b.displayName, builtin: true }));
+  const plans = planCategoryMerges([...builtins, ...kept.map(c => ({ id: c.id, name: c.displayName, source: c.source }))]);
+  const aliases = { ...(loreState.categoryAliases || {}) };
+  const merges = [];
+  for (const plan of plans) {
+    const keepCat = kept.find(c => c.id === plan.keep.id);
+    for (const m of plan.merge) {
+      if (m.builtin || m.source === 'user') continue;
+      kept = kept.filter(c => c.id !== m.id);
+      aliases[m.name.toLowerCase()] = plan.keep.id;
+      if (keepCat && !KEPT_CATEGORY_SOURCES.has(keepCat.source) && KEPT_CATEGORY_SOURCES.has(m.source)) keepCat.source = m.source;
+      for (const e of pending) {
+        if (e.category === m.id) e.category = plan.keep.id;
+        if ((e.proposedSubCategory || '').toLowerCase() === m.name.toLowerCase()) e.proposedSubCategory = plan.keep.builtin ? null : plan.keep.name;
+      }
+      merges.push({ from: m.name, into: plan.keep.name });
+    }
+  }
+  if (!dropped && !merges.length) return null;
+  loreState.customCategories = kept;
+  loreState.categoryAliases = aliases;
+  console.log(`${LOG_PREFIX} Categories tidied: ${dropped} unused scan proposals dropped, ${merges.length} merged (${merges.map(m => `${m.from} -> ${m.into}`).join(', ')})`);
+  return { dropped, merges };
+}
+
+/** The existing category a proposed name overlaps, or null. */
+function findOverlappingCategory(name, existing) {
+  const hits = (existing || []).filter(c => c && c.name && categoriesOverlap(name, c.name));
+  if (!hits.length) return null;
+  const plan = planCategoryMerges([...hits, { id: '__new__', name }]);
+  const keep = plan[0]?.keep;
+  return keep && keep.id !== '__new__' ? keep : hits[0];
+}
+
 // Backward-compat: flat array of builtin IDs
 const ALL_CATEGORIES = BUILTIN_CATEGORIES.map(c => c.id);
 
@@ -2303,6 +2458,9 @@ async function pass7_semanticGrouping(ctx) {
   console.log(`${LOG_PREFIX} Pass 7: Semantic grouping for ${allEntries.length} entries (${existingEntries.length} existing, ${pendingEntries.length} pending)`);
 
   const entryList = allEntries.map(e => `- ${e.name} (currently: ${e.type})`).join('\n');
+  // Categories the story already has: reuse them instead of near-copies.
+  const existingCats = (ctx.settings && ctx.settings._existingCategories) || BUILTIN_CATEGORIES.map(b => ({ id: b.id, name: b.displayName, builtin: true }));
+  const existingNames = [...new Set(existingCats.map(c => c.name))];
 
   const messages = [
     {
@@ -2315,7 +2473,10 @@ async function pass7_semanticGrouping(ctx) {
 
 ${entryList}
 
-You may use any of the 5 standard categories (Characters, Locations, Items, Factions, Concepts) OR create entirely new ones that better fit this story. Examples of custom categories: "Party Members", "Game Mechanics", "City Districts", "Rival Factions", "World Lore", "Quest Lines", "System Abilities", "Supporting Cast".
+Categories this story already has (use these names exactly):
+${existingNames.map(n => `- ${n}`).join('\n')}
+
+Put each entry in one of the existing categories whenever one fits. Create a new category only when no existing one fits, and never one that overlaps an existing category (no "Main Cast" when "Characters" exists, no "Crawler Abilities" when "Abilities" exists). At most ${MAX_NEW_CATEGORIES_PER_SCAN} new categories.
 
 Rules:
 - Create categories that meaningfully group related entries
@@ -2334,6 +2495,27 @@ Output JSON: {"groups": [{"name": "Category Name", "color": "#hex", "isNovel": t
     const parsed = recoverJSON(result.raw);
 
     if (parsed?.groups && Array.isArray(parsed.groups)) {
+      // A proposed group that overlaps an existing category becomes that
+      // category; past the cap, new groups are dropped (their entries keep
+      // their type's category).
+      let newCount = 0;
+      parsed.groups = parsed.groups.filter(group => {
+        if (!group || !group.name) return false;
+        const hit = findOverlappingCategory(group.name, existingCats);
+        if (hit) {
+          group.name = hit.name;
+          group.isNovel = !hit.builtin;
+          group._existing = true;
+          return true;
+        }
+        if (newCount >= MAX_NEW_CATEGORIES_PER_SCAN) {
+          console.log(`${LOG_PREFIX} Pass 7: dropped extra new category "${group.name}"`);
+          return false;
+        }
+        newCount++;
+        existingCats.push({ id: '__proposed__' + group.name, name: group.name });
+        return true;
+      });
       // Build name → proposed category mapping
       const nameToGroup = {};
       for (const group of parsed.groups) {
@@ -2382,8 +2564,8 @@ Output JSON: {"groups": [{"name": "Category Name", "color": "#hex", "isNovel": t
         const id = slugifyCategory(group.name);
         if (!id || existingIds.has(id) || builtinNames.has(id)) continue;
 
-        // Skip if it maps to a standard type
-        if (group.isNovel === false) continue;
+        // Skip if it maps to a standard type or a category the story has
+        if (group.isNovel === false || group._existing) continue;
 
         const color = (group.color && /^#[0-9a-fA-F]{6}$/.test(group.color))
           ? group.color
@@ -2774,6 +2956,14 @@ async function retryLLM(fn, { maxRetries = 1, passName = 'unknown', logPrefix = 
 // ============================================================================
 
 module.exports = {
+  // Scan passes reachable from offline checks
+  __test: { pass7_semanticGrouping },
+  // Overlapping categories
+  categoriesOverlap,
+  tidyStoryCategories,
+  KEPT_CATEGORY_SOURCES,
+  planCategoryMerges,
+  findOverlappingCategory,
   // LLM functions (take generateTextFn)
   identifyLoreElements,
   generateLoreEntryFromElement,
