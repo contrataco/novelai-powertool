@@ -287,6 +287,11 @@ contextBridge.exposeInMainWorld('powertool', {
   ttsGetVoices: (opts) => ipcRenderer.invoke('tts:get-voices', opts),
   ttsGenerateSpeech: (text, voice, storyId) => ipcRenderer.invoke('tts:generate-speech', { text, voice, storyId }),
   ttsNarrateScene: (text, storyId, protagonistName) => ipcRenderer.invoke('tts:narrate-scene', { text, storyId, protagonistName }),
+  ttsPlanScene: (text, storyId, protagonistName) => ipcRenderer.invoke('tts:plan-scene', { text, storyId, protagonistName }),
+  ttsSmartAssign: (characters, voices, avoidVoices) => ipcRenderer.invoke('tts:smart-assign', { characters, voices, avoidVoices }),
+  // Chatterbox
+  chatterboxStatus: () => ipcRenderer.invoke('tts:chatterbox-status'),
+  chatterboxWarm: () => ipcRenderer.invoke('tts:chatterbox-warm'),
   ttsGetState: (storyId) => ipcRenderer.invoke('tts:get-state', storyId),
   ttsSetState: (storyId, state) => ipcRenderer.invoke('tts:set-state', { storyId, state }),
   ttsSetCharacterVoice: (storyId, characterName, voiceId) =>

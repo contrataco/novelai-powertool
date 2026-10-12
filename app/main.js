@@ -18,6 +18,7 @@ require('dns').setDefaultResultOrder('ipv4first');
 const novelaiProvider = require('./providers/novelai');
 const perchanceProvider = require('./providers/perchance');
 const veniceProvider = require('./providers/venice');
+const chatterboxProvider = require('./providers/chatterbox');
 const puterProvider = require('./providers/puter');
 const comfyuiProvider = require('./providers/comfyui');
 const { sceneFormatGuideline } = require('./providers/comfyui-prompt');
@@ -36,7 +37,7 @@ const portraitManager = require('./portrait-manager');
 const mediaGallery = require('./media-gallery');
 const db = require('./db');
 const scriptManager = require('./script-manager');
-const { FUZZY_MATCH_THRESHOLD, LLM_TIMEOUT_MS, SCAN_TIMEOUT_MS, withTimeout } = require('./shared-utils');
+const { FUZZY_MATCH_THRESHOLD, LLM_TIMEOUT_MS, SCAN_TIMEOUT_MS, withTimeout, callLLM } = require('./shared-utils');
 
 // Hydrate portrait base64 data onto characters (for renderer display)
 function hydratePortraits(state, storyId) {
@@ -948,7 +949,8 @@ function classifyVoiceGender(voiceId) {
   // NovelAI presets
   if (NOVELAI_FEMALE_V1.has(voiceId) || NOVELAI_FEMALE_V2.has(voiceId)) return 'female';
   if (NOVELAI_MALE_V1.has(voiceId) || NOVELAI_MALE_V2.has(voiceId)) return 'male';
-  return 'unknown';
+  // Chatterbox: name / pitch / override, from the last voice listing
+  return chatterboxProvider.voiceGender(voiceId);
 }
 
 /**
@@ -1196,6 +1198,10 @@ ipcMain.handle('tts:get-settings', () => ({
   ttsSpeed: store.get('ttsSpeed'),
   ttsFirstPerson: store.get('ttsFirstPerson'),
   ttsVersion: store.get('ttsVersion') || 'auto',
+  ttsChatterboxUrl: store.get('ttsChatterboxUrl') || chatterboxProvider.DEFAULT_URL,
+  ttsChatterboxVoicesDir: store.get('ttsChatterboxVoicesDir') || chatterboxProvider.DEFAULT_VOICES_DIR,
+  ttsChatterboxExaggeration: store.get('ttsChatterboxExaggeration') ?? 0.5,
+  ttsChatterboxVoiceGenders: store.get('ttsChatterboxVoiceGenders') || {},
 }));
 
 ipcMain.handle('tts:set-settings', (_, settings) => {
@@ -1207,6 +1213,7 @@ ipcMain.handle('tts:set-settings', (_, settings) => {
 
 ipcMain.handle('tts:get-voices', (_, opts) => {
   const provider = opts?.provider || store.get('ttsProvider');
+  if (provider === 'chatterbox') return chatterboxProvider.getVoices(store);
   if (provider === 'venice') {
     const ttsModel = opts?.ttsModel || store.get('veniceTtsModel') || 'tts-kokoro';
     return veniceProvider.getVoices(ttsModel);
@@ -1224,15 +1231,21 @@ ipcMain.handle('tts:generate-speech', async (_, { text, voice, storyId }) => {
   }
   const ss = storyId ? db.getStorySettings(storyId) : null;
   const provider = ss?.ttsProvider || store.get('ttsProvider');
-  if (provider === 'venice') return veniceProvider.generateSpeech(text, voice, store);
-  // Auto-detect TTS version from voice preset; falls back to stored preference
-  return novelaiProvider.generateSpeech(text, voice, store, 'auto');
+  return speakWith(provider, text, voice);
 });
 
-ipcMain.handle('tts:narrate-scene', async (_, { text, storyId, protagonistName }) => {
-  if (!text) {
-    return { success: false, error: 'Text is required for narration' };
-  }
+/** One TTS request with the given provider. NovelAI auto-detects v1/v2 from the voice. */
+function speakWith(provider, text, voice) {
+  if (provider === 'chatterbox') return chatterboxProvider.generateSpeech(text, voice, store);
+  if (provider === 'venice') return veniceProvider.generateSpeech(text, voice, store);
+  return novelaiProvider.generateSpeech(text, voice, store, 'auto');
+}
+
+/**
+ * Split text into narration/dialogue segments and pick each one's voice
+ * (narrator, a mapped character voice, or the generic dialogue voice).
+ */
+async function planNarration(text, storyId, protagonistName) {
   const ss = storyId ? db.getStorySettings(storyId) : null;
   const provider = ss?.ttsProvider || store.get('ttsProvider');
   const narratorVoice = ss?.ttsNarratorVoice || store.get('ttsNarratorVoice');
@@ -1240,38 +1253,67 @@ ipcMain.handle('tts:narrate-scene', async (_, { text, storyId, protagonistName }
   const firstPerson = ss?.ttsFirstPerson ?? store.get('ttsFirstPerson');
   const ttsState = storyId ? db.getTtsState(storyId) : { characterVoices: {} };
   const characterVoices = ttsState.characterVoices || {};
+  // Chatterbox voice genders come from a listing; make sure one has happened.
+  if (provider === 'chatterbox') {
+    try { await chatterboxProvider.getVoices(store); } catch { /* server down: genders stay unknown */ }
+  }
   // Build gender map from voice assignments for pronoun resolution
   const genderMap = {};
   for (const [name, voiceId] of Object.entries(characterVoices)) {
     genderMap[name] = classifyVoiceGender(voiceId);
   }
   const segments = parseTextForTTS(text, firstPerson, characterVoices, protagonistName, genderMap);
+  return {
+    provider,
+    segments: segments.map((seg) => {
+      let voice;
+      if (seg.type === 'narration' || seg.isProtagonist) {
+        voice = narratorVoice;
+      } else if (seg.speaker) {
+        const mapped = matchSpeakerToVoice(seg.speaker, characterVoices);
+        voice = mapped ? mapped.voice : dialogueVoice;
+      } else {
+        voice = dialogueVoice;
+      }
+      return { ...seg, voice };
+    }),
+  };
+}
+
+// Segments with voices but no audio, so the renderer can render one while playing another.
+ipcMain.handle('tts:plan-scene', async (_, { text, storyId, protagonistName }) => {
+  if (!text) return { provider: null, segments: [] };
+  return planNarration(text, storyId, protagonistName);
+});
+
+ipcMain.handle('tts:chatterbox-status', () => chatterboxProvider.getStatus(store));
+
+ipcMain.handle('tts:chatterbox-warm', async () => {
+  try {
+    return { success: true, ...(await chatterboxProvider.warm(store)) };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('tts:narrate-scene', async (_, { text, storyId, protagonistName }) => {
+  if (!text) {
+    return { success: false, error: 'Text is required for narration' };
+  }
+  const { provider, segments } = await planNarration(text, storyId, protagonistName);
   const results = [];
 
   for (const seg of segments) {
-    let voice;
-    if (seg.type === 'narration' || seg.isProtagonist) {
-      voice = narratorVoice;
-    } else if (seg.speaker) {
-      const mapped = matchSpeakerToVoice(seg.speaker, characterVoices);
-      voice = mapped ? mapped.voice : dialogueVoice;
-    } else {
-      voice = dialogueVoice;
-    }
-    const isVenice = provider === 'venice';
-    // Auto-detect TTS version from the voice preset — single retry on failure
+    const { voice } = seg;
+    // Single retry on failure
     let audio;
     try {
-      audio = isVenice
-        ? await veniceProvider.generateSpeech(seg.text, voice, store)
-        : await novelaiProvider.generateSpeech(seg.text, voice, store, 'auto');
+      audio = await speakWith(provider, seg.text, voice);
     } catch (firstErr) {
       console.warn('[Main] TTS segment retry after error:', firstErr.message);
       await new Promise(r => setTimeout(r, 1000));
       try {
-        audio = isVenice
-          ? await veniceProvider.generateSpeech(seg.text, voice, store)
-          : await novelaiProvider.generateSpeech(seg.text, voice, store, 'auto');
+        audio = await speakWith(provider, seg.text, voice);
       } catch (retryErr) {
         console.error('[Main] TTS segment failed after retry:', retryErr.message);
         results.push({ type: seg.type, text: seg.text, speaker: seg.speaker, isProtagonist: seg.isProtagonist, error: retryErr.message });
@@ -1303,6 +1345,62 @@ ipcMain.handle('tts:remove-character-voice', (_, { storyId, characterName }) => 
   delete state.characterVoices[characterName];
   db.setTtsState(storyId, state);
   return { success: true };
+});
+
+/**
+ * Ask the lore LLM to cast voices: each character (name, gender, lorebook
+ * description) gets the best-fitting voice from the list. Returns only
+ * assignments whose voice id actually exists; the renderer fills any gaps.
+ */
+ipcMain.handle('tts:smart-assign', async (_, { characters, voices, avoidVoices }) => {
+  if (!characters?.length || !voices?.length) return { assignments: {} };
+  const voiceIds = new Set(voices.map((v) => v.id));
+  const voiceLines = voices.map((v) => {
+    const bits = [v.gender && v.gender !== 'unknown' ? v.gender : 'gender unknown'];
+    if (v.pitch) bits.push(`${v.pitch} Hz`);
+    return `- ${v.id} (${bits.join(', ')})`;
+  }).join('\n');
+  const charLines = characters.map((c) =>
+    `- ${c.name}${c.gender && c.gender !== 'unknown' ? ` [${c.gender}]` : ''}: ${(c.description || '').replace(/\s+/g, ' ').slice(0, 400)}`
+  ).join('\n');
+  const messages = [
+    { role: 'system', content: 'You cast voice actors for an audiobook. Reply with JSON only.' },
+    { role: 'user', content:
+`Pick the best voice for each character.
+
+Rules:
+- Match the character's gender. Infer it from the description when not given. Lower pitch (Hz) sounds deeper and more masculine; higher sounds lighter.
+- Use the voice names as hints for age, accent and personality (a famous actor's name means a voice like theirs).
+- Give every character a different voice when there are enough voices.
+- Do not use these voices (narrator and already taken): ${(avoidVoices || []).join(', ') || 'none'}.
+- Only use voice ids exactly as listed.
+
+Voices:
+${voiceLines}
+
+Characters:
+${charLines}
+
+Reply as {"assignments":[{"character":"<name>","voice":"<voice id>","why":"<few words>"}]}` },
+  ];
+  try {
+    const { parsed } = await callLLM(makeLoreGenerateTextFn(), messages, {
+      json: true, maxTokens: 1500, temperature: 0.3, label: 'TTS smart assign',
+    });
+    const assignments = {};
+    const reasons = {};
+    const names = new Set(characters.map((c) => c.name));
+    for (const a of parsed?.assignments || []) {
+      if (names.has(a?.character) && voiceIds.has(a?.voice)) {
+        assignments[a.character] = a.voice;
+        if (a.why) reasons[a.character] = String(a.why).slice(0, 120);
+      }
+    }
+    return { assignments, reasons };
+  } catch (e) {
+    console.warn('[Main] TTS smart assign failed:', e.message);
+    return { assignments: {}, error: e.message };
+  }
 });
 
 // IPC Handlers — API token (unchanged)

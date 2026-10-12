@@ -6357,3 +6357,34 @@
   letter-spacing: normal;
   font-size: 1em;
 }
+
+/* Chatterbox TTS settings */
+.chatterbox-status {
+  padding: 6px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.chatterbox-status[data-state="ready"] { color: var(--success); border-color: var(--success); }
+.chatterbox-status[data-state="offline"] { color: var(--error-soft); border-color: var(--error-soft); }
+.chatterbox-genders { margin: 8px 0; }
+.chatterbox-genders summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.chatterbox-gender-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.chatterbox-gender-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-default);
+}
+.chatterbox-gender-name { font-size: 13px; color: var(--text-primary); word-break: break-word; }
+.chatterbox-gender-detail { font-size: 11px; color: var(--text-dim); }
+.chatterbox-gender-row select { flex: 0 0 auto; font-size: 12px; }

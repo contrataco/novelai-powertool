@@ -18,7 +18,9 @@ let cachedVoices = null;
 
 async function getVoices() {
   if (!cachedVoices) {
-    cachedVoices = await window.powertool.ttsGetVoices();
+    // The story's own provider when it has one, so a per-story Chatterbox lists its voices.
+    const provider = state.storySettings?.ttsProvider;
+    cachedVoices = await window.powertool.ttsGetVoices(provider ? { provider } : undefined);
   }
   return cachedVoices;
 }
@@ -215,6 +217,11 @@ function classifyVoiceGender(voiceId) {
   return 'unknown';
 }
 
+// Providers that know their voices' gender (Chatterbox) send it with the listing.
+function voiceGenderOf(v) {
+  return v.gender && v.gender !== 'unknown' ? v.gender : classifyVoiceGender(v.id);
+}
+
 function extractGenderFromEntry(text) {
   if (!text) return 'unknown';
   const match = text.match(/\bGender:\s*(\w+)/i);
@@ -279,22 +286,59 @@ async function autoAssignFromLore() {
     const existing = ttsState.characterVoices || {};
     let assigned = 0;
 
-    const usedVoices = new Set(Object.values(existing));
+    // Narrator and dialogue voices stay free so characters do not sound like the narration.
+    let narratorVoice = state.storySettings?.ttsNarratorVoice;
+    let dialogueVoice = state.storySettings?.ttsDialogueVoice;
+    if (!narratorVoice) {
+      try {
+        const s = await window.powertool.ttsGetSettings();
+        narratorVoice = s.ttsNarratorVoice;
+        dialogueVoice = dialogueVoice || s.ttsDialogueVoice;
+      } catch { /* optional */ }
+    }
+    const reserved = [narratorVoice, dialogueVoice].filter((v) => typeof v === 'string' && v);
+    const usedVoices = new Set([...Object.values(existing), ...reserved]);
+
+    // Characters still without a voice, with what the lorebook says about them.
+    const todo = [];
+    for (const entry of characters) {
+      const name = entry.displayName || entry.keys?.[0] || '';
+      if (!name || existing[name]) continue;
+      const meta = parseMetadataClient(entry.text);
+      todo.push({ name, gender: extractGenderFromEntry(entry.text), description: meta.rest || entry.text, entry });
+    }
+
+    // First choice: the lore AI casts each character from their description.
+    let reasons = {};
+    if (todo.length) {
+      showToast(`Casting voices for ${todo.length} character${todo.length !== 1 ? 's' : ''}...`, 2500);
+      const res = await window.powertool.ttsSmartAssign(
+        todo.map(({ name, gender, description }) => ({ name, gender, description })),
+        voices.map((v) => ({ id: v.id, gender: voiceGenderOf(v), pitch: v.pitch || null })),
+        [...usedVoices].filter((v) => typeof v === 'string'),
+      );
+      if (res?.error) console.warn('[TTS] AI casting failed, using gender pools:', res.error);
+      for (const [name, voice] of Object.entries(res?.assignments || {})) {
+        if (existing[name] || usedVoices.has(voice)) continue; // the AI reused a voice
+        existing[name] = voice;
+        usedVoices.add(voice);
+        assigned++;
+      }
+      reasons = res?.reasons || {};
+    }
 
     // Build gendered voice pools
-    const femaleVoices = voices.filter(v => classifyVoiceGender(v.id) === 'female');
-    const maleVoices = voices.filter(v => classifyVoiceGender(v.id) === 'male');
-    const unknownVoices = voices.filter(v => classifyVoiceGender(v.id) === 'unknown');
+    const femaleVoices = voices.filter(v => voiceGenderOf(v) === 'female');
+    const maleVoices = voices.filter(v => voiceGenderOf(v) === 'male');
+    const unknownVoices = voices.filter(v => voiceGenderOf(v) === 'unknown');
     const femaleIdx = { val: 0 };
     const maleIdx = { val: 0 };
     const unknownIdx = { val: 0 };
     const allIdx = { val: 0 };
 
-    for (const entry of characters) {
-      const name = entry.displayName || entry.keys?.[0] || '';
-      if (!name || existing[name]) continue;
-
-      const gender = extractGenderFromEntry(entry.text);
+    // Fallback: anyone the AI did not cast gets the next free voice of their gender.
+    for (const { name, gender } of todo) {
+      if (existing[name]) continue;
       let voice = null;
 
       // Try gender-matched pool first, then fall back to other pools
@@ -324,7 +368,8 @@ async function autoAssignFromLore() {
     state.ttsState = ttsState;
     await window.powertool.ttsSetState(state.currentStoryId, ttsState);
     await refreshVoiceMapUI();
-    showToast(`Assigned voices to ${assigned} character${assigned !== 1 ? 's' : ''}`, 3000);
+    const why = Object.entries(reasons).slice(0, 3).map(([n, r]) => `${n}: ${r}`).join('; ');
+    showToast(`Assigned voices to ${assigned} character${assigned !== 1 ? 's' : ''}${why ? ` (${why})` : ''}`, why ? 6000 : 3000);
   } catch (e) {
     console.error('[TTS] Auto-assign error:', e);
     showToast('Auto-assign failed: ' + friendlyApiError(e), 4000, 'error');
@@ -353,7 +398,7 @@ async function narrateScene() {
     } catch { /* lorebook may not be available */ }
 
     ttsProgress.textContent = 'Generating audio...';
-    const segments = await window.powertool.ttsNarrateScene(
+    const { provider, segments } = await window.powertool.ttsPlanScene(
       storyText.slice(-3000),
       state.currentStoryId,
       protagonistName
@@ -364,28 +409,57 @@ async function narrateScene() {
       return;
     }
 
+    if (provider === 'chatterbox') {
+      const st = await window.powertool.chatterboxStatus();
+      if (!st.online) throw new Error(`Chatterbox server is not running (${st.error || 'no answer'})`);
+      if (st.model === 'stopped' || st.model === 'loading') {
+        ttsProgress.textContent = 'Loading the Chatterbox voice model (first use takes up to a minute)...';
+      }
+    }
+
     if (!audioEl) {
       audioEl = document.createElement('audio');
     }
 
+    // Render the next segment while the current one plays. One request in
+    // flight at a time, so providers that reject concurrent calls are safe.
+    const render = async (seg) => {
+      try {
+        return await window.powertool.ttsGenerateSpeech(seg.text, seg.voice, state.currentStoryId);
+      } catch (firstErr) {
+        console.warn('[TTS] Segment retry after error:', firstErr.message);
+        await new Promise((r) => setTimeout(r, 1000));
+        return window.powertool.ttsGenerateSpeech(seg.text, seg.voice, state.currentStoryId);
+      }
+    };
+    let next = render(segments[0]);
+    let failed = 0;
     for (let i = 0; i < segments.length; i++) {
       if (aborted) break;
       const seg = segments[i];
+      let audio = null;
+      try { audio = await next; } catch (e) { failed++; console.error('[TTS] Segment failed:', e); }
+      if (aborted) break;
+      next = i + 1 < segments.length ? render(segments[i + 1]) : null;
+      next?.catch(() => {}); // awaited on the next pass; avoid an unhandled rejection meanwhile
+      if (!audio?.audioData) continue;
       let label;
       if (seg.type === 'narration') label = 'narration';
       else if (seg.isProtagonist) label = 'protagonist';
       else if (seg.speaker) label = `\u201C${seg.speaker}\u201D`;
       else label = 'dialogue (unmatched)';
-      ttsProgress.textContent = `Playing ${i + 1}/${segments.length} \u2014 ${label}`;
-      audioEl.src = seg.audioData;
+      ttsProgress.textContent = `Playing ${i + 1}/${segments.length} - ${label}`;
+      audioEl.src = audio.audioData;
       await new Promise((resolve, reject) => {
         audioEl.onended = resolve;
         audioEl.onerror = reject;
-        audioEl.play();
+        audioEl.play().catch(reject);
       });
     }
+    if (failed === segments.length) throw new Error('every segment failed to generate');
     ttsProgress.textContent = aborted ? 'Stopped' : 'Done';
   } catch (e) {
+    if (aborted) { ttsProgress.textContent = 'Stopped'; return; } // Stop clears src, which fires error
     console.error('[TTS] Error:', e);
     const ttsErrMsg = friendlyApiError(e);
     ttsProgress.textContent = 'Error: ' + ttsErrMsg;

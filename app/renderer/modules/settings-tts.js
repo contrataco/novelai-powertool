@@ -11,6 +11,10 @@ import {
   ttsDialogueStyle, ttsDialogueIntonation, ttsDialogueCadence,
   ttsNarratorCustomSeed, ttsDialogueCustomSeed, ttsAddCharCustomSeed,
   veniceTtsModelSelect, veniceTtsModelGroup,
+  ttsChatterboxGroup, ttsChatterboxUrl, ttsChatterboxVoicesDir,
+  ttsChatterboxExaggeration, ttsChatterboxExaggerationValue,
+  ttsChatterboxStatus, ttsChatterboxCheckBtn, ttsChatterboxWarmBtn,
+  ttsChatterboxGenderList, ttsChatterboxGenderCount,
 } from './dom-refs.js';
 import { state } from './state.js';
 import { refreshVoiceMapUI } from './tts.js';
@@ -18,7 +22,7 @@ import { showToast } from './utils.js';
 
 // Toggle v2 fields visibility based on TTS version and provider
 function updateTtsV2Visibility() {
-  const isNovelai = ttsProviderSelect.value !== 'venice';
+  const isNovelai = ttsProviderSelect.value === 'novelai';
   const ver = ttsVersionSelect.value;
   const showV2 = isNovelai && (ver === 'v2' || ver === 'auto');
   ttsVersionGroup.classList.toggle('u-hidden', !(isNovelai));
@@ -124,7 +128,7 @@ async function loadTtsVoices() {
   ttsNarratorVoiceSelect.innerHTML = '<option disabled selected>Loading voices...</option>';
   ttsDialogueVoiceSelect.innerHTML = '<option disabled selected>Loading voices...</option>';
   try {
-    const opts = {};
+    const opts = { provider: ttsProviderSelect.value };
     if (ttsProviderSelect.value === 'venice' && veniceTtsModelSelect?.value) {
       opts.ttsModel = veniceTtsModelSelect.value;
     }
@@ -132,8 +136,9 @@ async function loadTtsVoices() {
     for (const sel of [ttsNarratorVoiceSelect, ttsDialogueVoiceSelect, ttsAddCharVoice]) {
       if (!sel) continue;
       const addCustom = sel === ttsNarratorVoiceSelect || sel === ttsDialogueVoiceSelect || sel === ttsAddCharVoice;
-      populateVoiceSelect(sel, voices, addCustom);
+      populateVoiceSelect(sel, voices, addCustom && ttsProviderSelect.value === 'novelai');
     }
+    if (ttsProviderSelect.value === 'chatterbox') renderChatterboxGenders(voices);
     return voices;
   } catch (e) {
     console.error('Failed to load TTS voices:', e);
@@ -219,6 +224,104 @@ async function loadVeniceTtsModels(show) {
   }
 }
 
+// --- Chatterbox (local server) ---
+
+let chatterboxGenderOverrides = {};
+
+function showChatterboxGroup() {
+  ttsChatterboxGroup?.classList.toggle('u-hidden', ttsProviderSelect.value !== 'chatterbox');
+}
+
+const MODEL_STATE_TEXT = {
+  stopped: 'model not loaded (loads on first use, about a minute)',
+  loading: 'model loading...',
+  ready: 'model loaded and ready',
+  busy: 'model busy rendering',
+};
+
+async function refreshChatterboxStatus() {
+  if (!ttsChatterboxStatus) return;
+  ttsChatterboxStatus.textContent = 'Checking...';
+  ttsChatterboxStatus.dataset.state = '';
+  const st = await window.powertool.chatterboxStatus();
+  if (!st.online) {
+    ttsChatterboxStatus.textContent = `Offline: ${st.error || 'no answer'}`;
+    ttsChatterboxStatus.dataset.state = 'offline';
+    return st;
+  }
+  ttsChatterboxStatus.textContent = `Online - ${MODEL_STATE_TEXT[st.model] || st.model}`;
+  ttsChatterboxStatus.dataset.state = st.model === 'ready' ? 'ready' : 'online';
+  return st;
+}
+
+// The URL and folder are read by the main process, so store them before asking it anything.
+async function saveChatterboxFields() {
+  await window.powertool.ttsSetSettings({
+    ttsChatterboxUrl: ttsChatterboxUrl.value.trim(),
+    ttsChatterboxVoicesDir: ttsChatterboxVoicesDir.value.trim(),
+    ttsChatterboxExaggeration: parseFloat(ttsChatterboxExaggeration.value),
+    ttsChatterboxVoiceGenders: chatterboxGenderOverrides,
+  });
+}
+
+const SOURCE_TEXT = { name: 'from name', pitch: 'from pitch', override: 'set by you', none: 'not detected' };
+
+function renderChatterboxGenders(voices) {
+  if (!ttsChatterboxGenderList) return;
+  ttsChatterboxGenderList.innerHTML = '';
+  const real = voices.filter((v) => v.id !== 'default');
+  const unknown = real.filter((v) => v.gender === 'unknown').length;
+  if (ttsChatterboxGenderCount) {
+    ttsChatterboxGenderCount.textContent = `(${real.length} voices${unknown ? `, ${unknown} unknown` : ''})`;
+  }
+  for (const v of real) {
+    const row = document.createElement('div');
+    row.className = 'chatterbox-gender-row';
+
+    const name = document.createElement('div');
+    name.className = 'chatterbox-gender-name';
+    name.textContent = v.id;
+    const detail = document.createElement('div');
+    detail.className = 'chatterbox-gender-detail';
+    const hz = v.pitch ? `${v.pitch} Hz` : 'no clip found';
+    detail.textContent = v.genderSource === 'override'
+      ? `${v.gender}, set by you (${hz})`
+      : `${v.gender === 'unknown' ? 'unsure' : v.gender}, ${SOURCE_TEXT[v.genderSource] || ''} (${hz})`;
+
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', `Gender for ${v.id}`);
+    for (const [val, label] of [['', 'Auto'], ['female', 'Female'], ['male', 'Male']]) {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = label;
+      sel.appendChild(opt);
+    }
+    sel.value = chatterboxGenderOverrides[v.id] || '';
+    sel.addEventListener('change', async () => {
+      if (sel.value) chatterboxGenderOverrides[v.id] = sel.value;
+      else delete chatterboxGenderOverrides[v.id];
+      await saveChatterboxFields();
+      await loadTtsVoices();
+    });
+
+    const text = document.createElement('div');
+    text.appendChild(name);
+    text.appendChild(detail);
+    row.appendChild(text);
+    row.appendChild(sel);
+    ttsChatterboxGenderList.appendChild(row);
+  }
+}
+
+async function loadChatterboxFields() {
+  const s = await window.powertool.ttsGetSettings();
+  ttsChatterboxUrl.value = s.ttsChatterboxUrl || '';
+  ttsChatterboxVoicesDir.value = s.ttsChatterboxVoicesDir || '';
+  ttsChatterboxExaggeration.value = s.ttsChatterboxExaggeration ?? 0.5;
+  ttsChatterboxExaggerationValue.textContent = Number(ttsChatterboxExaggeration.value).toFixed(2);
+  chatterboxGenderOverrides = { ...(s.ttsChatterboxVoiceGenders || {}) };
+}
+
 // --- Load TTS settings into the modal ---
 
 export async function loadTtsSettings(storySettings) {
@@ -230,6 +333,9 @@ export async function loadTtsSettings(storySettings) {
     ttsSpeedValue.textContent = ttsSettings.ttsSpeed || 1.0;
     ttsFirstPersonCheckbox.checked = !!ttsSettings.ttsFirstPerson;
     document.getElementById('ttsSpeedGroup').classList.toggle('u-hidden', ttsProviderSelect.value !== 'venice');
+    showChatterboxGroup();
+    try { await loadChatterboxFields(); } catch (e) { console.warn('[Settings] Chatterbox fields:', e.message); }
+    if (ttsProviderSelect.value === 'chatterbox') refreshChatterboxStatus();
     await loadVeniceTtsModels(ttsProviderSelect.value === 'venice');
     // Restore stored TTS model from Venice settings
     if (ttsProviderSelect.value === 'venice' && veniceTtsModelSelect) {
@@ -285,6 +391,7 @@ export async function saveTtsSettings() {
       ttsSpeed: parseFloat(ttsSpeedSlider.value),
       ttsFirstPerson: ttsFirstPersonCheckbox.checked,
     });
+    await saveChatterboxFields();
     // Save Venice TTS model selection
     if (ttsProviderSelect.value === 'venice' && veniceTtsModelSelect?.value) {
       await window.powertool.setVeniceSettings({ ttsModel: veniceTtsModelSelect.value });
@@ -351,9 +458,36 @@ export function initTtsEvents() {
         console.log('[Settings] Could not restore Venice TTS model:', e.message);
       }
     }
+    showChatterboxGroup();
+    if (ttsProviderSelect.value === 'chatterbox') {
+      await saveChatterboxFields();
+      refreshChatterboxStatus();
+    }
     await loadTtsVoices();
     document.getElementById('ttsSpeedGroup').classList.toggle('u-hidden', !isVenice);
     updateTtsV2Visibility();
+  });
+
+  // Chatterbox: status, voice reload, model warm-up
+  ttsChatterboxExaggeration?.addEventListener('input', () => {
+    ttsChatterboxExaggerationValue.textContent = Number(ttsChatterboxExaggeration.value).toFixed(2);
+  });
+  ttsChatterboxCheckBtn?.addEventListener('click', async () => {
+    await saveChatterboxFields();
+    const st = await refreshChatterboxStatus();
+    if (st?.online) await loadTtsVoices();
+  });
+  ttsChatterboxWarmBtn?.addEventListener('click', async () => {
+    ttsChatterboxWarmBtn.disabled = true;
+    ttsChatterboxStatus.textContent = 'Loading model (up to a minute)...';
+    try {
+      await saveChatterboxFields();
+      const r = await window.powertool.chatterboxWarm();
+      if (!r.success) showToast('Chatterbox: ' + r.error, 5000, 'error');
+    } finally {
+      ttsChatterboxWarmBtn.disabled = false;
+      refreshChatterboxStatus();
+    }
   });
 
   // Venice TTS model change — reload voices for the selected model
