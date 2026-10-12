@@ -190,9 +190,15 @@ function matchEntityProfile(entry, entityProfiles) {
 // RULE ENGINE — compute optimized fields for each entry
 // ============================================================================
 
+// A custom @type (e.g. "class", "class tier") is reference material, so it
+// gets concept settings; only untyped entries keep the character fallback.
+function defaultsForCustomType(profile, entryType) {
+  return (entryType !== 'unknown' && profile.categoryDefaults.concept) || profile.categoryDefaults.character;
+}
+
 function computeActivation(entry, metadata, profile, entityProfile) {
   const entryType = getEntryType(entry.text, entry.displayName);
-  const defaults = profile.categoryDefaults[entryType] || profile.categoryDefaults.character;
+  const defaults = profile.categoryDefaults[entryType] || defaultsForCustomType(profile, entryType);
   const rules = profile.rules;
 
   let searchRange = defaults.searchRange;
@@ -241,7 +247,7 @@ function computeActivation(entry, metadata, profile, entityProfile) {
 
 function computeBudget(entry, metadata, profile, entityProfile, isForceActivated) {
   const entryType = getEntryType(entry.text, entry.displayName);
-  const defaults = profile.categoryDefaults[entryType] || profile.categoryDefaults.character;
+  const defaults = profile.categoryDefaults[entryType] || defaultsForCustomType(profile, entryType);
 
   let budgetPriority = defaults.budgetPriority;
   let contextSize = defaults.contextSize;

@@ -529,10 +529,12 @@ async function runProgressiveScan(storyText, existingState, generateTextFn, onPr
   // or every rescan stacks fresh summaries on top of stale ones.
   const currentIndex = new Map(allChunks.map(c => [c.hash, c.index]));
   const before = state.chunks.length;
+  // Blank summaries are failures saved by older versions; drop them too so
+  // those chunks are scanned again.
   state.chunks = state.chunks
-    .filter(c => currentIndex.has(c.hash))
+    .filter(c => currentIndex.has(c.hash) && c.summary)
     .map(c => ({ ...c, index: currentIndex.get(c.hash) }));
-  if (state.chunks.length < before) console.log(`${LOG_PREFIX} Dropped ${before - state.chunks.length} summaries of text no longer in the story`);
+  if (state.chunks.length < before) console.log(`${LOG_PREFIX} Dropped ${before - state.chunks.length} stale or blank chunk summaries; those chunks will be rescanned`);
 
   // Determine which chunks are already processed (by hash match)
   const processedHashes = new Set(state.chunks.map(c => c.hash));

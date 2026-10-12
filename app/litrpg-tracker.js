@@ -6,7 +6,7 @@
  * Data stored as structured JSON in SQLite, synced to lorebook text entries.
  */
 
-const { extractField, getTemplateForType, retryLLM } = require('./lore-creator');
+const { extractField, getTemplateForType, retryLLM, NO_DATA } = require('./lore-creator');
 const { parseMetadata, setMetadata, getEntryType, METADATA_VERSION } = require('./metadata');
 const { FUZZY_MATCH_THRESHOLD, fuzzyNameScore, recoverJSON, isNarratorPlaceholder, NARRATOR_RULE, callLLM } = require('./shared-utils');
 
@@ -750,7 +750,9 @@ Extract ONLY information explicitly stated. Use null for unknown fields. Output 
     const result = await generateTextFn(messages, { max_tokens: 800, temperature: 0.3 });
     const parsed = recoverJSON(result.output);
     const validated = validateCharacterRPG(parsed);
-    if (!validated || validated.confidence < CONFIDENCE_GATE) return null;
+    if (!validated) return null;
+    // A readable "nothing stated" answer is final; asking again wastes calls.
+    if (validated.confidence < CONFIDENCE_GATE) return NO_DATA;
     return validated;
   });
 }
@@ -790,7 +792,8 @@ Extract ONLY explicitly stated information. Output JSON:
   return retryLLM(async () => {
     const result = await generateTextFn(messages, { max_tokens: 500, temperature: 0.3 });
     const parsed = recoverJSON(result.output);
-    if (!parsed || clampConfidence(parsed.confidence) < CONFIDENCE_GATE) return null;
+    if (!parsed) return null;
+    if (clampConfidence(parsed.confidence) < CONFIDENCE_GATE) return NO_DATA;
     // Validate core fields only
     const cleaned = {
       class: typeof parsed.class === 'string' ? parsed.class : null,
@@ -858,7 +861,8 @@ Extract ONLY explicitly stated information. Output JSON:
   return retryLLM(async () => {
     const result = await generateTextFn(messages, { max_tokens: 600, temperature: 0.3 });
     const parsed = recoverJSON(result.output);
-    if (!parsed || clampConfidence(parsed.confidence) < CONFIDENCE_GATE) return null;
+    if (!parsed) return null;
+    if (clampConfidence(parsed.confidence) < CONFIDENCE_GATE) return NO_DATA;
     // Validate gear fields only
     const cleaned = { abilities: [], equipment: [], inventory: [], currency: {}, statusEffects: [], confidence: clampConfidence(parsed.confidence) };
     if (Array.isArray(parsed.abilities)) {
@@ -1856,7 +1860,9 @@ async function r1_extractCharacterRPG(ctx) {
       report.errors.push({ pass: 'R1', category, message, timestamp: Date.now() });
     };
 
-    // Dispatch R1a (core) and R1b (gear) in parallel when hybrid providers available
+    // Dispatch R1a (core) and R1b (gear) in parallel when hybrid providers available.
+    // maxRetries 0: the extract functions already retry unreadable replies;
+    // a second layer here turned one character into up to 6 calls.
     let coreData = null;
     let gearData = null;
     if (providers.length >= 2) {
@@ -1864,11 +1870,11 @@ async function r1_extractCharacterRPG(ctx) {
       const [coreResult, gearResult] = await Promise.all([
         retryLLM(
           () => extractCharacterCore(entry.displayName, entry.text, scanText, providers[0], comprehensionContext, systemType, preExtractedHints),
-          { maxRetries: 2, passName: `R1a-core-${entry.displayName}`, onRetry: onR1Retry }
+          { maxRetries: 0, passName: `R1a-core-${entry.displayName}`, onRetry: onR1Retry }
         ),
         retryLLM(
           () => extractCharacterGear(entry.displayName, entry.text, scanText, providers[1], comprehensionContext, systemType, preExtractedHints),
-          { maxRetries: 2, passName: `R1b-gear-${entry.displayName}`, onRetry: onR1Retry }
+          { maxRetries: 0, passName: `R1b-gear-${entry.displayName}`, onRetry: onR1Retry }
         ),
       ]);
       coreData = coreResult;
@@ -1877,14 +1883,14 @@ async function r1_extractCharacterRPG(ctx) {
       // Sequential: both on single provider
       coreData = await retryLLM(
         () => extractCharacterCore(entry.displayName, entry.text, scanText, providers[0], comprehensionContext, systemType, preExtractedHints),
-        { maxRetries: 2, passName: `R1a-core-${entry.displayName}`, onRetry: onR1Retry }
+        { maxRetries: 0, passName: `R1a-core-${entry.displayName}`, onRetry: onR1Retry }
       );
       if (coreData) {
         await delay(INTER_CALL_DELAY);
       }
       gearData = await retryLLM(
         () => extractCharacterGear(entry.displayName, entry.text, scanText, providers[0], comprehensionContext, systemType, preExtractedHints),
-        { maxRetries: 2, passName: `R1b-gear-${entry.displayName}`, onRetry: onR1Retry }
+        { maxRetries: 0, passName: `R1b-gear-${entry.displayName}`, onRetry: onR1Retry }
       );
     }
 
@@ -2210,7 +2216,8 @@ async function r3_classifyParty(ctx) {
             const loreEntry = loreEntries.find(e => e.displayName === char.loreEntryName);
             if (loreEntry) {
               const entryType = getEntryType(loreEntry.text, loreEntry.displayName);
-              if (['item', 'location', 'faction', 'concept'].includes(entryType)) {
+              // Any @type other than character, built-in or custom ("class"), is not a person.
+              if (entryType !== 'character' && entryType !== 'unknown') {
                 console.log(`${LOG_PREFIX} R3: Removing non-character "${char.name}" (@type: ${entryType}) from tracking`);
                 delete state.characters[id];
                 continue;
@@ -2448,8 +2455,9 @@ async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, 
 
   const characterEntries = loreEntries.filter(e => {
     const entryType = getEntryType(e.text, e.displayName);
-    if (['item', 'location', 'faction', 'concept'].includes(entryType)) return false;
     if (entryType === 'character') return true;
+    // Any other type, built-in or custom @type ("class", "class tier"), is not a character.
+    if (entryType !== 'unknown') return false;
     const text = (e.text || '').toLowerCase();
     return text.includes('name:') || text.includes('appearance') || text.includes('class:');
   });

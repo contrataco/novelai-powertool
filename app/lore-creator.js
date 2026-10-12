@@ -2330,7 +2330,7 @@ Output JSON: {"groups": [{"name": "Category Name", "color": "#hex", "isNovel": t
   ];
 
   try {
-    const result = await callLLM(generateTextFn, messages, { maxTokens: 2000, label: 'pass7-semantic-grouping' });
+    const result = await callLLM(generateTextFn, messages, { maxTokens: 2000, label: 'pass7-semantic-grouping', timeout: 240000 });
     const parsed = recoverJSON(result.raw);
 
     if (parsed?.groups && Array.isArray(parsed.groups)) {
@@ -2738,11 +2738,16 @@ function categorizeError(err) {
   return 'other';
 }
 
+// Return this from a retryLLM callback when the AI answered clearly but had
+// nothing to report: retryLLM then returns null at once instead of retrying.
+const NO_DATA = Symbol('no-data');
+
 async function retryLLM(fn, { maxRetries = 1, passName = 'unknown', logPrefix = LOG_PREFIX, onRetry } = {}) {
   let lastError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const result = await fn();
+      if (result === NO_DATA) return null;
       if (result !== null && result !== undefined) return result;
       console.log(`${logPrefix} retryLLM(${passName}): null result on attempt ${attempt + 1}`);
       if (onRetry && attempt < maxRetries) onRetry(attempt + 1, 'null-result', `null result on attempt ${attempt + 1}`);
@@ -2821,6 +2826,7 @@ module.exports = {
 
   // LLM retry
   retryLLM,
+  NO_DATA,
   categorizeError,
   createHybridProviders,
 

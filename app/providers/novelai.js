@@ -458,8 +458,11 @@ module.exports = {
     const maxTokens = options.max_tokens || 300;
     const temperature = options.temperature || 0.6;
 
+    // The whole streamed reply must arrive in this time, so it grows with the
+    // length asked for: a fixed 60s cut off long replies (2000 tokens) mid-stream.
+    const limitMs = Math.max(60000, 30000 + maxTokens * 60);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), limitMs);
 
     let response;
     try {
@@ -480,7 +483,7 @@ module.exports = {
       });
     } catch (err) {
       clearTimeout(timeout);
-      if (err.name === 'AbortError') throw new Error('NovelAI text API timed out after 60s');
+      if (err.name === 'AbortError') throw new Error(`NovelAI text API timed out after ${Math.round(limitMs / 1000)}s`);
       throw err;
     }
 
@@ -491,8 +494,15 @@ module.exports = {
     }
 
     // Read SSE stream and accumulate text from delta.content
-    const rawText = await response.text();
-    clearTimeout(timeout);
+    let rawText;
+    try {
+      rawText = await response.text();
+    } catch (err) {
+      if (err.name === 'AbortError') throw new Error(`NovelAI text API reply did not finish in ${Math.round(limitMs / 1000)}s`);
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
     let fullText = '';
     const lines = rawText.split('\n');
     for (const line of lines) {

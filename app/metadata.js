@@ -118,12 +118,18 @@ function hasMetadata(text) {
 /**
  * Get entry type from metadata header (authoritative), falling back to heuristic.
  */
+/**
+ * The @type the user wrote, lowercased, or null. Any value counts, not just
+ * the built-in five: custom categories ("class", "class tier") are real types
+ * and must not be re-guessed from the entry's wording.
+ */
+function declaredType(text) {
+  const t = (parseMetadata(text).type || '').trim().toLowerCase();
+  return t && t !== 'unknown' ? t : null;
+}
+
 function getEntryType(text, displayName) {
-  const meta = parseMetadata(text);
-  if (meta.type && VALID_ENTRY_TYPES.includes(meta.type)) {
-    return meta.type;
-  }
-  return classifyEntryType(text, displayName);
+  return declaredType(text) || classifyEntryType(text, displayName);
 }
 
 // --- Internal character-detection helpers (used only by classifyEntryType) ---
@@ -173,11 +179,9 @@ function _isCharacterEntryFormatted(text) {
 function classifyEntryType(text, displayName) {
   if (!text || text.length < 10) return 'unknown';
 
-  // Check metadata header first (authoritative)
-  const meta = parseMetadata(text);
-  if (meta.type && VALID_ENTRY_TYPES.includes(meta.type)) {
-    return meta.type;
-  }
+  // Check metadata header first (authoritative, custom types included)
+  const declared = declaredType(text);
+  if (declared) return declared;
 
   const scores = { character: 0, location: 0, item: 0, faction: 0, concept: 0 };
 
