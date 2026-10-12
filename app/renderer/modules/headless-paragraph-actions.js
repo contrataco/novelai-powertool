@@ -7,7 +7,7 @@
 // Everything lives in an overlay on #editorContainer, never inside the
 // contenteditable, so editor re-renders and the text model are untouched.
 
-import { state } from './state.js';
+import { state, bus } from './state.js';
 import * as refs from './dom-refs.js';
 import { showToast } from './utils.js';
 import { editorText, linearize, naiLineClass } from './diff.js';
@@ -88,6 +88,7 @@ function buildCard() {
     <textarea class="para-text" aria-label="Paragraph text" spellcheck="true"></textarea>
     <div class="para-card-foot">
       <span class="para-status" aria-live="polite"></span>
+      <button type="button" class="para-narrate" title="Read the text in this card aloud">&#9654; Narrate</button>
       <button type="button" class="para-revert">Undo changes</button>
       <button type="button" class="para-save">&#10003; Save</button>
       <button type="button" class="para-cancel">&#10005; Cancel</button>
@@ -106,6 +107,8 @@ function buildCard() {
     card.querySelector('.para-text').value = edit.original;
     autoGrow(); updateButtons(); setStatus('');
   });
+  // Hear the card's text (the original, or the AI's version before you Save).
+  card.querySelector('.para-narrate').addEventListener('click', () => narrate(card.querySelector('.para-text').value));
   card.querySelector('.para-save').addEventListener('click', saveEdit);
   card.querySelector('.para-cancel').addEventListener('click', closeCard);
   card.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeCard(); } });
@@ -303,13 +306,43 @@ export function init({ syncToWebview }) {
   editor.addEventListener('input', () => placeStar());
   window.addEventListener('resize', () => { placeStar(); placeCard(); });
 
-  // Keyboard: Ctrl+Shift+E opens the card for the caret's paragraph.
+  // Keyboard: Ctrl+Shift+E opens the card for the caret's paragraph;
+  // Ctrl+Shift+N reads the selection (or the caret's paragraph) aloud.
   editor.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'e') {
       const p = caretParagraph();
       if (p && p.textContent.trim()) { e.preventDefault(); openCard(p); }
+    } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
+      e.preventDefault();
+      narrateSelectionOrParagraph();
     }
   });
+  document.addEventListener('selectionchange', () => {
+    const sel = window.getSelection();
+    if (sel.rangeCount && editor.contains(sel.anchorNode)) lastEditorRange = sel.getRangeAt(0).cloneRange();
+  });
+}
+
+// --- Narrate: read the selection, or the caret's paragraph, aloud ---
+
+let lastEditorRange = null;  // the palette input steals the selection; remember the editor's
+
+function narrate(text) {
+  if (!text || !text.trim()) { showToast('Select some text or put the cursor in a paragraph first', 3000, 'warn'); return; }
+  bus.emit('tts:narrate-text', { text, label: 'Narrating' });
+}
+
+export function narrateSelectionOrParagraph() {
+  const sel = window.getSelection();
+  let range = sel.rangeCount && refs.storyEditor.contains(sel.anchorNode) ? sel.getRangeAt(0) : lastEditorRange;
+  if (range && !refs.storyEditor.contains(range.startContainer)) range = null;
+  if (range && !range.collapsed) { narrate(range.toString()); return; }
+  let p = null;
+  if (range) {
+    p = range.startContainer;
+    while (p && p.parentNode !== refs.storyEditor) p = p.parentNode;
+  }
+  narrate(p && p.tagName === 'P' ? textOfParagraph(p) : '');
 }
 
 // For the command palette / tests

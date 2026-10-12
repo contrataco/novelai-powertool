@@ -7,7 +7,7 @@ import {
 } from './dom-refs.js';
 import { state, bus } from './state.js';
 import { readStoryTextFromDOM } from './webview-polling.js';
-import { showToast, friendlyApiError } from './utils.js';
+import { showToast, dismissToast, friendlyApiError } from './utils.js';
 import { loreCall } from './lore-creator.js';
 import { parseMetadataClient } from './metadata.js';
 
@@ -421,7 +421,8 @@ async function narrateScene(textOverride) {
 
   try {
     const storyText = typeof textOverride === 'string' ? textOverride : narrationTail((await readStoryTextFromDOM()) || '');
-    if (!storyText || storyText.trim().length < 20) {
+    // A chosen passage may be one short line; the story tail needs some length.
+    if (!storyText || storyText.trim().length < (typeof textOverride === 'string' ? 2 : 20)) {
       showToast('Not enough text to narrate', 3000, 'warn');
       return;
     }
@@ -550,9 +551,11 @@ export function init() {
   ttsNarrateBtn.addEventListener('click', () => narrateScene());
   // Other panels (scene timeline) narrate their own text through this player,
   // so it streams line by line and the Stop button works. Resolves when done.
-  bus.on('tts:narrate-text', ({ text, done } = {}) => {
+  // The TTS panel may be closed, so a toast carries the Stop control.
+  bus.on('tts:narrate-text', ({ text, done, label } = {}) => {
     if (isNarrating) { showToast('Narration is already playing - press Stop first', 3000, 'warn'); done?.(false); return; }
-    narrateScene(text).finally(() => done?.(true));
+    const toast = showToast(`${label || 'Narrating'}... (Esc stops)`, 0, '', { persistent: true, onCancel: stopNarration });
+    narrateScene(text).finally(() => { dismissToast(toast); done?.(true); });
   });
   ttsStopBtn.addEventListener('click', stopNarration);
   if (ttsAutoAssignBtn) {

@@ -186,6 +186,7 @@ export const selAiExpandBtn = document.getElementById('selAiExpandBtn');
 export const selAiShortenBtn = document.getElementById('selAiShortenBtn');
 export const selAiSummarizeBtn = document.getElementById('selAiSummarizeBtn');
 export const selFlattenBtn = document.getElementById('selFlattenBtn');
+export const selNarrateBtn = document.getElementById('selNarrateBtn');
 export const selCopyBtn = document.getElementById('selCopyBtn');
 
 // Command Palette

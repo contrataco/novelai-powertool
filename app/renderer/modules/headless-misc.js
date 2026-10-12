@@ -7,6 +7,7 @@ import { showToast } from './utils.js';
 import { togglePanel, setupPanelToggle } from './headless-panels.js';
 import { getCurrentEntries, selectLoreEntry } from './headless-lore-panel.js';
 import { editorText, setEditorText } from './diff.js';
+import { narrateSelectionOrParagraph } from './headless-paragraph-actions.js';
 
 const { webview, storyEditor } = refs;
 
@@ -97,6 +98,7 @@ function initSelectionToolbar() {
   if (refs.selAiExpandBtn) refs.selAiExpandBtn.addEventListener('click', () => { _deps.triggerAiAction?.('expand'); hideToolbar(); });
   if (refs.selAiShortenBtn) refs.selAiShortenBtn.addEventListener('click', () => { _deps.triggerAiAction?.('shorten'); hideToolbar(); });
   if (refs.selAiSummarizeBtn) refs.selAiSummarizeBtn.addEventListener('click', () => { _deps.triggerAiAction?.('summarize'); hideToolbar(); });
+  if (refs.selNarrateBtn) refs.selNarrateBtn.addEventListener('click', () => { narrateSelectionOrParagraph(); hideToolbar(); });
   if (refs.selFlattenBtn) refs.selFlattenBtn.addEventListener('click', () => { _deps.flattenEditorText?.(); hideToolbar(); });
   if (refs.selCopyBtn) {
     refs.selCopyBtn.addEventListener('click', () => {

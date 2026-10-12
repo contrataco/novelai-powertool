@@ -7,6 +7,7 @@ import { togglePanel } from './headless-panels.js';
 import { showToast, escapeHtml } from './utils.js';
 import { loadSymbols, openSymbolPicker, insertSymbol } from './headless-symbols.js';
 import { editorText } from './diff.js';
+import { narrateSelectionOrParagraph } from './headless-paragraph-actions.js';
 
 const { storyEditor } = refs;
 
@@ -25,6 +26,7 @@ const COMMANDS = [
   { id: 'focus', name: 'Focus Mode', description: 'Toggle distraction-free writing', shortcut: 'Ctrl+Shift+F' },
   { id: 'typewriter', name: 'Typewriter Mode', description: 'Keep cursor centered vertically', shortcut: '' },
   { id: 'search', name: 'Search', description: 'Open search and replace', shortcut: 'Ctrl+F' },
+  { id: 'narrate', name: 'Narrate Selection', description: 'Read the selection, or the paragraph with the cursor, aloud', shortcut: 'Ctrl+Shift+N' },
   { id: 'flatten', name: 'Flatten Text', description: 'Remove all styling from editor', shortcut: '' },
   { id: 'lock', name: 'Lock/Unlock Editor', description: 'Toggle read-only mode', shortcut: '' },
   { id: 'stats', name: 'Show Stats', description: 'Show detailed story statistics', shortcut: '' },
@@ -60,8 +62,14 @@ async function addSymbolCommands() {
 
 let selectedCommandIndex = 0;
 
+// The editor's selection when the palette opened. focus() alone puts the caret
+// at the start of the story, so commands that act on the selection lost it.
+let savedRange = null;
+
 export function showCommandPalette() {
   if (!refs.editorCommandPalette) return;
+  const sel = window.getSelection();
+  savedRange = sel.rangeCount && storyEditor?.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
   refs.editorCommandPalette.classList.add('is-open');
   if (refs.editorCommandInput) refs.editorCommandInput.value = '';
   selectedCommandIndex = 0;
@@ -72,7 +80,14 @@ export function showCommandPalette() {
 export function hideCommandPalette() {
   if (!refs.editorCommandPalette) return;
   refs.editorCommandPalette.classList.remove('is-open');
-  if (storyEditor) storyEditor.focus();
+  if (!storyEditor) return;
+  storyEditor.focus();
+  if (savedRange && storyEditor.contains(savedRange.startContainer)) {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+  }
+  savedRange = null;
 }
 
 function renderCommandList() {
@@ -188,6 +203,7 @@ async function executeSelectedCommand() {
       case 'focus': if (d.toggleFocusMode) d.toggleFocusMode(); break;
       case 'typewriter': if (d.toggleTypewriterMode) d.toggleTypewriterMode(); break;
       case 'search': if (d.toggleSearchBar) d.toggleSearchBar(); break;
+      case 'narrate': narrateSelectionOrParagraph(); break;
       case 'flatten': if (d.flattenEditorText) d.flattenEditorText(); break;
       case 'lock': if (d.toggleReadOnlyMode) d.toggleReadOnlyMode(); break;
       case 'stats': if (d.showStoryStats) d.showStoryStats(); break;
