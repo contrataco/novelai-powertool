@@ -10,7 +10,7 @@
 import { state } from './state.js';
 import * as refs from './dom-refs.js';
 import { showToast } from './utils.js';
-import { editorText, linearize } from './diff.js';
+import { editorText, linearize, naiLineClass } from './diff.js';
 
 const ACTIONS = [
   { id: 'transform', label: 'Transform', hint: 'Optional: how to change it (e.g. "make her angrier")' },
@@ -50,7 +50,9 @@ function editable() {
 function placeStar() {
   if (!star) return;
   const p = hoverP && hoverP.isConnected ? hoverP : caretParagraph();
-  if (!p || !editable() || !p.textContent.trim() || card?.classList.contains('is-open')) {
+  // Not on NovelAI notation lines (## comments, [ headers ], *** breaks): nothing to rewrite.
+  const isNotation = p && (naiLineClass(p.textContent) || /^\s*(\*\*\*|⁂)\s*$/.test(p.textContent));
+  if (!p || !editable() || !p.textContent.trim() || isNotation || card?.classList.contains('is-open')) {
     star.classList.add('u-hidden');
     starP = null;
     return;

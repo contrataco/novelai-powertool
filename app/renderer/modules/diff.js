@@ -259,6 +259,18 @@ export function shiftRuns(runs, pos, removed, added) {
  * segments at every run and keyword boundary, and each segment is wrapped in
  * its own tags, so overlapping marks can never produce mis-nested HTML.
  */
+/**
+ * NovelAI notation lines get a class so the editor can show them apart from
+ * prose: "##" comments (hidden from the AI), "[ ... ]" / "{ ... }" header and
+ * instruction lines, "----" info-block rulers.
+ */
+export function naiLineClass(line) {
+  if (/^\s*##/.test(line)) return 'nai-comment';
+  if (/^\s*(\[ .* \]|\{ .* \})\s*$/.test(line)) return 'nai-meta';
+  if (/^\s*-{4,}\s*$/.test(line)) return 'nai-info';
+  return '';
+}
+
 export function buildRichHtml(text, runs, keywords) {
   if (!text) return '';
   const lowerText = text.toLowerCase();
@@ -286,7 +298,11 @@ export function buildRichHtml(text, runs, keywords) {
     const start = offset;
     const end = start + line.length;
     offset = end + 1;
-    const cls = i === lines.length - 1 ? ' class="last-paragraph"' : '';
+    const classes = [];
+    if (i === lines.length - 1) classes.push('last-paragraph');
+    const nai = naiLineClass(line);
+    if (nai) classes.push(nai);
+    const cls = classes.length ? ` class="${classes.join(' ')}"` : '';
     if (!line) return `<p${cls}><br></p>`;
 
     const localRuns = (runs || []).filter((r) => r.e > start && r.s < end);

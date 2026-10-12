@@ -27,6 +27,7 @@ const anthropicTextProvider = require('./providers/anthropic-text');
 const perchanceTextProvider = require('./providers/perchance-text');
 const storyboard = require('./storyboard');
 const loreCreator = require('./lore-creator');
+const naiSymbols = require('./nai-symbols');
 const scenePromptPipeline = require('./scene-prompt-pipeline');
 const loreComprehension = require('./lore-comprehension');
 const memoryManager = require('./memory-manager');
@@ -1247,6 +1248,9 @@ function speakWith(provider, text, voice) {
  * (narrator, a mapped character voice, or the generic dialogue voice).
  */
 async function planNarration(text, storyId, protagonistName) {
+  // Don't read "##" comments, "***" breaks or "[ ... ]" headers aloud; speak
+  // *sfx* as words and <telepathy> as dialogue.
+  text = naiSymbols.forNarration(text);
   const ss = storyId ? db.getStorySettings(storyId) : null;
   const provider = ss?.ttsProvider || store.get('ttsProvider');
   const narratorVoice = ss?.ttsNarratorVoice || store.get('ttsNarratorVoice');
@@ -1287,6 +1291,9 @@ async function planNarration(text, storyId, protagonistName) {
 }
 
 // Segments with voices but no audio, so the renderer can render one while playing another.
+// NovelAI special symbols catalog for the editor's Insert Symbol picker.
+ipcMain.handle('nai-symbols:list', () => naiSymbols.SYMBOLS);
+
 ipcMain.handle('tts:plan-scene', async (_, { text, storyId, protagonistName }) => {
   if (!text) return { provider: null, segments: [] };
   return planNarration(text, storyId, protagonistName);
@@ -1602,8 +1609,10 @@ ipcMain.handle('text-action', async (event, { type, text, storyId }) => {
       summarize: `Summarise the following passage in 2-3 concise sentences:\n\n${text}`,
       'summarise-memory': `You are helping a writer maintain a story memory file. Summarise the following recent story text as a concise narrative memory (3-5 sentences, past tense, factual):\n\n${text}`,
     };
-    const prompt = prompts[type];
+    let prompt = prompts[type];
     if (!prompt) throw new Error(`Unknown text-action type: ${type}`);
+    // Story-writing actions keep (and may use) NovelAI notation.
+    if (['rewrite', 'expand', 'shorten'].includes(type)) prompt += `\n\n${naiSymbols.WRITING_GUIDE}`;
     const result = await generateFn(
       [{ role: 'user', content: prompt }],
       { max_tokens: 800, temperature: 0.7, label: `text-action:${type}` }
@@ -1646,7 +1655,8 @@ ipcMain.handle('text-action:paragraph', async (_event, { action, instruction, te
     if (action === 'custom' && !ask) throw new Error('Write an instruction for a custom change');
     const system = 'You are a skilled fiction editor revising one passage of a story. ' +
       'Keep the story\'s tense, point of view, names and voice unless the instruction says otherwise. ' +
-      'Reply with ONLY the revised passage: no preface, no notes, no quotation marks around it, no markdown.';
+      'Reply with ONLY the revised passage: no preface, no notes, no quotation marks around it, no markdown. ' +
+      naiSymbols.WRITING_GUIDE;
     const parts = [];
     if (before) parts.push(`STORY BEFORE THE PASSAGE (context only, do not repeat):\n${before}`);
     if (after) parts.push(`STORY AFTER THE PASSAGE (context only, do not repeat):\n${after}`);
@@ -1753,7 +1763,9 @@ ${narrativeBlock}
 Output ONLY valid JSON in this exact format:
 {"suggestions":[{"type":"action","text":"suggestion 1"},{"type":"dialogue","text":"suggestion 2"},{"type":"narrative","text":"suggestion 3"}]}
 
-Types: "action" for physical actions, "dialogue" for speech, "narrative" for description/thought, "mixed" for combinations.`
+Types: "action" for physical actions, "dialogue" for speech, "narrative" for description/thought, "mixed" for combinations.
+
+${naiSymbols.WRITING_GUIDE}`
       },
       {
         role: 'user',
@@ -1762,7 +1774,7 @@ Types: "action" for physical actions, "dialogue" for speech, "narrative" for des
     ];
 
     console.log('[Main] Generating suggestions via direct API call...');
-    const response = await provider.generateText(messages, {
+    const response = await provider.generateText(naiSymbols.prepareMessages(messages), {
       model: store.get('novelaiTextModel') || 'glm-4-6',
       max_tokens: 300,
       temperature: sceneSettings.suggestionTemperature,
@@ -2013,7 +2025,7 @@ ${style
 
     // 5. Call NovelAI text model
     console.log('[Main] Generating scene prompt via direct API call...');
-    const response = await provider.generateText(messages, {
+    const response = await provider.generateText(naiSymbols.prepareMessages(messages), {
       model: store.get('novelaiTextModel') || 'glm-4-6',
       max_tokens: 400,
       temperature: sceneSettings.promptTemperature,
@@ -2267,7 +2279,10 @@ const LLM_FACTORY = {
 
 function makeGenerateTextFn(providerName, opts) {
   const factory = LLM_FACTORY[providerName] || LLM_FACTORY.novelai;
-  return factory(opts);
+  const fn = factory(opts);
+  // Every scan/prompt call: hide "##" comment lines and, when the text uses
+  // NovelAI notation (***, [ ... ], *sfx*, <telepathy>...), explain it.
+  return (messages, options) => fn(naiSymbols.prepareMessages(messages), options);
 }
 
 /** opts.overflow:false for calls the user is waiting on (see makeNovelaiGenerateTextFn). */
@@ -2297,13 +2312,13 @@ async function pickSecondaryGenerateTextFn(label) {
   if (primaryProvider === 'novelai') {
     if (await isOllamaAvailable()) {
       console.log(`[Main] ${label}: hybrid mode (NovelAI + Ollama)`);
-      return makeOllamaGenerateTextFn();
+      return makeGenerateTextFn('ollama');
     }
     return null;
   }
   if (primaryProvider === 'ollama') {
     console.log(`[Main] ${label}: hybrid mode (Ollama + NovelAI)`);
-    return makeNovelaiGenerateTextFn();
+    return makeGenerateTextFn('novelai');
   }
   return null;
 }

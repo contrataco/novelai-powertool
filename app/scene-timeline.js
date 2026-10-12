@@ -2,8 +2,13 @@
 
 const { generateId, recoverJSON, fuzzyNameScore, callLLM, isNarratorPlaceholder, NARRATOR_RULE } = require('./shared-utils');
 
-const EXPLICIT_BREAK_REGEX = /\n\s*(\*\s*\*\s*\*|\*{3,}|-{3,}|={3,}|~{3,})\s*\n/g;
-const CHAPTER_HEADER_REGEX = /\n\s*(?:[—–-]+\s*)?(Chapter\s+(?:\d+|[IVXLC]+)|CHAPTER\s+(?:\d+|[IVXLC]+)|Part\s+(?:\d+|[IVXLC]+)|Act\s+(?:\d+|[IVXLC]+)|Scene\s+\d+|Prologue|Epilogue|Interlude|Intermission)[^\n]*/gi;
+// NovelAI: *** (dinkus) = scene break, \u2042 (asterism) = new story. Exactly ---
+// is a break; ---- (4+) opens a NovelAI info block, which is not.
+const EXPLICIT_BREAK_REGEX = /\n\s*(\*\s*\*\s*\*|\*{3,}|-{3}(?!-)|={3,}|~{3,}|\u2042)\s*\n/g;
+const CHAPTER_HEADER_REGEX = /\n\s*(?:[\u2014\u2013-]+\s*)?(?:\[\s*)?(Chapter\s+(?:\d+|[IVXLC]+)|CHAPTER\s+(?:\d+|[IVXLC]+)|Part\s+(?:\d+|[IVXLC]+)|Act\s+(?:\d+|[IVXLC]+)|Scene\s+\d+|Prologue|Epilogue|Interlude|Intermission|Introduction)[^\n\]]*/gi;
+// NovelAI scene-change notes in spaced brackets: "[ Five Minutes Later ]", "[ The Docks ]".
+// Metadata brackets (ATTG, Style, Knowledge, S: rating) are not scene changes.
+const BRACKET_NOTE_REGEX = /\n[ \t]*\[ (?!(?:Author|Title|Tags|Genre|Style|Knowledge|S)\s*:)([^\[\]\n]{2,80}) \][ \t]*(?=\n|$)/gi;
 const TIME_SKIP_REGEX = /(?:^|\n\n)\s*((?:The next|That|Three|Two|Several|A few|Many|Some|One|An?)\s+(?:morning|evening|night|day|days|weeks|months|hours|years?|moment|minute|minutes|second|seconds|hour|week|month)\s+(?:later|passed|went by|after|before|ago)|(?:Hours|Days|Weeks|Months|Years|Minutes|Moments)\s+(?:later|passed|went by|after|elapsed)|When\s+(?:they|she|he|we|I|it|the)\s+(?:arrived|returned|woke|came|got|left|reached|entered|stepped|walked)|(?:Later|Afterward|Eventually|Finally|At\s+(?:last|length)|Meanwhile|Elsewhere)(?:,|\.))/gi;
 const TRIPLE_NEWLINE_REGEX = /\n\s*\n\s*\n\s*\n/g;
 
@@ -57,6 +62,12 @@ function detectBoundariesHeuristic(storyText) {
       source: 'heuristic',
       chapterTitle: match[1].trim(),
     });
+  }
+
+  // NovelAI bracket notes: chapter-like ones are caught above; others are scene changes
+  BRACKET_NOTE_REGEX.lastIndex = 0;
+  while ((match = BRACKET_NOTE_REGEX.exec(storyText)) !== null) {
+    boundaries.push({ offset: match.index, type: 'time-skip', confidence: 0.85, source: 'heuristic', note: match[1].trim() });
   }
 
   // Time-skip phrases

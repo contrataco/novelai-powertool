@@ -6550,3 +6550,64 @@
 .para-status.ok { color: #9be7a6; }
 .para-status.warn { color: #ffd479; }
 .para-status.error { color: #ff9aa8; }
+
+/* --- NovelAI notation lines in the headless editor (diff.js naiLineClass) --- */
+.story-editor p.nai-comment {
+  color: #9fb4d8;
+  font-style: italic;
+  border-left: 3px solid #5f7bb0;
+  padding-left: 10px;
+}
+.story-editor p.nai-comment::after {
+  content: "  hidden from AI";
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  font-style: normal;
+  color: #c9d6f0;
+}
+.story-editor p.nai-meta {
+  color: #ffd98a;
+  font-family: system-ui, sans-serif;
+  border-left: 3px solid #d4a531;
+  padding-left: 10px;
+}
+.story-editor p.nai-info { color: #b8e0c4; letter-spacing: 2px; }
+
+/* --- Insert NovelAI symbol picker --- */
+.nai-symbol-picker {
+  position: fixed;
+  z-index: 10050;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: #11152b;
+  border: 2px solid #8fa8ff;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+}
+.nai-symbol-picker-head { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid #34407a; }
+.nai-symbol-picker-head input {
+  flex: 1; min-width: 0; min-height: 38px; padding: 6px 10px;
+  border: 1px solid #6b7bbf; border-radius: 6px; background: #0a0d1f; color: #fff; font-size: 16px;
+}
+.nai-symbol-picker-head input::placeholder { color: #b8c0e0; }
+.nai-symbol-picker-head button, .nai-symbol-item {
+  min-height: 38px; border: 1px solid #6b7bbf; border-radius: 6px; background: #1d2346; color: #fff; font-size: 16px; cursor: pointer;
+}
+.nai-symbol-picker-head button { padding: 6px 12px; font-weight: 600; }
+.nai-symbol-list { overflow-y: auto; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.nai-symbol-item { display: block; width: 100%; text-align: left; padding: 8px 12px; }
+.nai-symbol-item:hover, .nai-symbol-item:focus-visible, .nai-symbol-picker-head button:hover, .nai-symbol-picker-head button:focus-visible {
+  background: #2f3a72; outline: 2px solid #fff; outline-offset: 1px;
+}
+.nai-symbol-name { font-weight: 700; }
+.nai-symbol-syntax {
+  display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 4px; background: #0a0d1f; color: #ffd98a;
+  font-family: Consolas, monospace; white-space: pre;
+}
+.nai-symbol-use { margin-top: 4px; color: #dfe4ff; font-size: 15px; line-height: 1.4; }
+.nai-symbol-meta { margin-top: 2px; color: #b8c0e0; font-size: 14px; }

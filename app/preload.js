@@ -135,6 +135,7 @@ contextBridge.exposeInMainWorld('powertool', {
   textAction: (type, text, storyId) => ipcRenderer.invoke('text-action', { type, text, storyId }),
   paragraphAction: (opts) => ipcRenderer.invoke('text-action:paragraph', opts),
   novelaiStoryGenerating: (on) => ipcRenderer.invoke('novelai:story-generating', on),
+  naiSymbolsList: () => ipcRenderer.invoke('nai-symbols:list'),
 
   // Prompt History
   promptHistorySave:           (storyId, entry) => ipcRenderer.invoke('prompt-history:save', { storyId, entry }),

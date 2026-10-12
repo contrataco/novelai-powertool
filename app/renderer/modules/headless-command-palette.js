@@ -4,7 +4,8 @@ import { state, bus } from './state.js';
 import * as refs from './dom-refs.js';
 import { getCurrentEntries, selectLoreEntry } from './headless-lore-panel.js';
 import { togglePanel } from './headless-panels.js';
-import { showToast } from './utils.js';
+import { showToast, escapeHtml } from './utils.js';
+import { loadSymbols, openSymbolPicker, insertSymbol } from './headless-symbols.js';
 import { editorText } from './diff.js';
 
 const { storyEditor } = refs;
@@ -44,7 +45,18 @@ const COMMANDS = [
   { id: 'expand-selection', name: 'Expand', description: 'Expand the story from the current point', shortcut: '' },
   { id: 'shorten-selection', name: 'Shorten Selection', description: 'Shorten the selected text', shortcut: '' },
   { id: 'summarize-selection', name: 'Summarize Selection', description: 'Summarize the selected text', shortcut: '' },
+  // NovelAI special symbols (per-symbol "Insert:" entries are added from the catalog in init)
+  { id: 'nai-symbols', name: 'NovelAI Symbols...', description: 'Browse and insert ***, [ Style: ], *sfx*, <telepathy> and more', shortcut: '' },
 ];
+
+async function addSymbolCommands() {
+  const list = await loadSymbols();
+  for (const s of list) {
+    const id = `nai-insert:${s.id}`;
+    if (COMMANDS.some((c) => c.id === id)) continue;
+    COMMANDS.push({ id, name: `Insert: ${s.name}`, description: `${s.syntax.replace(/\n/g, ' ')} - ${s.use}`, shortcut: '' });
+  }
+}
 
 let selectedCommandIndex = 0;
 
@@ -99,8 +111,8 @@ function renderCommandList() {
   refs.editorCommandList.innerHTML = allItems.map((c, i) => `
     <div class="command-item ${i === selectedCommandIndex ? 'selected' : ''} type-${c.type}" data-id="${c.id}">
       <div class="command-info">
-        <div class="command-name">${c.name}</div>
-        <div class="command-description">${c.description}</div>
+        <div class="command-name">${escapeHtml(c.name)}</div>
+        <div class="command-description">${escapeHtml(c.description)}</div>
       </div>
       ${c.shortcut ? `<div class="command-shortcut">${c.shortcut}</div>` : ''}
       ${c.type !== 'command' ? `<div class="command-type-badge">${c.type}</div>` : ''}
@@ -181,6 +193,7 @@ async function executeSelectedCommand() {
       case 'stats': if (d.showStoryStats) d.showStoryStats(); break;
       case 'help': if (d.showHelpDialog) d.showHelpDialog(); break;
       case 'context': togglePanel(refs.headlessContextPanel); break;
+      case 'nai-symbols': openSymbolPicker(); break;
       case 'insert-image':
         showToast('Click an image in the gallery to insert it here', 3000);
         break;
@@ -211,6 +224,10 @@ async function executeSelectedCommand() {
       case 'expand-selection': if (d.triggerAiAction) d.triggerAiAction('expand'); break;
       case 'shorten-selection': if (d.triggerAiAction) d.triggerAiAction('shorten'); break;
       case 'summarize-selection': if (d.triggerAiAction) d.triggerAiAction('summarize'); break;
+      default:
+        if (item.id.startsWith('nai-insert:')) {
+          if (await insertSymbol(item.id.slice('nai-insert:'.length)) && d.syncToWebview) d.syncToWebview();
+        }
     }
   } else if (item.type === 'story') {
     bus.emit('headless:select-story', { storyId: item.storyId, title: item.name });
@@ -223,6 +240,7 @@ async function executeSelectedCommand() {
 
 export function init(deps) {
   _deps = deps;
+  addSymbolCommands();
 
   if (refs.editorCommandInput) {
     refs.editorCommandInput.addEventListener('input', () => renderCommandList());

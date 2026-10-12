@@ -21,6 +21,7 @@ import * as theme from './headless-theme.js';
 import * as preamble from './headless-preamble.js';
 import * as contextMenu from './context-menu.js';
 import * as paragraphActions from './headless-paragraph-actions.js';
+import * as symbols from './headless-symbols.js';
 
 // Re-export sync functions for use by webview-polling.js and other modules
 export const syncFromWebview = editor.syncFromWebview;
@@ -68,6 +69,7 @@ export function init() {
   theme.init();
   preamble.init();
   paragraphActions.init({ syncToWebview: editor.syncToWebview });
+  symbols.init({ syncToWebview: editor.syncToWebview });
 
   // Context menu
   contextMenu.init({
@@ -76,7 +78,8 @@ export function init() {
     redo: generation.triggerRedo,
     rewrite: () => generation.triggerAiAction('rewrite'),
     expand: () => generation.triggerAiAction('expand'),
-    summarize: () => generation.triggerAiAction('summarize')
+    summarize: () => generation.triggerAiAction('summarize'),
+    symbols: (x, y) => symbols.openSymbolPicker(x, y),
   });
 
   // Dashboard state changes

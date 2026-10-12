@@ -3,6 +3,7 @@
 import * as refs from './dom-refs.js';
 
 let contextMenu = null;
+let lastPos = { x: null, y: null }; // where the menu was opened (client coords)
 
 /**
  * Initialize the custom context menu for the story editor.
@@ -28,6 +29,8 @@ export function init(actions = {}) {
     { label: 'Rewrite', action: 'rewrite', icon: '🔄', subtext: 'AI Rewrite Selection' },
     { label: 'Expand', action: 'expand', icon: '➕', subtext: 'AI Expand Selection' },
     { label: 'Summarize', action: 'summarize', icon: '📝', subtext: 'AI Summarize Selection' },
+    { type: 'divider' },
+    { label: 'Insert NovelAI Symbol...', action: 'symbols', icon: '⁂', subtext: '***, [ ], *sfx*' },
     { type: 'divider' },
     { label: 'Undo', action: 'undo', icon: '↩️', shortcut: 'Ctrl+Z' },
     { label: 'Redo', action: 'redo', icon: '↪️', shortcut: 'Ctrl+Shift+Z' },
@@ -63,7 +66,7 @@ export function init(actions = {}) {
       e.stopPropagation();
       hide();
       if (actions[item.action]) {
-        actions[item.action]();
+        actions[item.action](lastPos.x, lastPos.y);
       } else {
         // Default handlers for standard text actions
         handleDefaultAction(item.action);
@@ -83,6 +86,7 @@ export function init(actions = {}) {
   if (storyEditor) {
     storyEditor.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      lastPos = { x: e.clientX, y: e.clientY };
       show(e.pageX, e.pageY);
     });
   }
