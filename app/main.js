@@ -1225,12 +1225,13 @@ ipcMain.handle('venice:get-tts-models', () => {
   return veniceProvider.getTtsModels();
 });
 
-ipcMain.handle('tts:generate-speech', async (_, { text, voice, storyId }) => {
+ipcMain.handle('tts:generate-speech', async (_, { text, voice, storyId, provider: providerOverride }) => {
   if (!text || !voice) {
     return { success: false, error: 'Text and voice are required' };
   }
   const ss = storyId ? db.getStorySettings(storyId) : null;
-  const provider = ss?.ttsProvider || store.get('ttsProvider');
+  // Settings previews pass the provider picked in the modal, which may not be saved yet.
+  const provider = providerOverride || ss?.ttsProvider || store.get('ttsProvider');
   return speakWith(provider, text, voice);
 });
 

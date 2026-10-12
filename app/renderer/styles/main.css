@@ -6388,3 +6388,25 @@
 .chatterbox-gender-name { font-size: 13px; color: var(--text-primary); word-break: break-word; }
 .chatterbox-gender-detail { font-size: 11px; color: var(--text-dim); }
 .chatterbox-gender-row select { flex: 0 0 auto; font-size: 12px; }
+
+/* Voice preview buttons beside voice pickers */
+.voice-pick-row { display: flex; gap: 6px; align-items: stretch; }
+.voice-pick-row select { flex: 1; min-width: 0; }
+.voice-preview-btn {
+  flex: 0 0 auto;
+  min-width: 38px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.voice-preview-btn:hover, .voice-preview-btn:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+.voice-preview-btn.is-playing { border-color: var(--accent); color: var(--accent); }
+.voice-preview-btn:disabled { opacity: 0.6; cursor: wait; }
+.chatterbox-gender-row .voice-preview-btn, .char-voice-row .voice-preview-btn { min-height: 28px; min-width: 32px; font-size: 14px; }
+.chatterbox-gender-controls { display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }

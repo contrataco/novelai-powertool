@@ -224,6 +224,7 @@ function renderSettingsVoiceList(voices) {
 
     row.appendChild(nameEl);
     row.appendChild(sel);
+    row.appendChild(makePreviewButton(() => sel.value, `Play ${charName}'s voice sample`, 'dialogue'));
     row.appendChild(rmBtn);
     ttsSettingsVoiceList.appendChild(row);
   }
@@ -245,6 +246,75 @@ async function loadVeniceTtsModels(show) {
   } catch (e) {
     console.error('Failed to load Venice TTS models:', e);
   }
+}
+
+// --- Voice previews ---
+
+const PREVIEW_TEXT = {
+  narrator: 'The rain had not stopped for three days, and the city wore it like an old coat.',
+  dialogue: 'We should go before it gets dark. I do not like the look of that road.',
+};
+let previewAudio = null;
+let previewBtn = null; // the button whose sample is playing
+
+function resetPreviewButton() {
+  if (!previewBtn) return;
+  previewBtn.classList.remove('is-playing');
+  previewBtn.innerHTML = '&#9654;';
+  previewBtn.title = 'Play a sample of this voice';
+  previewBtn = null;
+}
+
+/**
+ * Play a short sample of a voice with the provider picked in the modal.
+ * Clicking the playing button again stops it.
+ */
+async function playVoicePreview(btn, voice, kind = 'dialogue') {
+  if (previewBtn === btn && previewAudio && !previewAudio.paused) {
+    previewAudio.pause();
+    resetPreviewButton();
+    return;
+  }
+  if (previewAudio) previewAudio.pause();
+  resetPreviewButton();
+  if (!voice || voice === '__custom__') {
+    showToast('Pick a voice first', 2000, 'warn');
+    return;
+  }
+  const provider = ttsProviderSelect.value;
+  btn.disabled = true;
+  btn.innerHTML = '&#8987;';
+  btn.title = 'Generating sample...';
+  try {
+    if (provider === 'chatterbox') await saveChatterboxFields(); // unsaved URL / expressiveness
+    const result = await window.powertool.ttsGenerateSpeech(PREVIEW_TEXT[kind] || PREVIEW_TEXT.dialogue, voice, state.currentStoryId, provider);
+    if (!result?.audioData) throw new Error(result?.error || 'no audio returned');
+    if (!previewAudio) previewAudio = new Audio();
+    previewAudio.src = result.audioData;
+    previewAudio.onended = resetPreviewButton;
+    previewBtn = btn;
+    btn.classList.add('is-playing');
+    btn.innerHTML = '&#9632;';
+    btn.title = 'Stop';
+    await previewAudio.play();
+  } catch (e) {
+    resetPreviewButton();
+    showToast('Preview failed: ' + (e?.message || e), 5000, 'error');
+  } finally {
+    btn.disabled = false;
+    if (previewBtn !== btn) btn.innerHTML = '&#9654;';
+  }
+}
+
+function makePreviewButton(getVoice, label, kind) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'voice-preview-btn';
+  btn.innerHTML = '&#9654;';
+  btn.title = 'Play a sample of this voice';
+  btn.setAttribute('aria-label', label);
+  btn.addEventListener('click', () => playVoicePreview(btn, getVoice(), kind));
+  return btn;
 }
 
 // --- Chatterbox (local server) ---
@@ -330,8 +400,12 @@ function renderChatterboxGenders(voices) {
     const text = document.createElement('div');
     text.appendChild(name);
     text.appendChild(detail);
+    const controls = document.createElement('div');
+    controls.className = 'chatterbox-gender-controls';
+    controls.appendChild(makePreviewButton(() => v.id, `Play ${v.id} sample`, 'dialogue'));
+    controls.appendChild(sel);
     row.appendChild(text);
-    row.appendChild(sel);
+    row.appendChild(controls);
     ttsChatterboxGenderList.appendChild(row);
   }
 }
@@ -446,6 +520,22 @@ export function buildPerStoryTtsSettings() {
 // --- Init event listeners for TTS ---
 
 export function initTtsEvents() {
+  // Voice previews beside the narrator and dialogue pickers. NovelAI uses the
+  // full value (custom seed / v2 fields); other providers the listed voice.
+  const narBtn = document.getElementById('ttsNarratorPreviewBtn');
+  const dlgBtn = document.getElementById('ttsDialoguePreviewBtn');
+  narBtn?.addEventListener('click', () => playVoicePreview(narBtn,
+    readVoice(ttsNarratorVoiceSelect, ttsNarratorStyle, ttsNarratorIntonation, ttsNarratorCadence, ttsVersionSelect.value, ttsNarratorCustomSeed), 'narrator'));
+  dlgBtn?.addEventListener('click', () => playVoicePreview(dlgBtn,
+    readVoice(ttsDialogueVoiceSelect, ttsDialogueStyle, ttsDialogueIntonation, ttsDialogueCadence, ttsVersionSelect.value, ttsDialogueCustomSeed), 'dialogue'));
+  // Stop a sample when the settings modal closes (Save or Cancel).
+  const modal = document.getElementById('settingsModal');
+  if (modal) {
+    new MutationObserver(() => {
+      if (!modal.classList.contains('active') && previewAudio) { previewAudio.pause(); resetPreviewButton(); }
+    }).observe(modal, { attributes: true, attributeFilter: ['class'] });
+  }
+
   // TTS speed slider
   ttsSpeedSlider.addEventListener('input', () => {
     ttsSpeedValue.textContent = ttsSpeedSlider.value;

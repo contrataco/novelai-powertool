@@ -1781,7 +1781,10 @@
         </div>
         <div class="form-group">
           <label>Narrator Voice</label>
-          <select id="ttsNarratorVoice"></select>
+          <div class="voice-pick-row">
+            <select id="ttsNarratorVoice"></select>
+            <button type="button" class="voice-preview-btn" id="ttsNarratorPreviewBtn" title="Play a sample of this voice" aria-label="Play narrator voice sample">&#9654;</button>
+          </div>
           <input class="u-hidden" type="text" id="ttsNarratorCustomSeed" placeholder="Enter custom seed (e.g. Maria, seedmix:Aini+Orea)" style="font-size:11px;margin-top:4px;width:100%">
         </div>
         <div class="u-hidden" id="ttsV2NarratorGroup" style="margin-top:4px">
@@ -1796,7 +1799,10 @@
         </div>
         <div class="form-group">
           <label>Dialogue Voice</label>
-          <select id="ttsDialogueVoice"></select>
+          <div class="voice-pick-row">
+            <select id="ttsDialogueVoice"></select>
+            <button type="button" class="voice-preview-btn" id="ttsDialoguePreviewBtn" title="Play a sample of this voice" aria-label="Play dialogue voice sample">&#9654;</button>
+          </div>
           <input class="u-hidden" type="text" id="ttsDialogueCustomSeed" placeholder="Enter custom seed (e.g. Max, seedmix:Aulon+Oyn)" style="font-size:11px;margin-top:4px;width:100%">
         </div>
         <div class="u-hidden" id="ttsV2DialogueGroup" style="margin-top:4px">
