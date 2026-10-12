@@ -382,7 +382,8 @@ module.exports = {
     const apiToken = store.get('apiToken');
     if (!apiToken) throw new Error('No API token available');
 
-    const model = options.model || 'glm-4-6';
+    // 'xialong' was renamed 'xialong-v1' by NovelAI; old settings may still say 'xialong'.
+    const model = options.model === 'xialong' ? 'xialong-v1' : (options.model || 'glm-4-6');
     const maxTokens = options.max_tokens || 300;
     const temperature = options.temperature || 0.6;
 

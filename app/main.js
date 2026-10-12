@@ -62,7 +62,7 @@ const PROVIDERS = {
 
 // Text-only LLM providers (for lore, comprehension, scene analysis, etc.)
 const TEXT_PROVIDERS = {
-  novelai: { id: 'novelai', get name() { const m = store.get('novelaiTextModel') || 'glm-4-6'; return m === 'xialong' ? 'NovelAI (Xialong)' : 'NovelAI (GLM-4-6)'; } },
+  novelai: { id: 'novelai', get name() { const m = store.get('novelaiTextModel') || 'glm-4-6'; return m.startsWith('xialong') ? 'NovelAI (Xialong)' : 'NovelAI (GLM-4-6)'; } },
   ollama: { id: 'ollama', name: 'Ollama' },
   openai: { id: 'openai', name: 'OpenAI', provider: openaiTextProvider },
   anthropic: { id: 'anthropic', name: 'Anthropic', provider: anthropicTextProvider },
@@ -3574,6 +3574,12 @@ app.whenReady().then(() => {
     db.migrateFromStore(store);
     store.set('migratedToSqlite', true);
     console.log('[Main] Migration complete');
+  }
+
+  // NovelAI renamed the Xialong text model ('xialong' now returns 400 "doesn't exist").
+  if (store.get('novelaiTextModel') === 'xialong') {
+    store.set('novelaiTextModel', 'xialong-v1');
+    console.log('[Main] Migrated novelaiTextModel xialong -> xialong-v1');
   }
 
   // One-time: bump default guidance scale from 5 → 6

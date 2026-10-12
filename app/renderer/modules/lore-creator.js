@@ -2293,7 +2293,7 @@ async function updateLlmIndicator(provider, model, novelaiModel) {
     primary = 'Perchance ' + (perchanceTextModelSelect?.value || 'perchance');
   } else {
     const nm = novelaiModel || novelaiTextModelSelect?.value || 'glm-4-6';
-    primary = nm === 'xialong' ? 'NovelAI Xialong' : 'NovelAI GLM-4-6';
+    primary = String(nm).startsWith('xialong') ? 'NovelAI Xialong' : 'NovelAI GLM-4-6';
   }
 
   // Check if hybrid is enabled in settings and secondary is available.
