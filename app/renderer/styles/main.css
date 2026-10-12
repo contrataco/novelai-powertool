@@ -4364,12 +4364,19 @@
       padding-left: 8px;
     }
     .rpg-option-label {
-      font-size: 10px;
-      color: var(--text-dim);
+      font-size: 16px;
+      color: var(--text-primary);
       display: flex;
       align-items: center;
-      gap: 4px;
-      margin-bottom: 6px;
+      gap: 8px;
+      min-height: 36px;
+      margin-bottom: 4px;
+      cursor: pointer;
+    }
+    .rpg-option-label input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      flex: none;
     }
     .rpg-orphan-tag {
       font-size: 8px;

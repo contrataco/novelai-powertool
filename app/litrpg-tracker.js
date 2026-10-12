@@ -6,9 +6,10 @@
  * Data stored as structured JSON in SQLite, synced to lorebook text entries.
  */
 
-const { extractField, getTemplateForType, retryLLM, NO_DATA } = require('./lore-creator');
+const { extractField, getTemplateForType, retryLLM } = require('./lore-creator');
 const { parseMetadata, setMetadata, getEntryType, METADATA_VERSION } = require('./metadata');
-const { FUZZY_MATCH_THRESHOLD, fuzzyNameScore, recoverJSON, isNarratorPlaceholder, NARRATOR_RULE, callLLM } = require('./shared-utils');
+const { FUZZY_MATCH_THRESHOLD, fuzzyNameScore, recoverJSON, isNarratorPlaceholder } = require('./shared-utils');
+const reader = require('./litrpg-story-reader');
 
 const LOG_PREFIX = '[LitRPG]';
 
@@ -16,9 +17,12 @@ const LOG_PREFIX = '[LitRPG]';
 
 const INTER_CALL_DELAY = 1000;
 const MAX_STORY_CONTEXT = 4000;
+const RECENT_CONTEXT = 6000;
+
+// Character fields a hand edit protects from being overwritten by scans.
+const MANUAL_TRACKED_FIELDS = ['name', ...reader.SHEET_FIELDS];
 const DETECTION_THRESHOLD = 8;
 const CONFIDENCE_GATE = 2;
-const MIN_INCREMENTAL_CHARS = 500;
 
 const VALID_EQUIPMENT_SLOTS = new Set([
   'weapon', 'off-hand', 'shield', 'helmet', 'head', 'armor', 'chest',
@@ -220,185 +224,6 @@ function characterAppearsInText(name, aliases, text) {
 
 // --- Schema Validation (Phase 1B) ---
 
-function normalizeStatName(name) {
-  return String(name).toUpperCase().trim();
-}
-
-function normalizeSlot(slot) {
-  if (!slot) return 'other';
-  const lower = String(slot).toLowerCase().trim();
-  if (VALID_EQUIPMENT_SLOTS.has(lower)) return lower;
-  // Common aliases
-  const aliases = {
-    'main hand': 'weapon', 'mainhand': 'weapon', 'main-hand': 'weapon',
-    'offhand': 'off-hand', 'off hand': 'off-hand',
-    'head': 'helmet', 'headgear': 'helmet', 'hat': 'helmet', 'crown': 'helmet',
-    'chest': 'armor', 'body': 'armor', 'chestpiece': 'armor', 'torso': 'armor',
-    'pants': 'legs', 'leg': 'legs', 'greaves': 'legs',
-    'shoes': 'boots', 'foot': 'boots', 'footwear': 'boots',
-    'hand': 'gloves', 'glove': 'gloves',
-    'gauntlet': 'gauntlets', 'bracer': 'bracers', 'wrist': 'wrists',
-    'neck': 'amulet', 'pendant': 'amulet',
-    'cape': 'cloak', 'mantle': 'cloak',
-    'finger': 'ring', 'band': 'ring',
-    'ear': 'earring', 'storage_ring': 'ring',
-    'bag': 'accessory', 'backpack': 'accessory', 'talisman': 'accessory', 'artifact': 'accessory',
-  };
-  return aliases[lower] || 'other';
-}
-
-function clampConfidence(val) {
-  const n = Number(val);
-  if (isNaN(n)) return 1;
-  return Math.max(1, Math.min(5, Math.round(n)));
-}
-
-function validateCharacterRPG(data) {
-  if (!data || typeof data !== 'object') return null;
-  const cleaned = {
-    class: typeof data.class === 'string' ? data.class : null,
-    subclass: typeof data.subclass === 'string' ? data.subclass : null,
-    level: typeof data.level === 'number' ? data.level : null,
-    race: typeof data.race === 'string' ? data.race : null,
-    stats: {},
-    abilities: [],
-    equipment: [],
-    xp: null,
-    currency: {},
-    statusEffects: [],
-    inventory: [],
-    cultivationRealm: typeof data.cultivationRealm === 'string' ? data.cultivationRealm : null,
-    cultivationStage: typeof data.cultivationStage === 'string' ? data.cultivationStage : null,
-    role: typeof data.role === 'string' ? data.role : null,
-    confidence: clampConfidence(data.confidence),
-  };
-
-  // Validate stats
-  if (data.stats && typeof data.stats === 'object') {
-    for (const [key, val] of Object.entries(data.stats)) {
-      const normKey = normalizeStatName(key);
-      if (val && typeof val === 'object' && typeof val.value === 'number') {
-        cleaned.stats[normKey] = {
-          value: val.value,
-          modifier: typeof val.modifier === 'number' ? val.modifier : null,
-        };
-      } else if (typeof val === 'number') {
-        cleaned.stats[normKey] = { value: val, modifier: null };
-      }
-    }
-  }
-
-  // Validate abilities
-  if (Array.isArray(data.abilities)) {
-    for (const a of data.abilities) {
-      if (!a || typeof a !== 'object' || !a.name) continue;
-      cleaned.abilities.push({
-        name: String(a.name),
-        description: typeof a.description === 'string' ? a.description : '',
-        level: typeof a.level === 'number' ? a.level : null,
-        type: VALID_ABILITY_TYPES.has(a.type) ? a.type : 'active',
-        cost: typeof a.cost === 'string' ? a.cost : null,
-        category: VALID_ABILITY_CATEGORIES.has(a.category) ? a.category : null,
-        cooldown: typeof a.cooldown === 'string' ? a.cooldown : null,
-        proficiency: typeof a.proficiency === 'string' ? a.proficiency : null,
-      });
-    }
-  }
-
-  // Validate equipment
-  if (Array.isArray(data.equipment)) {
-    for (const e of data.equipment) {
-      if (!e || typeof e !== 'object' || !e.name) continue;
-      cleaned.equipment.push({
-        name: String(e.name),
-        slot: normalizeSlot(e.slot),
-        description: typeof e.description === 'string' ? e.description : '',
-        rarity: VALID_RARITY.has(e.rarity) ? e.rarity : 'unknown',
-        bonuses: typeof e.bonuses === 'string' ? e.bonuses : null,
-        setName: typeof e.setName === 'string' ? e.setName : null,
-      });
-    }
-  }
-
-  // Validate XP
-  if (data.xp && typeof data.xp === 'object') {
-    cleaned.xp = {
-      current: typeof data.xp.current === 'number' ? data.xp.current : null,
-      needed: typeof data.xp.needed === 'number' ? data.xp.needed : null,
-    };
-  }
-
-  // Validate currency
-  if (data.currency && typeof data.currency === 'object') {
-    for (const [unit, amount] of Object.entries(data.currency)) {
-      if (typeof amount === 'number') cleaned.currency[unit.toLowerCase()] = amount;
-    }
-  }
-
-  // Validate status effects
-  if (Array.isArray(data.statusEffects)) {
-    for (const s of data.statusEffects) {
-      if (!s || typeof s !== 'object' || !s.name) continue;
-      cleaned.statusEffects.push({
-        name: String(s.name),
-        type: VALID_STATUS_TYPES.has(s.type) ? s.type : 'buff',
-        duration: typeof s.duration === 'string' ? s.duration : null,
-      });
-    }
-  }
-
-  // Validate inventory
-  if (Array.isArray(data.inventory)) {
-    for (const item of data.inventory) {
-      if (!item || typeof item !== 'object' || !item.name) continue;
-      cleaned.inventory.push({
-        name: String(item.name),
-        quantity: typeof item.quantity === 'number' ? item.quantity : 1,
-        type: ['consumable', 'material', 'quest_item', 'other'].includes(item.type) ? item.type : 'other',
-        rarity: VALID_RARITY.has(item.rarity) ? item.rarity : null,
-      });
-    }
-  }
-
-  return cleaned;
-}
-
-function validateQuestResult(data) {
-  if (!data || typeof data !== 'object') return null;
-  const cleaned = { newQuests: [], questUpdates: [] };
-
-  if (Array.isArray(data.newQuests)) {
-    for (const q of data.newQuests) {
-      if (!q || !q.title) continue;
-      cleaned.newQuests.push({
-        title: String(q.title),
-        description: typeof q.description === 'string' ? q.description : '',
-        type: ['main', 'side', 'personal'].includes(q.type) ? q.type : 'side',
-        objectives: Array.isArray(q.objectives)
-          ? q.objectives.filter(o => o && o.text).map(o => ({ text: String(o.text), completed: !!o.completed }))
-          : [],
-        rewards: typeof q.rewards === 'string' ? q.rewards : null,
-        giver: typeof q.giver === 'string' ? q.giver : null,
-      });
-    }
-  }
-
-  if (Array.isArray(data.questUpdates)) {
-    for (const u of data.questUpdates) {
-      if (!u || !u.title) continue;
-      cleaned.questUpdates.push({
-        title: String(u.title),
-        statusChange: ['completed', 'failed', 'abandoned'].includes(u.statusChange) ? u.statusChange : null,
-        objectiveUpdates: Array.isArray(u.objectiveUpdates)
-          ? u.objectiveUpdates.filter(o => o && o.text).map(o => ({ text: String(o.text), completed: !!o.completed }))
-          : [],
-      });
-    }
-  }
-
-  return cleaned;
-}
-
 function validateClassification(data) {
   if (!data || typeof data !== 'object') return null;
   const cleaned = { partyMembers: [], npcs: [] };
@@ -448,191 +273,20 @@ async function callWithFallback(providers, index, asyncFn) {
   }
 }
 
-// --- Regex Pre-Extraction Pipeline (Phase 1D) ---
-
-function regexPreExtract(storyText) {
-  const result = {
-    stats: {},
-    levels: [],
-    xp: [],
-    currency: [],
-    quests: [],
-    statusEffects: [],
-    inventory: [],
-    skills: [],
-    cultivation: [],
-    skillCategories: [],
-    equipmentBonuses: [],
-    factionMentions: [],
-    raceMentions: [],
-    cooldowns: [],
-    proficiencies: [],
-  };
-
-  // Stat blocks: STR: 18, HP = 500, DEX 14
-  const statRe = /\b(HP|MP|SP|STR|DEX|CON|INT|WIS|CHA|VIT|AGI|LCK|END|PER|ATK|DEF|MAG|RES|QI|BODY|SPIRIT|SOUL)\s*[:=]\s*(\d+)/gi;
-  for (const m of storyText.matchAll(statRe)) {
-    result.stats[m[1].toUpperCase()] = parseInt(m[2], 10);
-  }
-
-  // Level mentions: Level 42 Warrior, Lv.15
-  const levelRe = /\b(?:level|lv|lvl)\.?\s*(\d+)\s*(\w+)?/gi;
-  for (const m of storyText.matchAll(levelRe)) {
-    result.levels.push({ level: parseInt(m[1], 10), classHint: m[2] || null });
-  }
-
-  // XP: +500 XP, gained 1200 EXP, XP: 500/1000
-  const xpRe = /(?:\+\s*(\d[\d,]*)\s*(?:XP|EXP|experience\s+points?))|(?:(?:gained?|earned?|received?)\s+(\d[\d,]*)\s*(?:XP|EXP))|(?:(?:XP|EXP)\s*[:=]\s*(\d[\d,]*)(?:\s*\/\s*(\d[\d,]*))?)/gi;
-  for (const m of storyText.matchAll(xpRe)) {
-    const amount = parseInt((m[1] || m[2] || m[3] || '0').replace(/,/g, ''), 10);
-    const needed = m[4] ? parseInt(m[4].replace(/,/g, ''), 10) : null;
-    if (amount > 0) result.xp.push({ amount, needed });
-  }
-
-  // Currency: 1,500 gold, 200 silver coins, 50 spirit stones
-  const currencyRe = /(\d[\d,]*)\s+(gold|silver|copper|platinum|credits?|coins?|spirit\s+stones?|gems?|rubies|emeralds?|diamonds?|tokens?|marks?|crowns?|bits?|bells?)/gi;
-  for (const m of storyText.matchAll(currencyRe)) {
-    result.currency.push({ amount: parseInt(m[1].replace(/,/g, ''), 10), unit: m[2].toLowerCase().replace(/\s+/g, '_') });
-  }
-
-  // System quest messages: [Quest Received: The Dragon's Hoard], [New Quest: ...]
-  const questRe = /\[(?:Quest\s+(?:Received|Accepted|Completed|Failed|Updated)|New\s+Quest|Mission):\s*([^\]]+)\]/gi;
-  for (const m of storyText.matchAll(questRe)) {
-    result.quests.push(m[1].trim());
-  }
-
-  // Status effects: [Buff: Iron Skin], [Debuff: Poisoned], Status Effect: ...
-  const statusRe = /\[(?:Buff|Debuff|Status\s*Effect|Condition):\s*([^\]]+)\]|(?:gained|applied|inflicted)\s+(?:the\s+)?(?:buff|debuff|status)\s*(?:effect)?\s*[:—]\s*([^\n.!]+)/gi;
-  for (const m of storyText.matchAll(statusRe)) {
-    const name = (m[1] || m[2] || '').trim();
-    if (name) result.statusEffects.push(name);
-  }
-
-  // Inventory gains: obtained Steel Sword, received Healing Potion, looted Dragon Scale
-  const inventoryRe = /(?:obtained|received|looted|found|picked\s+up|acquired)\s+(?:a\s+|an\s+|the\s+)?(\d+\s+)?([A-Z][A-Za-z'\-\s]{2,30}?)(?:\s*[.!,\n]|$)/gm;
-  for (const m of storyText.matchAll(inventoryRe)) {
-    const qty = m[1] ? parseInt(m[1].trim(), 10) : 1;
-    const name = m[2].trim();
-    if (name.length > 2) result.inventory.push({ name, quantity: qty });
-  }
-
-  // Skill unlocks: Skill acquired: Fireball, [Skill Learned: ...], New Skill: ...
-  const skillRe = /\[?(?:Skill|Ability)\s+(?:Acquired|Learned|Unlocked|Gained):\s*([^\]\n]+)\]?|(?:learned|unlocked|acquired)\s+(?:the\s+)?(?:skill|ability)\s*[:—]\s*([^\n.!]+)/gi;
-  for (const m of storyText.matchAll(skillRe)) {
-    const name = (m[1] || m[2] || '').trim();
-    if (name) result.skills.push(name);
-  }
-
-  // Cultivation: broke through to Core Formation, advanced to Foundation Establishment
-  const cultRe = /(?:broke\s+through|advanced|ascended|promoted|reached|entered|stepped\s+into)\s+(?:to\s+|into\s+)?(?:the\s+)?([A-Z][A-Za-z\s]+?(?:Realm|Stage|Layer|Level|Formation|Establishment|Condensation|Soul|Core))/g;
-  for (const m of storyText.matchAll(cultRe)) {
-    result.cultivation.push(m[1].trim());
-  }
-
-  // Skill categories: [Combat Skill], [Magic], Passive:, Active:
-  const skillCatRe = /\[(?:Combat\s+Skill|Magic(?:\s+Skill)?|Crafting(?:\s+Skill)?|Social(?:\s+Skill)?|Utility(?:\s+Skill)?|Passive|Active)\s*(?::\s*([^\]]+))?\]/gi;
-  for (const m of storyText.matchAll(skillCatRe)) {
-    const cat = m[0].replace(/[\[\]]/g, '').split(':')[0].trim().toLowerCase().replace(/\s+skill$/, '');
-    const name = m[1] ? m[1].trim() : null;
-    if (name) result.skillCategories.push({ category: cat, name });
-  }
-
-  // Equipment bonuses: +5 STR, +10% crit, ATK +50, DEF +20
-  const bonusRe = /(?:\+\d+%?\s+(?:STR|DEX|CON|INT|WIS|CHA|ATK|DEF|HP|MP|VIT|AGI|LCK|MAG|RES|crit(?:ical)?|damage|speed|evasion))|(?:(?:STR|DEX|CON|INT|WIS|CHA|ATK|DEF|HP|MP|VIT|AGI|LCK|MAG|RES)\s*\+\s*\d+)/gi;
-  for (const m of storyText.matchAll(bonusRe)) {
-    const bonus = m[0].trim();
-    if (!result.equipmentBonuses.includes(bonus)) result.equipmentBonuses.push(bonus);
-  }
-
-  // Faction mentions: [Guild], the X Sect, X Clan, X Order, X Brotherhood, X Alliance
-  const factionRe = /\[Guild:\s*([^\]]+)\]|(?:the\s+)([A-Z][A-Za-z'\-\s]{1,30}?)\s+(?:Sect|Clan|Order|Brotherhood|Alliance|Guild|League|Council|Empire|Kingdom)/g;
-  for (const m of storyText.matchAll(factionRe)) {
-    const name = (m[1] || m[2] || '').trim();
-    if (name && name.length > 1 && !result.factionMentions.includes(name)) result.factionMentions.push(name);
-  }
-
-  // Race mentions: common fantasy race keywords
-  const raceRe = /\b(Elf|Elves|Dwarf|Dwarves|Orc|Orcs|Human|Humans|Halfling|Gnome|Tiefling|Dragonborn|Half-Elf|Half-Orc|Goblin|Kobold|Beastkin|Demon|Angel|Undead|Vampire|Werewolf|Fae|Fairy)\b/gi;
-  const seenRaces = new Set();
-  for (const m of storyText.matchAll(raceRe)) {
-    const race = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
-    if (!seenRaces.has(race.toLowerCase())) {
-      seenRaces.add(race.toLowerCase());
-      result.raceMentions.push(race);
-    }
-  }
-
-  // Cooldown: Cooldown: 30s, CD: 5 turns, cooldown 10 seconds
-  const cdRe = /(?:Cooldown|CD)\s*[:=]\s*(\d+\s*(?:s|sec(?:onds?)?|min(?:utes?)?|turns?|rounds?))/gi;
-  for (const m of storyText.matchAll(cdRe)) {
-    result.cooldowns.push(m[1].trim());
-  }
-
-  // Proficiency: Skill Level: Expert, Mastery: Advanced, Proficiency: Intermediate
-  const profRe = /(?:Skill\s+Level|Mastery|Proficiency|Rank)\s*[:=]\s*(Novice|Beginner|Intermediate|Advanced|Expert|Master|Grandmaster|Legendary|Max)/gi;
-  for (const m of storyText.matchAll(profRe)) {
-    result.proficiencies.push(m[1].trim());
-  }
-
-  return result;
-}
-
-function formatPreExtractedHints(preExtracted) {
-  const parts = [];
-
-  if (Object.keys(preExtracted.stats).length > 0) {
-    parts.push('Stats: ' + Object.entries(preExtracted.stats).map(([k, v]) => `${k}=${v}`).join(', '));
-  }
-  if (preExtracted.levels.length > 0) {
-    parts.push('Levels: ' + preExtracted.levels.map(l => `Lv.${l.level}${l.classHint ? ' ' + l.classHint : ''}`).join(', '));
-  }
-  if (preExtracted.xp.length > 0) {
-    parts.push('XP: ' + preExtracted.xp.map(x => `${x.amount}${x.needed ? '/' + x.needed : ''}`).join(', '));
-  }
-  if (preExtracted.currency.length > 0) {
-    parts.push('Currency: ' + preExtracted.currency.map(c => `${c.amount} ${c.unit}`).join(', '));
-  }
-  if (preExtracted.statusEffects.length > 0) {
-    parts.push('Status Effects: ' + preExtracted.statusEffects.join(', '));
-  }
-  if (preExtracted.skills.length > 0) {
-    parts.push('Skills Unlocked: ' + preExtracted.skills.join(', '));
-  }
-  if (preExtracted.cultivation.length > 0) {
-    parts.push('Cultivation: ' + preExtracted.cultivation.join(', '));
-  }
-  if (preExtracted.inventory.length > 0) {
-    parts.push('Items obtained: ' + preExtracted.inventory.map(i => i.quantity > 1 ? `${i.quantity}x ${i.name}` : i.name).join(', '));
-  }
-  if (preExtracted.skillCategories.length > 0) {
-    parts.push('Skill Categories: ' + preExtracted.skillCategories.map(s => `${s.name} (${s.category})`).join(', '));
-  }
-  if (preExtracted.equipmentBonuses.length > 0) {
-    parts.push('Equipment Bonuses: ' + preExtracted.equipmentBonuses.join(', '));
-  }
-  if (preExtracted.factionMentions.length > 0) {
-    parts.push('Factions: ' + preExtracted.factionMentions.join(', '));
-  }
-  if (preExtracted.raceMentions.length > 0) {
-    parts.push('Races: ' + preExtracted.raceMentions.join(', '));
-  }
-  if (preExtracted.cooldowns.length > 0) {
-    parts.push('Cooldowns: ' + preExtracted.cooldowns.join(', '));
-  }
-  if (preExtracted.proficiencies.length > 0) {
-    parts.push('Proficiency Levels: ' + preExtracted.proficiencies.join(', '));
-  }
-
-  if (parts.length === 0) return '';
-  return `PRE-EXTRACTED DATA (verified from regex):\n${parts.join('\n')}`;
-}
-
 // ============================================================================
 // DETECTION
 // ============================================================================
 
+/** The opening and the latest part of the story: game mechanics often show up in either. */
+function storySample(storyText, size = MAX_STORY_CONTEXT) {
+  if (storyText.length <= size) return storyText;
+  const half = Math.floor(size / 2);
+  return storyText.slice(0, half) + '\n...\n' + storyText.slice(-half);
+}
+
 function detectLitRPGSignals(storyText) {
-  const text = storyText.slice(-MAX_STORY_CONTEXT);
+  // Whole story: regex is cheap, and the system may only appear early on.
+  const text = storyText;
   const patterns = [
     { name: 'stat_blocks', re: /\b(HP|MP|SP|STR|DEX|CON|INT|WIS|CHA|VIT|AGI|LCK|END|PER|ATK|DEF|MAG|RES)\s*[:=]\s*\d+/gi, weight: 3 },
     { name: 'level_mentions', re: /\b(level|lv|lvl)\.?\s*\d+/gi, weight: 3 },
@@ -660,7 +314,7 @@ function detectLitRPGSignals(storyText) {
 }
 
 async function confirmLitRPG(storyText, generateTextFn) {
-  const text = storyText.slice(-MAX_STORY_CONTEXT);
+  const text = storySample(storyText);
   const messages = [
     {
       role: 'system',
@@ -717,246 +371,7 @@ async function detectLitRPG(storyText, generateTextFn) {
 // RPG SCAN PASSES (Phase 3B — System-Type-Aware Prompts)
 // ============================================================================
 
-async function extractCharacterRPG(characterName, characterEntryText, storyText, generateTextFn, comprehensionContext, systemType, preExtractedHints) {
-  const typeConfig = SYSTEM_TYPE_PROMPTS[systemType] || SYSTEM_TYPE_PROMPTS.generic;
-  const recentText = storyText.slice(-MAX_STORY_CONTEXT);
-  const contextBlock = comprehensionContext ? `${comprehensionContext}\n` : '';
-  const hintsBlock = preExtractedHints ? `\n${preExtractedHints}\n` : '';
-
-  const messages = [
-    {
-      role: 'system',
-      content: `You extract RPG game mechanics data from LitRPG story text. ${typeConfig.contextHint} Output ONLY valid JSON. Only include data explicitly stated in the text — do not infer or guess.`
-    },
-    {
-      role: 'user',
-      content: `Extract RPG statistics for the character "${characterName}" from this story.
-${contextBlock}CHARACTER ENTRY:
-${characterEntryText}
-${hintsBlock}
-EXPECTED STATS: ${typeConfig.expectedStats}
-VALID EQUIPMENT SLOTS: ${typeConfig.equipmentSlots}
-COMMON CLASSES: ${typeConfig.classExamples}
-
-RECENT STORY TEXT:
-${recentText}
-
-Extract ONLY information explicitly stated. Use null for unknown fields. Output this JSON format:
-{"class":"class name or null","subclass":"subclass or null","level":number or null,"race":"race or null","stats":{"STAT_NAME":{"value":number,"modifier":number or null}},"abilities":[{"name":"...","description":"...","level":number or null,"type":"active|passive","cost":"cost string or null"}],"equipment":[{"name":"...","slot":"slot name","description":"...","rarity":"common|uncommon|rare|epic|legendary|unknown"}],"xp":{"current":number or null,"needed":number or null},"currency":{"unit_name":amount},"statusEffects":[{"name":"...","type":"buff|debuff|condition","duration":"duration or null"}],"inventory":[{"name":"...","quantity":number,"type":"consumable|material|quest_item|other"}],"cultivationRealm":"realm name or null","cultivationStage":"stage or null","role":"tank|healer|DPS|support|null","confidence":1-5}`
-    }
-  ];
-
-  return retryLLM(async () => {
-    const result = await generateTextFn(messages, { max_tokens: 800, temperature: 0.3 });
-    const parsed = recoverJSON(result.output);
-    const validated = validateCharacterRPG(parsed);
-    if (!validated) return null;
-    // A readable "nothing stated" answer is final; asking again wastes calls.
-    if (validated.confidence < CONFIDENCE_GATE) return NO_DATA;
-    return validated;
-  });
-}
-
-/**
- * R1a — Extract character identity & progression (class, level, race, stats, xp, cultivation, role).
- * Focused schema for better extraction quality.
- */
-async function extractCharacterCore(characterName, characterEntryText, storyText, generateTextFn, comprehensionContext, systemType, preExtractedHints) {
-  const typeConfig = SYSTEM_TYPE_PROMPTS[systemType] || SYSTEM_TYPE_PROMPTS.generic;
-  const recentText = storyText.slice(-MAX_STORY_CONTEXT);
-  const contextBlock = comprehensionContext ? `${comprehensionContext}\n` : '';
-  const hintsBlock = preExtractedHints ? `\n${preExtractedHints}\n` : '';
-
-  const messages = [
-    {
-      role: 'system',
-      content: `You extract character identity and progression data from LitRPG story text. ${typeConfig.contextHint} Output ONLY valid JSON. Only include data explicitly stated in the text — do not infer or guess.`
-    },
-    {
-      role: 'user',
-      content: `Extract identity and progression data for "${characterName}" from this story.
-${contextBlock}CHARACTER ENTRY:
-${characterEntryText}
-${hintsBlock}
-EXPECTED STATS: ${typeConfig.expectedStats}
-COMMON CLASSES: ${typeConfig.classExamples}
-
-RECENT STORY TEXT:
-${recentText}
-
-Extract ONLY explicitly stated information. Output JSON:
-{"class":"class name or null","subclass":"subclass or null","level":number or null,"race":"race or null","stats":{"STAT_NAME":{"value":number,"modifier":number or null}},"xp":{"current":number or null,"needed":number or null},"cultivationRealm":"realm or null","cultivationStage":"stage or null","role":"tank|healer|DPS|support|null","confidence":1-5}`
-    }
-  ];
-
-  return retryLLM(async () => {
-    const result = await generateTextFn(messages, { max_tokens: 500, temperature: 0.3 });
-    const parsed = recoverJSON(result.output);
-    if (!parsed) return null;
-    if (clampConfidence(parsed.confidence) < CONFIDENCE_GATE) return NO_DATA;
-    // Validate core fields only
-    const cleaned = {
-      class: typeof parsed.class === 'string' ? parsed.class : null,
-      subclass: typeof parsed.subclass === 'string' ? parsed.subclass : null,
-      level: typeof parsed.level === 'number' ? parsed.level : null,
-      race: typeof parsed.race === 'string' ? parsed.race : null,
-      stats: {},
-      xp: null,
-      cultivationRealm: typeof parsed.cultivationRealm === 'string' ? parsed.cultivationRealm : null,
-      cultivationStage: typeof parsed.cultivationStage === 'string' ? parsed.cultivationStage : null,
-      role: typeof parsed.role === 'string' ? parsed.role : null,
-      confidence: clampConfidence(parsed.confidence),
-    };
-    if (parsed.stats && typeof parsed.stats === 'object') {
-      for (const [key, val] of Object.entries(parsed.stats)) {
-        const normKey = normalizeStatName(key);
-        if (val && typeof val === 'object' && typeof val.value === 'number') {
-          cleaned.stats[normKey] = { value: val.value, modifier: typeof val.modifier === 'number' ? val.modifier : null };
-        } else if (typeof val === 'number') {
-          cleaned.stats[normKey] = { value: val, modifier: null };
-        }
-      }
-    }
-    if (parsed.xp && typeof parsed.xp === 'object') {
-      cleaned.xp = {
-        current: typeof parsed.xp.current === 'number' ? parsed.xp.current : null,
-        needed: typeof parsed.xp.needed === 'number' ? parsed.xp.needed : null,
-      };
-    }
-    return cleaned;
-  });
-}
-
-/**
- * R1b — Extract character gear & abilities (abilities, equipment, inventory, currency, statusEffects).
- * Focused schema for better extraction quality.
- */
-async function extractCharacterGear(characterName, characterEntryText, storyText, generateTextFn, comprehensionContext, systemType, preExtractedHints) {
-  const typeConfig = SYSTEM_TYPE_PROMPTS[systemType] || SYSTEM_TYPE_PROMPTS.generic;
-  const recentText = storyText.slice(-MAX_STORY_CONTEXT);
-  const contextBlock = comprehensionContext ? `${comprehensionContext}\n` : '';
-  const hintsBlock = preExtractedHints ? `\n${preExtractedHints}\n` : '';
-
-  const messages = [
-    {
-      role: 'system',
-      content: `You extract gear, abilities, and inventory data from LitRPG story text. ${typeConfig.contextHint} Output ONLY valid JSON. Only include data explicitly stated in the text — do not infer or guess.`
-    },
-    {
-      role: 'user',
-      content: `Extract gear and abilities for "${characterName}" from this story.
-${contextBlock}CHARACTER ENTRY:
-${characterEntryText}
-${hintsBlock}
-VALID EQUIPMENT SLOTS: ${typeConfig.equipmentSlots}
-
-RECENT STORY TEXT:
-${recentText}
-
-Extract ONLY explicitly stated information. Output JSON:
-{"abilities":[{"name":"...","description":"...","level":number or null,"type":"active|passive","cost":"cost or null","category":"combat|magic|crafting|social|utility|other|null","cooldown":"cooldown string or null","proficiency":"proficiency level or null"}],"equipment":[{"name":"...","slot":"slot","description":"...","rarity":"common|uncommon|rare|epic|legendary|unknown","bonuses":"bonus string like +5 STR or null","setName":"equipment set name or null"}],"inventory":[{"name":"...","quantity":number,"type":"consumable|material|quest_item|other","rarity":"common|uncommon|rare|epic|legendary|null"}],"currency":{"unit_name":amount},"statusEffects":[{"name":"...","type":"buff|debuff|condition","duration":"duration or null"}],"confidence":1-5}`
-    }
-  ];
-
-  return retryLLM(async () => {
-    const result = await generateTextFn(messages, { max_tokens: 600, temperature: 0.3 });
-    const parsed = recoverJSON(result.output);
-    if (!parsed) return null;
-    if (clampConfidence(parsed.confidence) < CONFIDENCE_GATE) return NO_DATA;
-    // Validate gear fields only
-    const cleaned = { abilities: [], equipment: [], inventory: [], currency: {}, statusEffects: [], confidence: clampConfidence(parsed.confidence) };
-    if (Array.isArray(parsed.abilities)) {
-      for (const a of parsed.abilities) {
-        if (!a || typeof a !== 'object' || !a.name) continue;
-        cleaned.abilities.push({
-          name: String(a.name), description: typeof a.description === 'string' ? a.description : '',
-          level: typeof a.level === 'number' ? a.level : null,
-          type: VALID_ABILITY_TYPES.has(a.type) ? a.type : 'active',
-          cost: typeof a.cost === 'string' ? a.cost : null,
-          category: VALID_ABILITY_CATEGORIES.has(a.category) ? a.category : null,
-          cooldown: typeof a.cooldown === 'string' ? a.cooldown : null,
-          proficiency: typeof a.proficiency === 'string' ? a.proficiency : null,
-        });
-      }
-    }
-    if (Array.isArray(parsed.equipment)) {
-      for (const e of parsed.equipment) {
-        if (!e || typeof e !== 'object' || !e.name) continue;
-        cleaned.equipment.push({
-          name: String(e.name), slot: normalizeSlot(e.slot),
-          description: typeof e.description === 'string' ? e.description : '',
-          rarity: VALID_RARITY.has(e.rarity) ? e.rarity : 'unknown',
-          bonuses: typeof e.bonuses === 'string' ? e.bonuses : null,
-          setName: typeof e.setName === 'string' ? e.setName : null,
-        });
-      }
-    }
-    if (Array.isArray(parsed.inventory)) {
-      for (const item of parsed.inventory) {
-        if (!item || typeof item !== 'object' || !item.name) continue;
-        cleaned.inventory.push({
-          name: String(item.name), quantity: typeof item.quantity === 'number' ? item.quantity : 1,
-          type: ['consumable', 'material', 'quest_item', 'other'].includes(item.type) ? item.type : 'other',
-          rarity: VALID_RARITY.has(item.rarity) ? item.rarity : null,
-        });
-      }
-    }
-    if (parsed.currency && typeof parsed.currency === 'object') {
-      for (const [unit, amount] of Object.entries(parsed.currency)) {
-        if (typeof amount === 'number') cleaned.currency[unit.toLowerCase()] = amount;
-      }
-    }
-    if (Array.isArray(parsed.statusEffects)) {
-      for (const s of parsed.statusEffects) {
-        if (!s || typeof s !== 'object' || !s.name) continue;
-        cleaned.statusEffects.push({
-          name: String(s.name), type: VALID_STATUS_TYPES.has(s.type) ? s.type : 'buff',
-          duration: typeof s.duration === 'string' ? s.duration : null,
-        });
-      }
-    }
-    return cleaned;
-  });
-}
-
-async function extractQuests(storyText, existingQuests, generateTextFn, comprehensionContext, systemType, preExtractedHints) {
-  const typeConfig = SYSTEM_TYPE_PROMPTS[systemType] || SYSTEM_TYPE_PROMPTS.generic;
-  const recentText = storyText.slice(-MAX_STORY_CONTEXT);
-  const contextBlock = comprehensionContext ? `${comprehensionContext}\n` : '';
-  const hintsBlock = preExtractedHints ? `\n${preExtractedHints}\n` : '';
-
-  const existingQuestSummary = existingQuests.length > 0
-    ? `KNOWN QUESTS:\n${existingQuests.map(q => `- "${q.title}" (${q.status}): ${q.objectives.map(o => o.text).join(', ')}`).join('\n')}\n`
-    : '';
-
-  const messages = [
-    {
-      role: 'system',
-      content: `You identify quests, missions, and objectives from LitRPG story text. ${typeConfig.questHint} Output ONLY valid JSON. Only include quests explicitly mentioned in the text.`
-    },
-    {
-      role: 'user',
-      content: `Identify quests, missions, or objectives in this story text.
-${contextBlock}${existingQuestSummary}${hintsBlock}
-RECENT STORY TEXT:
-${recentText}
-
-Example output format:
-{"newQuests":[{"title":"The Dragon's Hoard","description":"Slay the dragon and claim its treasure","type":"main","objectives":[{"text":"Find the dragon's lair","completed":false},{"text":"Defeat the dragon","completed":false}],"rewards":"500 gold, Dragon Scale Armor","giver":"Village Elder"}],"questUpdates":[{"title":"Rat Problem","statusChange":"completed","objectiveUpdates":[{"text":"Kill 10 rats","completed":true}]}]}
-
-Find new quests AND status changes to known quests. Output:
-{"newQuests":[{"title":"...","description":"...","type":"main|side|personal","objectives":[{"text":"...","completed":false}],"rewards":"reward text or null","giver":"character name or null"}],"questUpdates":[{"title":"existing quest title matching known quests above","statusChange":"completed|failed|abandoned|null","objectiveUpdates":[{"text":"objective text","completed":true}]}]}`
-    }
-  ];
-
-  return retryLLM(async () => {
-    const result = await generateTextFn(messages, { max_tokens: 400, temperature: 0.3 });
-    const parsed = recoverJSON(result.output);
-    return validateQuestResult(parsed);
-  });
-}
-
-async function classifyPartyAndNPCs(characters, storyText, generateTextFn, comprehensionContext, systemType) {
+async function classifyPartyAndNPCs(characters, storyText, generateTextFn, comprehensionContext, systemType, protagonistName = null) {
   if (characters.length === 0) return { partyMembers: [], npcs: [] };
 
   const typeConfig = SYSTEM_TYPE_PROMPTS[systemType] || SYSTEM_TYPE_PROMPTS.generic;
@@ -993,7 +408,9 @@ Roles:
 - "mount": rideable creature belonging to the party
 - "npc": other characters in the story world
 
-Characters with an existing classification should KEEP it unless the story EXPLICITLY contradicts it (e.g. a companion betrays the party, or an NPC joins).
+${protagonistName ? `The protagonist is ${protagonistName}; they lead the party.
+
+` : ''}Characters with an existing classification should KEEP it unless the story EXPLICITLY contradicts it (e.g. a companion betrays the party, or an NPC joins).
 
 ${contextBlock}CHARACTERS:
 ${charLines}
@@ -1736,372 +1153,312 @@ Only include entities from the list above. Keep descriptions concise (1-2 senten
 // R-PASS FUNCTIONS (internal — called by scanForRPGData orchestrator)
 // ============================================================================
 
+/** Lorebook entries that describe a character: declared, or guessed for untyped entries. */
+function isCharacterLoreEntry(e) {
+  const entryType = getEntryType(e.text, e.displayName);
+  if (entryType === 'character') return true;
+  // Any other type, built-in or custom @type ("class", "class tier"), is not a character.
+  if (entryType !== 'unknown') return false;
+  const text = (e.text || '').toLowerCase();
+  return text.includes('name:') || text.includes('appearance') || text.includes('class:');
+}
+
+function povPromptLine(pov, protagonistName) {
+  const who = protagonistName || 'the narrator (write "narrator" when no name is given)';
+  if (pov === 'first') return `POINT OF VIEW: first person. "I", "me" and "my" in the narration are ${who}.`;
+  if (pov === 'second') return `POINT OF VIEW: second person. "You" in the narration is ${who}.`;
+  return `POINT OF VIEW: third person.${protagonistName ? ` The protagonist is ${protagonistName}.` : ''}`;
+}
+
+/** Fold `other` into `keeper` (same person tracked twice). Keeper keeps its id. */
+function mergeCharacterInto(keeper, other) {
+  for (const k of ['persona', 'narrative', 'visual']) {
+    if (!other[k]) continue;
+    keeper[k] = { ...(keeper[k] || {}) };
+    for (const [f, v] of Object.entries(other[k])) {
+      const cur = keeper[k][f];
+      if (cur == null || (Array.isArray(cur) && cur.length === 0)) keeper[k][f] = v;
+    }
+  }
+  keeper.aliases = [...new Set([...(keeper.aliases || []), other.name, ...(other.aliases || [])])].filter(a => a && a !== keeper.name);
+  const seen = new Set((keeper.relationships || []).map(r => (r.targetName || '').toLowerCase()));
+  keeper.relationships = [...(keeper.relationships || []), ...(other.relationships || []).filter(r => !seen.has((r.targetName || '').toLowerCase()))];
+  for (const f of other._manualFields || []) {
+    if ((keeper._manualFields || []).includes(f)) continue;
+    keeper._manualFields = [...(keeper._manualFields || []), f];
+    if (f === 'storyFunction') keeper.narrative = { ...(keeper.narrative || {}), storyFunction: other.narrative?.storyFunction ?? null };
+    else keeper[f] = other[f];
+  }
+  if (!keeper.loreEntryName && other.loreEntryName) keeper.loreEntryName = other.loreEntryName;
+  for (const f of ['faction', 'disposition', 'npcRole', 'npcRelationship']) if (keeper[f] == null && other[f] != null) keeper[f] = other[f];
+}
+
 /**
- * R1 fallback: Discover characters directly from story text when no lorebook entries exist.
- * Makes a single LLM call to identify characters and their RPG data from raw text.
+ * Pass R1: read the whole story and rebuild the cast and every character sheet.
+ *
+ * The story is read in chunks (cached by text hash, so only changed chunks cost
+ * a call). The cast is everyone the story names as a person, plus lorebook
+ * characters already tracked; duplicates are merged, and classes, items and
+ * non-character lorebook entries are dropped. Sheets come only from facts the
+ * story states, so values that were wrong before are cleared. Fields the user
+ * edited by hand are left alone.
  */
-async function r1_discoverCharactersFromText(ctx) {
-  const { state, scanText, providers, systemType, onProgress, report } = ctx;
+async function r1_readWholeStory(ctx) {
+  const { state, storyText, loreEntries, characterEntries, providers, systemType, onProgress, report, options = {} } = ctx;
+  const start = Date.now();
   const typeConfig = SYSTEM_TYPE_PROMPTS[systemType] || SYSTEM_TYPE_PROMPTS.generic;
+  if (options.fullRescan) state.storyReaderCache = null;
 
-  if (onProgress) onProgress({ phase: 'characters', current: 0, total: 1, subPhase: 'R1-discovery' });
-  console.log(`${LOG_PREFIX} R1-discovery: No lorebook entries — discovering characters from story text`);
+  const pov = reader.detectPov(storyText);
+  const loreProt = characterEntries.find(e => parseMetadata(e.text).protagonist);
+  const protHint = (loreProt && loreProt.displayName) || (pov !== 'third' && reader.findSelfName(storyText)) || state.protagonist?.name || null;
+  const knownNames = [...new Set([
+    ...characterEntries.map(e => e.displayName),
+    ...Object.values(state.storyReaderCache?.chunks || {}).flatMap(r => (r.people || []).map(p => p.name)),
+  ])].filter(n => n && !isNarratorPlaceholder(n)).slice(0, 40);
 
-  const messages = [
-    {
-      role: 'system',
-      content: `You are an RPG character data extractor for ${typeConfig.contextHint || 'a LitRPG'} story. Identify all characters from the story text and extract their RPG attributes.`,
-    },
-    {
-      role: 'user',
-      content: `Identify all characters in this story text and extract their RPG data. Only include characters who are actual people/beings in the story (not game system names, place names, or abstract concepts). ${NARRATOR_RULE}
+  const read = await reader.readStoryChunks(storyText, state.storyReaderCache, providers, {
+    povLine: povPromptLine(pov, protHint),
+    knownNames,
+    contextHint: typeConfig.contextHint,
+    onProgress: (p) => onProgress && onProgress({ phase: 'characters', current: p.current, total: p.total, subPhase: 'R1-reading', passStartedAt: start, errorCount: report.errors.length }),
+  });
+  state.storyReaderCache = read.cache;
+  if (read.failed > 0) {
+    report.errors.push({ pass: 'R1', category: 'other', message: `${read.failed} of ${read.total} story chunks could not be read; they are retried next scan`, timestamp: Date.now() });
+  }
+  const allRead = read.chunks.every(c => c.result);
 
-Story text:
-${scanText.slice(0, 6000)}
+  const roster = reader.buildRoster({ loreEntries: characterEntries, stateChars: state.characters, chunks: read.chunks });
+  const prot = reader.resolveProtagonist({ storyText, loreEntries: characterEntries, stateChars: state.characters, chunks: read.chunks, roster });
+  if (!prot.person && prot.name) prot.person = roster.add(prot.name, { source: 'story' });
+  const fold = reader.foldChunks(read.chunks, roster, prot.person, prot.pov);
 
-For each character, extract whatever RPG data is available:
-- name (required)
-- class/subclass (if mentioned)
-- level (if mentioned)
-- race (if mentioned)
-- stats (any stat blocks like STR, DEX, etc.)
-- abilities/skills (if mentioned)
-- equipment (if mentioned)
-- role (tank/healer/dps/support/utility — if inferable)
+  // Names that are classes, skills or items in this story are not people.
+  const classKeys = new Set([...fold.classes.values()].map(c => reader.nameKey(c.name)));
+  const thingKeys = new Set();
+  for (const sh of fold.sheets.values()) {
+    for (const x of [...sh.abilities, ...sh.inventory, ...sh.equipment]) thingKeys.add(reader.nameKey(x.name));
+  }
+  const loreTypeOf = (name) => {
+    const e = name && loreEntries.find(x => x.displayName === name);
+    return e ? getEntryType(e.text, e.displayName) : null;
+  };
+  const removedKeys = new Set((state.removedCharacterNames || []).map(n => reader.nameKey(n)));
+  // A multi-word name written in the story's prose counts even if the reader
+  // missed it. Menu and list lines don't count: "Divine Seed" there is a skill.
+  const proseLines = storyText.split('\n').filter(l => !/^\s*[─\-•*>|]/.test(l) && !/^\s*\d{1,2}[.)]\s/.test(l)).join('\n');
+  const namedInStory = (p) => [p.name, ...p.aliases].some(n => {
+    if (!n || n.trim().split(/\s+/).length < 2) return false;
+    const esc = n.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    return new RegExp(`\\b${esc}\\b`, 'i').test(proseLines);
+  });
 
-Output JSON: {"characters": [{"name": "Character Name", "class": "...", "subclass": null, "level": null, "race": null, "stats": {}, "abilities": [], "equipment": [], "role": null}]}
-
-Be thorough — include ALL named characters that appear in the text. Include even characters with minimal RPG data (just a name is fine).`,
-    },
-  ];
-
-  try {
-    const result = await callLLM(providers[0], messages, { maxTokens: 800, label: 'R1-discovery' });
-    const parsed = recoverJSON(result.raw);
-
-    if (parsed?.characters && Array.isArray(parsed.characters)) {
-      let discovered = 0;
-      for (const char of parsed.characters) {
-        if (!char.name || typeof char.name !== 'string' || isNarratorPlaceholder(char.name)) continue;
-
-        // Check if character already exists
-        const existingId = fuzzyMatchCharacter(char.name, state.characters);
-        if (existingId) continue;
-
-        const charId = generateRpgId('char');
-        state.characters[charId] = {
-          name: char.name,
-          loreEntryName: char.name,
-          class: char.class || null,
-          subclass: char.subclass || null,
-          level: char.level || null,
-          race: char.race || null,
-          stats: char.stats || {},
-          xp: null,
-          cultivationRealm: null,
-          cultivationStage: null,
-          role: char.role || null,
-          abilities: Array.isArray(char.abilities) ? char.abilities.map(a => typeof a === 'string' ? { name: a } : a) : [],
-          equipment: Array.isArray(char.equipment) ? char.equipment.map(e => typeof e === 'string' ? { name: e, slot: 'unknown' } : e) : [],
-          inventory: [],
-          currency: {},
-          statusEffects: [],
-          aliases: [],
-          isPartyMember: false,
-          isNPC: true,
-          partyRole: 'npc',
-          lastUpdated: Date.now(),
-        };
-        discovered++;
-        console.log(`${LOG_PREFIX} R1-discovery: Found "${char.name}"${char.class ? ` (${char.class})` : ''}`);
-      }
-
-      console.log(`${LOG_PREFIX} R1-discovery: Discovered ${discovered} characters from story text`);
-      report.passes.r1Discovery = { discovered, duration: Date.now() - report.startedAt };
+  const removed = [];
+  const dropIds = new Set();
+  const kept = [];
+  for (const p of roster.people) {
+    const chars = p.stateIds.map(id => state.characters[id]).filter(Boolean);
+    const manual = chars.some(c => (c._manualFields || []).length > 0);
+    const loreDeclared = p.loreEntry && (parseMetadata(p.loreEntry.text).type || '').trim().toLowerCase() === 'character';
+    const linkedType = loreTypeOf(p.loreEntry?.displayName) || chars.map(c => loreTypeOf(c.loreEntryName)).find(Boolean) || null;
+    const key = reader.nameKey(p.name);
+    let reason = null;
+    if (removedKeys.has(key)) reason = 'deleted by you';
+    else if (manual) reason = null;
+    else if (!loreDeclared && classKeys.has(key)) reason = 'a class';
+    else if (!p.loreEntry && p.ambiguous) reason = 'a surname several people share';
+    else if (!loreDeclared && !p.sources.has('story') && thingKeys.has(key)) reason = 'a skill or item';
+    else if (linkedType && linkedType !== 'character' && linkedType !== 'unknown') reason = `lorebook @type ${linkedType}`;
+    else if (!p.sources.has('story') && !p.sources.has('lore') && allRead && !namedInStory(p)) reason = 'not named in the story';
+    else if (!p.sources.has('story') && !chars.length) reason = 'skip';  // lorebook-only, not in the story: don't add
+    if (reason) {
+      if (reason !== 'skip') for (const id of p.stateIds) if (state.characters[id]) { removed.push({ name: state.characters[id].name, reason }); dropIds.add(id); }
+      continue;
     }
-  } catch (err) {
-    console.error(`${LOG_PREFIX} R1-discovery failed:`, err.message);
-    report.errors.push({ pass: 'R1-discovery', category: 'other', message: err.message, timestamp: Date.now() });
+    kept.push(p);
   }
 
-  if (onProgress) onProgress({ phase: 'characters', current: 1, total: 1, subPhase: 'R1-discovery' });
-}
+  // Apply: one tracked character per person.
+  const idMap = new Map();      // dropped or merged id -> keeper id (or null)
+  const merged = [];
+  let added = 0, changedFields = 0;
+  const now = Date.now();
+  for (const p of kept) {
+    const ids = p.stateIds.filter(id => state.characters[id]);
+    let keeperId = ids.find(id => state.characters[id].portraitPath)
+      || ids.find(id => p.loreEntry && state.characters[id].loreEntryName === p.loreEntry.displayName)
+      || ids[0];
+    if (!keeperId) {
+      keeperId = generateRpgId('char');
+      state.characters[keeperId] = {
+        id: keeperId, name: p.name, loreEntryName: null, aliases: [],
+        isPartyMember: false, isNPC: true, partyRole: null, relationships: [], lastUpdated: now,
+      };
+      added++;
+    }
+    const char = state.characters[keeperId];
+    for (const id of ids) {
+      if (id === keeperId) continue;
+      mergeCharacterInto(char, state.characters[id]);
+      merged.push({ into: p.loreEntry?.displayName || p.name, from: state.characters[id].name });
+      idMap.set(id, keeperId);
+      delete state.characters[id];
+    }
+    const manualFields = new Set(char._manualFields || []);
+    if (!manualFields.has('name')) char.name = p.loreEntry?.displayName || p.name;
+    if (p.loreEntry) char.loreEntryName = p.loreEntry.displayName;
+    char.id = keeperId;
+    char.aliases = [...new Set([...(char.aliases || []), ...p.aliases])].filter(a => a && a !== char.name && !isNarratorPlaceholder(a));
+    if (p.kinds.has('voice') && !p.kinds.has('person')) char.isVoice = true;
 
-/**
- * Pass R1: Character RPG Extraction (R1a core stats + R1b gear/abilities)
- */
-async function r1_extractCharacterRPG(ctx) {
-  const { state, scanText, providers, characterEntries, comprehensionContext, systemType, preExtractedHints, onProgress, report } = ctx;
-  const r1Start = Date.now();
-  let r1Succeeded = 0, r1Failed = 0, r1Skipped = 0;
-  if (onProgress) onProgress({ phase: 'characters', current: 0, total: characterEntries.length, subPhase: 'R1a-core', passStartedAt: r1Start, errorCount: report.errors.length });
-  console.log(`${LOG_PREFIX} R1: Extracting RPG data for ${characterEntries.length} characters (R1a+R1b split)`);
+    const sheet = fold.sheets.get(p) || reader.emptySheet();
+    const prevLevel = char.level;
+    for (const f of reader.SHEET_FIELDS) {
+      if (manualFields.has(f)) continue;
+      let v = sheet[f];
+      if (f === 'xp' && !v) v = { current: null, needed: null };
+      if (JSON.stringify(char[f] ?? null) !== JSON.stringify(v ?? null)) changedFields++;
+      char[f] = v;
+    }
+    if (!manualFields.has('level') && char.level != null && char.level !== prevLevel) {
+      char.levelHistory = [...(char.levelHistory || []), { level: char.level, timestamp: now }];
+    }
+    char.rpgEvidence = sheet.evidence;
 
-  for (let i = 0; i < characterEntries.length; i++) {
-    const entry = characterEntries[i];
-
-    // Gate: skip lorebook entries for characters not in story text (new chars only)
-    const existingId = fuzzyMatchCharacter(entry.displayName, state.characters);
-    if (!existingId) {
-      const entryNames = [entry.displayName, ...(entry.keys || [])];
-      if (!characterAppearsInText(entry.displayName, entryNames, scanText)) {
-        console.log(`${LOG_PREFIX} R1: Skipping "${entry.displayName}" — not found in story text`);
-        r1Skipped++;
-        if (onProgress) onProgress({ phase: 'characters', current: i + 1, total: characterEntries.length, subPhase: 'R1a-core', characterName: entry.displayName, passStartedAt: r1Start, errorCount: report.errors.length });
-        continue;
+    // Protagonist and team membership the story states
+    const sfManual = manualFields.has('storyFunction');
+    if (p === prot.person) {
+      char.isProtagonist = true;
+      char.isPartyMember = true;
+      char.isNPC = false;
+      if (!PARTY_SIDE_ROLES.has(char.partyRole)) char.partyRole = 'party-member';
+      if (!sfManual) char.narrative = { ...CHARACTER_PERSONA_DEFAULTS.narrative, ...(char.narrative || {}), storyFunction: 'protagonist' };
+    } else {
+      char.isProtagonist = false;
+      if (prot.person && !sfManual && char.narrative?.storyFunction === 'protagonist') char.narrative = { ...char.narrative, storyFunction: null };
+      if (p.team && p.team.value === true) {
+        char.isPartyMember = true;
+        char.isNPC = false;
+        if (!PARTY_SIDE_ROLES.has(char.partyRole)) char.partyRole = p.kinds.has('creature') && !p.kinds.has('person') ? 'pet' : 'party-member';
       }
     }
+    char.lastUpdated = now;
+  }
 
-    if (i > 0 && (providers.length === 1 || i % providers.length === 0)) {
-      await delay(INTER_CALL_DELAY);
-    }
+  // Drop characters that are not people, and remap references to merged ids.
+  for (const [id, c] of Object.entries(state.characters)) {
+    if (isNarratorPlaceholder(c.name) && !(c._manualFields || []).length) { removed.push({ name: c.name, reason: 'the narrator, not a name' }); dropIds.add(id); }
+  }
+  for (const id of dropIds) {
+    idMap.set(id, null);
+    delete state.characters[id];
+  }
+  const mapId = (id) => (idMap.has(id) ? idMap.get(id) : id);
+  state.party.members = [...new Set((state.party.members || []).map(mapId).filter(id => id && state.characters[id]))];
+  for (const c of Object.values(state.characters)) {
+    for (const r of c.relationships || []) if (r.targetId && idMap.has(r.targetId)) r.targetId = idMap.get(r.targetId);
+  }
+  // Character review cards from earlier scans would undo these corrections.
+  state.pendingUpdates = (state.pendingUpdates || []).filter(u => u.type !== 'character');
 
-    const onR1Retry = (attempt, category, message) => {
-      report.errors.push({ pass: 'R1', category, message, timestamp: Date.now() });
+  // Classes: everything the story names as a class, plus ones edited by hand.
+  const oldClasses = Object.values(state.classes || {});
+  const usedClassIds = new Set();
+  const classes = {};
+  for (const c of fold.classes.values()) {
+    const ex = oldClasses.find(o => !usedClassIds.has(o.id) && fuzzyNameScore(o.name, c.name) >= 0.8);
+    const id = ex?.id || generateRpgId('class');
+    usedClassIds.add(id);
+    classes[id] = {
+      ...(ex || {}),
+      id,
+      name: ex?._manuallyEdited ? ex.name : c.name,
+      description: ex?._manuallyEdited ? ex.description : (c.description || ex?.description || null),
+      requirements: c.requirements || ex?.requirements || null,
+      type: ex?.type || 'class',
+      parentClass: ex?.parentClass || null,
+      lastUpdated: now,
     };
-
-    // Dispatch R1a (core) and R1b (gear) in parallel when hybrid providers available.
-    // maxRetries 0: the extract functions already retry unreadable replies;
-    // a second layer here turned one character into up to 6 calls.
-    let coreData = null;
-    let gearData = null;
-    if (providers.length >= 2) {
-      // Parallel: R1a on provider[0], R1b on provider[1]
-      const [coreResult, gearResult] = await Promise.all([
-        retryLLM(
-          () => extractCharacterCore(entry.displayName, entry.text, scanText, providers[0], comprehensionContext, systemType, preExtractedHints),
-          { maxRetries: 0, passName: `R1a-core-${entry.displayName}`, onRetry: onR1Retry }
-        ),
-        retryLLM(
-          () => extractCharacterGear(entry.displayName, entry.text, scanText, providers[1], comprehensionContext, systemType, preExtractedHints),
-          { maxRetries: 0, passName: `R1b-gear-${entry.displayName}`, onRetry: onR1Retry }
-        ),
-      ]);
-      coreData = coreResult;
-      gearData = gearResult;
-    } else {
-      // Sequential: both on single provider
-      coreData = await retryLLM(
-        () => extractCharacterCore(entry.displayName, entry.text, scanText, providers[0], comprehensionContext, systemType, preExtractedHints),
-        { maxRetries: 0, passName: `R1a-core-${entry.displayName}`, onRetry: onR1Retry }
-      );
-      if (coreData) {
-        await delay(INTER_CALL_DELAY);
-      }
-      gearData = await retryLLM(
-        () => extractCharacterGear(entry.displayName, entry.text, scanText, providers[0], comprehensionContext, systemType, preExtractedHints),
-        { maxRetries: 0, passName: `R1b-gear-${entry.displayName}`, onRetry: onR1Retry }
-      );
-    }
-
-    // Merge R1a + R1b into unified rpgData
-    if (coreData || gearData) {
-      r1Succeeded++;
-      const rpgData = {
-        class: coreData?.class || null,
-        subclass: coreData?.subclass || null,
-        level: coreData?.level || null,
-        race: coreData?.race || null,
-        stats: coreData?.stats || {},
-        xp: coreData?.xp || null,
-        cultivationRealm: coreData?.cultivationRealm || null,
-        cultivationStage: coreData?.cultivationStage || null,
-        role: coreData?.role || null,
-        abilities: gearData?.abilities || [],
-        equipment: gearData?.equipment || [],
-        inventory: gearData?.inventory || [],
-        currency: gearData?.currency || {},
-        statusEffects: gearData?.statusEffects || [],
-      };
-
-      // Fuzzy match existing character (Phase 1A)
-      let charId = fuzzyMatchCharacter(entry.displayName, state.characters);
-
-      const existingChar = charId ? state.characters[charId] : null;
-      const updatedChar = {
-        // Preserve ALL existing fields (R3 classification, NPC info, portraits, etc.)
-        ...(existingChar || {}),
-        // Override with authoritative fields
-        id: charId || generateRpgId('char'),
-        name: entry.displayName,
-        loreEntryName: entry.displayName,
-        aliases: existingChar?.aliases || [],
-        class: rpgData.class || existingChar?.class || null,
-        subclass: rpgData.subclass || existingChar?.subclass || null,
-        level: rpgData.level || existingChar?.level || null,
-        race: rpgData.race || existingChar?.race || null,
-        stats: rpgData.stats && Object.keys(rpgData.stats).length > 0 ? rpgData.stats : existingChar?.stats || {},
-        abilities: rpgData.abilities && rpgData.abilities.length > 0
-          ? (existingChar ? mergeAbilities(existingChar.abilities, rpgData.abilities) : rpgData.abilities)
-          : existingChar?.abilities || [],
-        equipment: rpgData.equipment && rpgData.equipment.length > 0
-          ? (existingChar ? mergeEquipment(existingChar.equipment, rpgData.equipment) : rpgData.equipment)
-          : existingChar?.equipment || [],
-        xp: rpgData.xp || existingChar?.xp || { current: null, needed: null },
-        currency: rpgData.currency && Object.keys(rpgData.currency).length > 0
-          ? (existingChar ? mergeCurrency(existingChar.currency, rpgData.currency) : rpgData.currency)
-          : existingChar?.currency || {},
-        statusEffects: rpgData.statusEffects && rpgData.statusEffects.length > 0 ? rpgData.statusEffects : existingChar?.statusEffects || [],
-        inventory: rpgData.inventory && rpgData.inventory.length > 0
-          ? (existingChar ? mergeInventory(existingChar.inventory, rpgData.inventory) : rpgData.inventory)
-          : existingChar?.inventory || [],
-        cultivationRealm: rpgData.cultivationRealm || existingChar?.cultivationRealm || null,
-        cultivationStage: rpgData.cultivationStage || existingChar?.cultivationStage || null,
-        role: rpgData.role || existingChar?.role || null,
-        lastUpdated: Date.now(),
-      };
-
-      // Track level changes
-      if (rpgData.level && existingChar && existingChar.level !== rpgData.level) {
-        updatedChar.levelHistory = [...(existingChar.levelHistory || []), { level: rpgData.level, timestamp: Date.now() }];
-      } else if (rpgData.level && !existingChar) {
-        updatedChar.levelHistory = [{ level: rpgData.level, timestamp: Date.now() }];
-      }
-
-      // Generate pending update if character changed
-      if (existingChar && hasCharacterChanged(existingChar, updatedChar)) {
-        state.pendingUpdates.push({
-          id: generateRpgId('rpg_update'),
-          type: 'character',
-          characterId: updatedChar.id,
-          characterName: updatedChar.name,
-          before: existingChar,
-          after: updatedChar,
-          changes: describeChanges(existingChar, updatedChar),
-          createdAt: Date.now(),
-        });
-      } else if (!existingChar) {
-        state.characters[updatedChar.id] = updatedChar;
-      }
-    } else {
-      r1Failed++;
-    }
-
-    if (onProgress) onProgress({ phase: 'characters', current: i + 1, total: characterEntries.length, subPhase: 'R1b-gear', characterName: entry.displayName, passStartedAt: r1Start, errorCount: report.errors.length });
   }
+  for (const o of oldClasses) if (o._manuallyEdited && !usedClassIds.has(o.id)) classes[o.id] = o;
+  for (const cls of Object.values(classes)) {
+    cls.practitioners = Object.values(state.characters)
+      .filter(ch => [ch.class, ch.subclass].some(n => n && fuzzyNameScore(n, cls.name) >= 0.8))
+      .map(ch => ch.name);
+  }
+  state.classes = classes;
 
-  report.passes.R1 = {
-    startedAt: r1Start,
-    duration: Date.now() - r1Start,
-    attempted: characterEntries.length,
-    succeeded: r1Succeeded,
-    failed: r1Failed,
-    skipped: r1Skipped,
-  };
-  report.counts.attempted += characterEntries.length;
-  report.counts.succeeded += r1Succeeded;
-  report.counts.failed += r1Failed;
-  report.counts.skipped += r1Skipped;
-
-  // Consolidate classes and races from character data (zero LLM calls)
-  consolidateClasses(state);
+  // Races: drop ones nobody has any more (unless edited by hand), then add new ones.
+  for (const [id, race] of Object.entries(state.races || {})) {
+    const members = Object.values(state.characters).filter(ch => ch.race && fuzzyNameScore(ch.race, race.name) >= 0.8).map(ch => ch.name);
+    if (!members.length && !race._manuallyEdited) delete state.races[id];
+    else race.knownMembers = members;
+  }
   consolidateRaces(state);
-}
 
-/**
- * Pass R2: Quest Extraction
- */
-async function r2_extractQuests(ctx) {
-  const { state, scanText, providers, comprehensionContext, systemType, preExtractedHints, onProgress, report } = ctx;
-  const r2Start = Date.now();
-  if (onProgress) onProgress({ phase: 'quests', current: 0, total: 1, subPhase: 'R2-quests', passStartedAt: r2Start, errorCount: report.errors.length });
-  console.log(`${LOG_PREFIX} R2: Extracting quests`);
-
-  const existingQuests = Object.values(state.quests);
-  const questResult = await retryLLM(
-    () => callWithFallback(providers, 0, (p) =>
-      extractQuests(scanText, existingQuests, p, comprehensionContext, systemType, preExtractedHints)
-    ),
-    { maxRetries: 1, passName: 'R2-quests', onRetry: (attempt, category, message) => {
-      report.errors.push({ pass: 'R2', category, message, timestamp: Date.now() });
-    }}
-  );
-
-  let r2Succeeded = 0, r2Failed = 0;
-  if (questResult) {
-    r2Succeeded = 1;
-    // Add new quests
-    if (questResult.newQuests) {
-      for (const q of questResult.newQuests) {
-        if (!q.title) continue;
-        // Fuzzy duplicate check (Phase 1A)
-        const isDuplicate = fuzzyMatchQuest(q.title, existingQuests, 0.8);
-        if (isDuplicate) continue;
-
-        const questId = generateRpgId('quest');
-        state.quests[questId] = {
-          id: questId,
-          title: q.title,
-          description: q.description || '',
-          status: 'active',
-          type: q.type || 'side',
-          objectives: (q.objectives || []).map(o => ({ text: o.text, completed: !!o.completed })),
-          rewards: q.rewards || null,
-          giver: q.giver || null,
-          location: null,
-          discoveredAt: Date.now(),
-          completedAt: null,
-          lastUpdated: Date.now(),
-        };
+  // Quests stated by the story.
+  let questsAdded = 0;
+  for (const q of fold.quests) {
+    const ex = Object.values(state.quests).find(o => reader.sameQuest(o.title, q.title));
+    if (ex) {
+      if (q.status !== 'active' && ex.status === 'active') { ex.status = q.status; ex.completedAt = now; }
+      for (const o of q.objectives) {
+        const eo = ex.objectives.find(x => fuzzyNameScore(x.text, o.text) >= 0.8);
+        if (!eo) ex.objectives.push(o);
+        else if (o.completed) eo.completed = true;
       }
+      ex.lastUpdated = now;
+    } else {
+      const id = generateRpgId('quest');
+      state.quests[id] = {
+        id, title: q.title, description: '', status: q.status, type: 'side',
+        objectives: q.objectives, rewards: null, giver: q.giver || null, location: null,
+        discoveredAt: now, completedAt: q.status === 'active' ? null : now, lastUpdated: now,
+      };
+      questsAdded++;
     }
-
-    // Apply quest updates
-    if (questResult.questUpdates) {
-      for (const update of questResult.questUpdates) {
-        if (!update.title) continue;
-        // Fuzzy quest title matching (Phase 1A)
-        const matchingQuest = fuzzyMatchQuest(update.title, existingQuests, 0.8);
-        if (!matchingQuest) continue;
-
-        if (update.statusChange && ['completed', 'failed', 'abandoned'].includes(update.statusChange)) {
-          state.pendingUpdates.push({
-            id: generateRpgId('rpg_update'),
-            type: 'quest_status',
-            questId: matchingQuest.id,
-            questTitle: matchingQuest.title,
-            oldStatus: matchingQuest.status,
-            newStatus: update.statusChange,
-            createdAt: Date.now(),
-          });
-        }
-
-        if (update.objectiveUpdates) {
-          for (const objUpdate of update.objectiveUpdates) {
-            const matchingObj = matchingQuest.objectives.find(o =>
-              fuzzyNameScore(o.text, objUpdate.text) >= FUZZY_MATCH_THRESHOLD
-            );
-            if (matchingObj && !matchingObj.completed && objUpdate.completed) {
-              state.pendingUpdates.push({
-                id: generateRpgId('rpg_update'),
-                type: 'quest_objective',
-                questId: matchingQuest.id,
-                questTitle: matchingQuest.title,
-                objectiveText: matchingObj.text,
-                createdAt: Date.now(),
-              });
-            }
-          }
-        }
-      }
-    }
-  } else {
-    r2Failed = 1;
   }
 
-  report.passes.R2 = {
-    startedAt: r2Start,
-    duration: Date.now() - r2Start,
-    attempted: 1,
-    succeeded: r2Succeeded,
-    failed: r2Failed,
-    skipped: 0,
+  const protChar = prot.person ? Object.values(state.characters).find(c => c.isProtagonist) : null;
+  state.protagonist = {
+    characterId: protChar?.id || null,
+    name: protChar?.name || null,
+    pov: prot.pov,
+    source: protChar ? prot.source : null,
   };
-  report.counts.attempted += 1;
-  report.counts.succeeded += r2Succeeded;
-  report.counts.failed += r2Failed;
 
-  if (onProgress) onProgress({ phase: 'quests', current: 1, total: 1, subPhase: 'R2-quests', passStartedAt: r2Start, errorCount: report.errors.length });
+  const summary = {
+    startedAt: start,
+    duration: Date.now() - start,
+    chunks: read.total,
+    read: read.read,
+    cached: read.total - read.read - read.failed,
+    failed: read.failed,
+    droppedUnsupported: read.dropped,
+    unattributedEvents: fold.unattributed,
+    characters: Object.keys(state.characters).length,
+    added,
+    merged,
+    removed,
+    changedFields,
+    classes: Object.keys(state.classes).length,
+    questsAdded,
+    protagonist: state.protagonist,
+    attempted: read.read + read.failed,
+    succeeded: read.read,
+    skipped: read.total - read.read - read.failed,
+  };
+  report.passes.R1 = summary;
+  report.counts.attempted += summary.attempted;
+  report.counts.succeeded += summary.succeeded;
+  report.counts.failed += read.failed;
+  report.counts.skipped += summary.skipped;
+
+  console.log(`${LOG_PREFIX} R1: ${read.total} chunks (${read.read} read, ${summary.cached} cached, ${read.failed} failed); ${summary.characters} characters (+${added}), ${merged.length} merged, ${removed.length} removed, ${changedFields} fields corrected; protagonist ${state.protagonist.name || 'unknown'} (${prot.pov} person, ${state.protagonist.source || '-'})`);
+  for (const m of merged) console.log(`${LOG_PREFIX} R1: merged "${m.from}" into "${m.into}"`);
+  for (const r of removed) console.log(`${LOG_PREFIX} R1: removed "${r.name}" (${r.reason})`);
+  return summary;
 }
 
 /**
@@ -2160,7 +1517,7 @@ async function r3_classifyParty(ctx) {
 
     const classification = await retryLLM(
       () => callWithFallback(providers, 0, (p) =>
-        classifyPartyAndNPCs(enrichedChars, scanText, p, comprehensionContext, systemType)
+        classifyPartyAndNPCs(enrichedChars, scanText, p, comprehensionContext, systemType, state.protagonist?.name || null)
       ),
       { maxRetries: 1, passName: 'R3-classification', onRetry: (attempt, category, message) => {
         report.errors.push({ pass: 'R3', category, message, timestamp: Date.now() });
@@ -2192,6 +1549,7 @@ async function r3_classifyParty(ctx) {
       for (const npc of (classification.npcs || [])) {
         if (!npc.name) continue;
         const matchId = fuzzyMatchCharacter(npc.name, state.characters);
+        if (matchId && matchId === state.protagonist?.characterId) { classifiedIds.add(matchId); continue; }
         if (matchId) {
           classifiedIds.add(matchId);
           const char = state.characters[matchId];
@@ -2231,6 +1589,10 @@ async function r3_classifyParty(ctx) {
       }
 
       // Update party members list
+      // The protagonist is always on their own side.
+      const prot = state.protagonist?.characterId && state.characters[state.protagonist.characterId];
+      if (prot) { prot.isPartyMember = true; prot.isNPC = false; if (!PARTY_SIDE_ROLES.has(prot.partyRole)) prot.partyRole = 'party-member'; }
+
       state.party.members = Object.entries(state.characters)
         .filter(([, c]) => c.isPartyMember)
         .map(([id]) => id);
@@ -2412,6 +1774,7 @@ async function r5_enrichDescriptions(ctx) {
 
 async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, onProgress, comprehensionContext, secondaryGenerateTextFn, options = {}) {
   const { forceReEnrich = false } = options;
+  // options.manual: the user pressed Scan. options.fullRescan: forget cached reads and reread everything.
   const state = { ...LITRPG_STATE_DEFAULTS, ...rpgState };
   migrateLitrpgState(state);
   const systemType = state.systemType || 'generic';
@@ -2428,75 +1791,45 @@ async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, 
     summary: '',
   };
 
-  // --- Incremental scanning (Phase 2) ---
-  const newTextLength = storyText.length - (state.lastProcessedLength || 0);
-  if (state.lastScanAt && newTextLength < MIN_INCREMENTAL_CHARS) {
-    console.log(`${LOG_PREFIX} Skipping scan — only ${newTextLength} new chars (threshold: ${MIN_INCREMENTAL_CHARS})`);
-    if (onProgress) onProgress({ phase: 'complete' });
-    report.completedAt = Date.now();
-    report.duration = report.completedAt - report.startedAt;
-    report.summary = `Scan skipped — only ${newTextLength} new chars`;
-    return { state, report, newCharacterIds: [] };
-  }
-
-  // Dynamic context: overlap for continuity + new text
-  const contextSize = Math.min(8000, Math.max(MAX_STORY_CONTEXT, newTextLength + 2000));
-  const contextStart = state.lastProcessedLength > 0
-    ? Math.max(0, state.lastProcessedLength - 2000)
-    : Math.max(0, storyText.length - contextSize);
-  const scanText = storyText.slice(contextStart);
-
-  // --- Regex pre-extraction (Phase 1D) ---
-  const preExtracted = regexPreExtract(scanText);
-  const preExtractedHints = formatPreExtractedHints(preExtracted);
-  if (preExtractedHints) {
-    console.log(`${LOG_PREFIX} Pre-extracted:`, Object.entries(preExtracted).filter(([, v]) => Array.isArray(v) ? v.length > 0 : Object.keys(v).length > 0).map(([k]) => k).join(', '));
-  }
-
-  const characterEntries = loreEntries.filter(e => {
-    const entryType = getEntryType(e.text, e.displayName);
-    if (entryType === 'character') return true;
-    // Any other type, built-in or custom @type ("class", "class tier"), is not a character.
-    if (entryType !== 'unknown') return false;
-    const text = (e.text || '').toLowerCase();
-    return text.includes('name:') || text.includes('appearance') || text.includes('class:');
-  });
+  const characterEntries = loreEntries.filter(isCharacterLoreEntry);
 
   const providers = secondaryGenerateTextFn
     ? [generateTextFn, secondaryGenerateTextFn]
     : [generateTextFn];
 
+  // R3-R5 work from the recent part of the story; R1 reads all of it.
+  const scanText = storyText.slice(-RECENT_CONTEXT);
+
   // Shared context for all R-passes
   const ctx = {
     state, storyText, scanText, loreEntries, characterEntries,
     generateTextFn, providers, comprehensionContext, systemType,
-    preExtractedHints, onProgress, report, forceReEnrich,
+    onProgress, report, forceReEnrich, options,
   };
 
-  // --- R1: Character RPG Extraction ---
-  // Fallback: discover characters from text when no lorebook character entries exist
-  if (characterEntries.length === 0) {
-    await r1_discoverCharactersFromText(ctx);
-  }
-  await r1_extractCharacterRPG(ctx);
+  // --- R1: read the whole story (cached per chunk), rebuild cast and sheets ---
+  const r1 = await r1_readWholeStory(ctx);
   const newCharacterIds = Object.keys(state.characters || {}).filter(id => !preR1CharIds.has(id));
-  await delay(INTER_CALL_DELAY);
 
-  // --- R2: Quest Extraction ---
-  await r2_extractQuests(ctx);
-  await delay(INTER_CALL_DELAY);
+  // Nothing changed in the story since the last scan: the sheets are already
+  // rebuilt from the cache, and the LLM passes below would repeat themselves.
+  const nothingNew = r1.read === 0 && r1.failed === 0 && !options.manual && !options.fullRescan && state.lastScanAt;
+  if (!nothingNew) {
+    // --- R3: Party & NPC Classification ---
+    await delay(INTER_CALL_DELAY);
+    await r3_classifyParty(ctx);
 
-  // --- R3: Party & NPC Classification ---
-  await r3_classifyParty(ctx);
+    // --- R3c: Extract structured inter-character relationships (no LLM) ---
+    r3c_extractInterCharRelationships(ctx);
 
-  // --- R3c: Extract structured inter-character relationships (no LLM) ---
-  r3c_extractInterCharRelationships(ctx);
+    // --- R4: Lore Element Extraction ---
+    await r4_extractLoreElements(ctx);
 
-  // --- R4: Lore Element Extraction ---
-  await r4_extractLoreElements(ctx);
-
-  // --- R5: Entity Enrichment ---
-  await r5_enrichDescriptions(ctx);
+    // --- R5: Entity Enrichment ---
+    await r5_enrichDescriptions(ctx);
+  } else {
+    console.log(`${LOG_PREFIX} No story text changed since the last scan - skipping R3-R5`);
+  }
 
   // --- Finalize ---
   state.lastProcessedLength = storyText.length;
@@ -3258,10 +2591,7 @@ module.exports = {
 
   // Scan
   scanForRPGData,
-  extractCharacterRPG,
-  extractCharacterCore,
-  extractCharacterGear,
-  extractQuests,
+  isCharacterLoreEntry,
   classifyPartyAndNPCs,
   collectR4Elements,
   generateLoreElementEntries,
@@ -3298,13 +2628,11 @@ module.exports = {
   fuzzyMatchCharacter,
   fuzzyMatchQuest,
   describeChanges,
-  regexPreExtract,
-  validateCharacterRPG,
-  validateQuestResult,
   validateClassification,
 
   // Constants
   TRACKED_FIELDS,
+  MANUAL_TRACKED_FIELDS,
   LITRPG_STATE_DEFAULTS,
   CHARACTER_PERSONA_DEFAULTS,
   LITRPG_CHARACTER_TEMPLATE,

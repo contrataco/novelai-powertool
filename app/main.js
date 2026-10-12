@@ -3169,7 +3169,7 @@ ipcMain.handle('litrpg:detect', async (event, { storyText, storyId }) => {
   }
 });
 
-ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, forceReEnrich }) => {
+ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, forceReEnrich, fullRescan }) => {
   try {
     const rpgState = db.getLitrpgState(storyId) || { ...db.LITRPG_STATE_DEFAULTS };
     if (!rpgState.enabled) return { success: false, error: 'LitRPG mode not enabled' };
@@ -3202,7 +3202,7 @@ ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, f
         },
         comprehensionContext || undefined,
         secondaryGenerateTextFn,
-        { forceReEnrich: !!forceReEnrich }
+        { forceReEnrich: !!forceReEnrich, fullRescan: !!fullRescan, manual: true }
       ),
       SCAN_TIMEOUT_MS,
       'LitRPG scan'
@@ -3295,7 +3295,14 @@ ipcMain.handle('litrpg:update-character', (event, { storyId, characterId, update
   if (!rpgState) return { success: false, error: 'No LitRPG state' };
   const char = rpgState.characters[characterId];
   if (!char) return { success: false, error: 'Character not found' };
+  // Remember which sheet fields the user changed by hand: RPG scans never overwrite those.
+  const manual = new Set(char._manualFields || []);
+  for (const [k, v] of Object.entries(updates)) {
+    if (litrpgTracker.MANUAL_TRACKED_FIELDS.includes(k) && JSON.stringify(char[k] ?? null) !== JSON.stringify(v ?? null)) manual.add(k);
+  }
+  if (updates.narrative && (updates.narrative.storyFunction ?? null) !== (char.narrative?.storyFunction ?? null)) manual.add('storyFunction');
   Object.assign(char, updates, { lastUpdated: Date.now() });
+  if (manual.size) char._manualFields = [...manual];
   db.setLitrpgState(storyId, rpgState);
   return { success: true, state: rpgState };
 });
@@ -3303,6 +3310,9 @@ ipcMain.handle('litrpg:update-character', (event, { storyId, characterId, update
 ipcMain.handle('litrpg:delete-character', (event, { storyId, characterId }) => {
   const rpgState = db.getLitrpgState(storyId);
   if (!rpgState) return { success: false, error: 'No LitRPG state' };
+  // Remember the name so the next scan does not add this character back.
+  const gone = rpgState.characters[characterId];
+  if (gone?.name) rpgState.removedCharacterNames = [...new Set([...(rpgState.removedCharacterNames || []), gone.name])];
   delete rpgState.characters[characterId];
   rpgState.party.members = rpgState.party.members.filter(id => id !== characterId);
   rpgState.pendingUpdates = rpgState.pendingUpdates.filter(u => u.characterId !== characterId);

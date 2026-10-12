@@ -2,6 +2,7 @@
 
 import { state, bus } from './state.js';
 import { saveLoreState, refreshLoreUI, loreCall } from './lore-creator.js';
+import { readStoryTextFromDOM } from './webview-polling.js';
 import { enqueue as enqueuePortraits } from './portrait-queue.js';
 import {
   rpgTab, rpgContent,
@@ -19,7 +20,7 @@ import {
   rpgUpdatesList, rpgUpdatesSection, rpgUpdatesCount,
   rpgAutoScan, rpgAutoSync, rpgDisableBtn,
   rpgAcceptAllBtn, rpgRejectAllBtn,
-  rpgForceReEnrich, rpgNpcSearch, rpgNpcGroupBtn,
+  rpgForceReEnrich, rpgFullRescan, rpgNpcSearch, rpgNpcGroupBtn,
   rpgInventoryList, rpgCurrencyList, rpgStatusEffectsList,
   rpgStatOverlay, rpgStatOverlayContent, rpgStatOverlayClose,
   rpgFactionList, rpgFactionCount,
@@ -1953,35 +1954,31 @@ async function runRpgScan() {
   }, 1000);
 
   try {
+    // The whole story, the same way the lore scan reads it. The editor's
+    // textContent only holds the chunks NovelAI has loaded, without line breaks.
     let storyText = '';
-    try {
-      storyText = await webview.executeJavaScript(`
-        (function() {
-          var pm = document.querySelector('.ProseMirror');
-          if (pm) return pm.textContent || '';
-          var el = document.querySelector('#scene-vis-story-text');
-          return el ? (el.dataset.text || el.textContent || '') : '';
-        })()
-      `);
-    } catch (_) { /* fallback empty */ }
+    try { storyText = (await loreCall('getStoryText')) || ''; } catch (_) { /* fall back below */ }
+    if (storyText.trim().length < 100) {
+      try { storyText = (await readStoryTextFromDOM()) || storyText; } catch (_) { /* keep what we have */ }
+    }
 
+    // Lorebook entries through the proxy, as the lore scan does: @protagonist,
+    // @type and character names all come from here.
     let loreEntries = [];
     try {
-      loreEntries = await webview.executeJavaScript(`
-        (function() {
-          if (window.__loreCreator && window.__loreCreator.getEntries) {
-            return window.__loreCreator.getEntries();
-          }
-          return [];
-        })()
-      `);
-    } catch (_) { /* fallback empty */ }
+      const entries = await loreCall('getEntries');
+      if (Array.isArray(entries)) loreEntries = entries;
+    } catch (_) { /* scan without the lorebook */ }
 
     const startedForStory = state.currentStoryId;
     const scanOptions = {};
     if (rpgForceReEnrich && rpgForceReEnrich.checked) {
       scanOptions.forceReEnrich = true;
       rpgForceReEnrich.checked = false;
+    }
+    if (rpgFullRescan && rpgFullRescan.checked) {
+      scanOptions.fullRescan = true;
+      rpgFullRescan.checked = false;
     }
     const result = await window.powertool.litrpgScan(storyText, state.currentStoryId, loreEntries, scanOptions);
 
@@ -2397,7 +2394,7 @@ async function rejectAll() {
 function setupIPCListeners() {
   window.powertool.onLitrpgScanProgress((progress) => {
     const phaseLabels = {
-      characters: 'Extracting character RPG data',
+      characters: 'Reading the whole story: cast, classes, levels, items, quests',
       quests: 'Scanning for quests',
       party: 'Classifying party & NPCs',
       'lore-elements': 'Generating RPG lore entries',

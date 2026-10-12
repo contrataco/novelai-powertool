@@ -516,6 +516,7 @@ export const rpgDisableBtn = document.getElementById('rpgDisableBtn');
 export const rpgAcceptAllBtn = document.getElementById('rpgAcceptAllBtn');
 export const rpgRejectAllBtn = document.getElementById('rpgRejectAllBtn');
 export const rpgForceReEnrich = document.getElementById('rpgForceReEnrich');
+export const rpgFullRescan = document.getElementById('rpgFullRescan');
 export const rpgNpcSearch = document.getElementById('rpgNpcSearch');
 export const rpgNpcGroupBtn = document.getElementById('rpgNpcGroupBtn');
 export const rpgInventoryList = document.getElementById('rpgInventoryList');
