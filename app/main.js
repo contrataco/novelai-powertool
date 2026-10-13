@@ -3575,19 +3575,24 @@ ipcMain.handle('litrpg:reverse-sync-all', (event, { entries, storyId }) => {
 
 // IPC Handlers — Character Persona
 
+// The Cast Scan for stories without LitRPG tracking: personality, story role
+// and looks for every lorebook character, plus relationships from their
+// entries. Never writes RPG fields.
 ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntries }) => {
   try {
-    const generateTextFn = makeLoreGenerateTextFn(store);
+    const generateTextFn = makeLoreGenerateTextFn();
     const litrpgState = db.getOrCreateLitrpgState(storyId);
     const compState = db.getComprehension(storyId);
     const comprehensionCtx = compState
       ? loreComprehension.formatComprehensionContext(compState.masterSummary, compState.entityProfiles)
       : '';
     const metadata = require('./metadata');
-    const characterEntries = existingEntries.filter(e => {
+    const characterEntries = (existingEntries || []).filter(e => {
       const type = metadata.getEntryType(e.text, e.displayName);
       return type === 'character';
     });
+    if (!characterEntries.length) return { success: true, state: litrpgState, noCharacters: true };
+    const before = new Set(Object.keys(litrpgState.characters || {}));
     const personaExtractor = require('./persona-extractor');
     const ctx = {
       storyText, characterEntries, generateTextFn,
@@ -3595,14 +3600,17 @@ ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntri
       onProgress: (p) => event.sender.send('persona:scan-progress', p),
     };
     const personaResult = await personaExtractor.runPersonaExtraction(ctx);
-    const personaState = personaResult?.state || ctx.state;
-    const visualProfileUpdatedIds = personaResult?.visualProfileUpdatedIds || [];
+    // Merge into what is saved now: a lore scan's persona run may have saved meanwhile.
+    const personaState = mergePersonaIntoLatest(storyId, personaResult?.state || ctx.state);
+    litrpgTracker.r3c_extractInterCharRelationships({ state: personaState, characterEntries });
+    const visualProfileUpdatedIds = (personaResult?.visualProfileUpdatedIds || []).filter(id => personaState.characters?.[id]);
+    const newCharacterIds = Object.keys(personaState.characters || {}).filter(id => !before.has(id));
     db.setLitrpgState(storyId, personaState);
     hydratePortraits(personaState, storyId);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('litrpg:state-updated', { state: personaState, visualProfileUpdatedIds });
     }
-    return { success: true, state: personaState };
+    return { success: true, state: personaState, newCharacterIds, characterCount: characterEntries.length };
   } catch (err) {
     console.error('[Persona] Scan failed:', err);
     return { success: false, error: err.message };

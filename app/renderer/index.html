@@ -1016,7 +1016,7 @@
           <button id="rpgScanBtn" class="rpg-btn-primary">
             <svg class="rpg-btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
             <span class="rpg-btn-spinner"></span>
-            RPG Scan
+            <span id="rpgScanLabel">RPG Scan</span>
           </button>
           <button id="rpgSyncLorebookBtn" class="rpg-btn-secondary">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
@@ -1031,8 +1031,9 @@
           </button>
           <button id="graphToggleBtn" class="rpg-action-btn u-hidden" title="Character relationship graph">Graph</button>
         </div>
-        <label class="rpg-option-label"><input type="checkbox" id="rpgForceReEnrich"> Re-enrich all descriptions</label>
-        <label class="rpg-option-label" title="Every scan reads the whole story but reuses earlier reads of unchanged parts. This rereads every part from scratch."><input type="checkbox" id="rpgFullRescan"> Full rescan (reread the whole story)</label>
+        <div id="rpgCastScanHint" class="rpg-cast-hint u-hidden">Cast Scan reads the recent story for every character in the lorebook: personality, role in the story, looks, and relationships. It does not track stats or items.</div>
+        <label class="rpg-option-label rpg-only-option"><input type="checkbox" id="rpgForceReEnrich"> Re-enrich all descriptions</label>
+        <label class="rpg-option-label rpg-only-option" title="Every scan reads the whole story but reuses earlier reads of unchanged parts. This rereads every part from scratch."><input type="checkbox" id="rpgFullRescan"> Full rescan (reread the whole story)</label>
 
         <!-- Scan Status -->
         <div class="rpg-scan-status u-hidden" id="rpgScanStatus">
@@ -1047,7 +1048,7 @@
             <span class="rpg-scan-step-line"></span>
             <div class="rpg-scan-step" data-phase="enrichment"><span class="rpg-scan-step-dot"></span><span>R5</span></div>
           </div>
-          <div id="rpgScanPhase" style="font-size:11px;color:var(--cat-rpg);">Scanning...</div>
+          <div id="rpgScanPhase" style="font-size:16px;color:var(--cat-rpg);">Scanning...</div>
           <div class="rpg-scan-elapsed" id="rpgScanElapsed"></div>
         </div>
 

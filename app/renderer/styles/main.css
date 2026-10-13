@@ -4125,8 +4125,23 @@
     /* Action bar improved (Phase 4.2) */
     .rpg-action-bar-v2 {
       display: flex;
+      flex-wrap: wrap;
       gap: 6px;
       margin-bottom: var(--rpg-section-gap);
+    }
+    /* Large enough to find and hit under magnification. */
+    .rpg-action-bar-v2 .rpg-btn-primary,
+    .rpg-action-bar-v2 .rpg-btn-secondary,
+    .rpg-action-bar-v2 .rpg-action-btn {
+      min-height: 40px;
+      font-size: 16px !important;
+      flex: 1 1 auto;
+    }
+    .rpg-cast-hint {
+      font-size: 16px;
+      line-height: 1.4;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
     }
     .rpg-action-bar-v2 .rpg-btn-primary {
       flex: 1;

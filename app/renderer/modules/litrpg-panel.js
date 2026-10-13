@@ -145,6 +145,11 @@ function getRpgState() {
   return state.litrpgState || {};
 }
 
+// The panel shows RPG tracking when LitRPG is on or detected, and the cast view otherwise.
+function isRpgStory(rpg) {
+  return !!(rpg.enabled || rpg.detected);
+}
+
 function saveLitrpgState() {
   if (!state.currentStoryId || !state.litrpgState) return;
   window.powertool.litrpgSetState(state.currentStoryId, state.litrpgState);
@@ -157,16 +162,10 @@ function saveLitrpgState() {
 export function refreshRpgUI() {
   const rpg = getRpgState();
 
-  // Tab visibility — show whenever characters exist OR LitRPG is active
+  // Tab visibility: every story has a cast, so the tab shows once a story is open.
   if (rpgTab) {
-    const litrpgState = state.litrpgState;
-    const hasCharacters = litrpgState && Object.keys(litrpgState.characters || {}).length > 0;
-    if (hasCharacters || rpg.enabled || rpg.detected) {
-      rpgTab.classList.remove('u-hidden');
-      rpgTab.textContent = (rpg.enabled || rpg.detected) ? 'Cast / RPG' : 'Cast';
-    } else {
-      rpgTab.classList.add('u-hidden');
-    }
+    rpgTab.classList.toggle('u-hidden', !state.currentStoryId);
+    rpgTab.textContent = (rpg.enabled || rpg.detected) ? 'Cast / RPG' : 'Cast';
   }
 
   // Detection banner
@@ -188,15 +187,33 @@ export function refreshRpgUI() {
     }
   }
 
-  // Scan/sync buttons visibility
-  if (rpgScanBtn) rpgScanBtn.disabled = !rpg.enabled || state.litrpgScanning;
-  if (rpgSyncLorebookBtn) rpgSyncLorebookBtn.disabled = !rpg.enabled;
-  if (rpgReverseSyncBtn) rpgReverseSyncBtn.disabled = !rpg.enabled;
+  // Same rule as the view below: RPG tools for LitRPG stories, the Cast Scan
+  // for every other story. The RPG-only controls are hidden, not grayed out.
+  const castMode = !isRpgStory(rpg);
+  if (rpgScanBtn) {
+    rpgScanBtn.disabled = state.litrpgScanning || (!castMode && !rpg.enabled);
+    rpgScanBtn.title = castMode
+      ? 'Read the story for each lorebook character: personality, role, looks and relationships'
+      : 'Read the story for classes, levels, stats, items and quests';
+  }
+  const scanLabel = document.getElementById('rpgScanLabel');
+  if (scanLabel) scanLabel.textContent = castMode ? 'Cast Scan' : 'RPG Scan';
+  if (rpgSyncLorebookBtn) {
+    rpgSyncLorebookBtn.classList.toggle('u-hidden', castMode);
+    rpgSyncLorebookBtn.disabled = !rpg.enabled;
+  }
+  if (rpgReverseSyncBtn) {
+    rpgReverseSyncBtn.classList.toggle('u-hidden', castMode);
+    rpgReverseSyncBtn.disabled = !rpg.enabled;
+  }
+  document.querySelectorAll('#rpgContent .rpg-only-option').forEach(el => el.classList.toggle('u-hidden', castMode));
+  document.getElementById('rpgCastScanHint')?.classList.toggle('u-hidden', !castMode);
+  if (rpgScanSteps) rpgScanSteps.classList.toggle('u-hidden', castMode);
 
-  // Graph toggle button — only visible when LitRPG is enabled with characters
+  // Graph toggle: relationships matter for any cast, so it shows whenever there are characters
   if (graphToggleBtn) {
     const hasChars = Object.keys(rpg.characters || {}).length > 0;
-    graphToggleBtn.classList.toggle('u-hidden', !(rpg.enabled && hasChars));
+    graphToggleBtn.classList.toggle('u-hidden', !((rpg.enabled || castMode) && hasChars));
     graphToggleBtn.textContent = graphViewActive ? 'List' : 'Graph';
   }
 
@@ -204,7 +221,7 @@ export function refreshRpgUI() {
   if (rpgAutoScan) rpgAutoScan.checked = rpg.autoScan !== false;
   if (rpgAutoSync) rpgAutoSync.checked = !!rpg.autoSync;
 
-  const isLitRPG = rpg.enabled || rpg.detected;
+  const isLitRPG = isRpgStory(rpg);
 
   // Toggle between persona cast view and LitRPG sections
   const rpgOnlySections = [
@@ -309,7 +326,7 @@ function renderPersonaCast(rpg) {
   if (allChars.length === 0) {
     rpgCastView.innerHTML = `<div class="rpg-party-empty">
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      <div>No characters yet. Run a <b>Lore Scan</b> to populate your cast from the story.</div>
+      <div style="font-size:16px;">No characters yet. Click <b>Cast Scan</b> to fill in the cast from the lorebook's characters. If the lorebook has none yet, run a <b>Lore Scan</b> first.</div>
     </div>`;
     return;
   }
@@ -2048,6 +2065,71 @@ async function deleteAlbumImage(charId, imageId) {
 let scanElapsedTimer = null;
 let lastEtaText = '';
 
+const CAST_PHASE_LABELS = {
+  'persona-P1': 'Reading personalities',
+  'persona-P2': 'Working out story roles',
+  'persona-P3': 'Reading what characters look like',
+};
+
+// The Cast Scan, for stories without LitRPG tracking. Same guards as the RPG scan.
+async function runCastScan() {
+  if (!state.currentStoryId || state.litrpgScanning) return;
+  if (state.loreIsScanning) {
+    showToast('A Lore Scan is running. Try the Cast Scan when it finishes.', 4000, 'warn');
+    return;
+  }
+  state.litrpgScanning = true;
+  state.llmBusy = true;
+  const startedForStory = state.currentStoryId;
+  if (rpgScanStatus) rpgScanStatus.classList.remove('u-hidden');
+  if (rpgScanPhase) rpgScanPhase.textContent = 'Starting cast scan...';
+  if (rpgScanBtn) { rpgScanBtn.disabled = true; rpgScanBtn.classList.add('scanning'); }
+  window.powertool.onPersonaScanProgress((p) => {
+    if (!rpgScanPhase || state.currentStoryId !== startedForStory) return;
+    let label = CAST_PHASE_LABELS[p.phase] || 'Scanning';
+    if (p.current != null && p.total) label += ` (${p.current}/${p.total})`;
+    if (p.characterName) label += `: ${p.characterName}`;
+    rpgScanPhase.textContent = label;
+  });
+
+  try {
+    let storyText = '';
+    try { storyText = (await loreCall('getStoryText')) || ''; } catch (_) { /* fall back below */ }
+    if (storyText.trim().length < 100) {
+      try { storyText = (await readStoryTextFromDOM()) || storyText; } catch (_) { /* keep what we have */ }
+    }
+    const entries = await loreCall('getEntries');
+    const loreEntries = Array.isArray(entries) ? entries : [];
+
+    const result = await window.powertool.personaScan(state.currentStoryId, storyText, loreEntries);
+    if (state.currentStoryId !== startedForStory) return;
+    if (!result?.success) {
+      showToast(`Cast scan failed: ${result?.error || 'Unknown error'}`, 5000, 'error');
+    } else if (result.noCharacters) {
+      showToast('No characters in the lorebook yet. Run a Lore Scan first, then the Cast Scan.', 6000, 'warn');
+    } else {
+      state.litrpgState = result.state;
+      // Portraits: the litrpg:state-updated event sent with this result queues them.
+      refreshRpgUI();
+      showToast(`Cast scan complete: ${result.characterCount} character${result.characterCount === 1 ? '' : 's'} read`, 4000, 'success');
+    }
+  } catch (err) {
+    showToast(`Cast scan error: ${err.message || 'Unknown error'}`, 5000, 'error');
+    console.error('[Cast] Scan error:', err);
+  } finally {
+    state.litrpgScanning = false;
+    state.llmBusy = false;
+    if (rpgScanStatus) rpgScanStatus.classList.add('u-hidden');
+    if (rpgScanBtn) { rpgScanBtn.disabled = false; rpgScanBtn.classList.remove('scanning'); }
+    refreshRpgUI();
+  }
+}
+
+function runScanForStory() {
+  if (isRpgStory(getRpgState())) runRpgScan();
+  else runCastScan();
+}
+
 async function runRpgScan() {
   if (!state.currentStoryId || state.litrpgScanning) return;
   state.litrpgScanning = true;
@@ -2628,7 +2710,7 @@ export function init() {
   // Button handlers
   if (rpgEnableBtn) rpgEnableBtn.addEventListener('click', enableLitRPG);
   if (rpgDismissBtn) rpgDismissBtn.addEventListener('click', dismissDetection);
-  if (rpgScanBtn) rpgScanBtn.addEventListener('click', runRpgScan);
+  if (rpgScanBtn) rpgScanBtn.addEventListener('click', runScanForStory);
   if (rpgSyncLorebookBtn) rpgSyncLorebookBtn.addEventListener('click', syncToLorebook);
   if (rpgReverseSyncBtn) rpgReverseSyncBtn.addEventListener('click', handleReverseSync);
   if (rpgDisableBtn) rpgDisableBtn.addEventListener('click', disableLitRPG);

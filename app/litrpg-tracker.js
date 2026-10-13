@@ -2652,6 +2652,7 @@ function clearPlayerPin(state) {
 // ============================================================================
 
 module.exports = {
+  r3c_extractInterCharRelationships,
   setPlayer,
   clearPlayerPin,
   // Detection
