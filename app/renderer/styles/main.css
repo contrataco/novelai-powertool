@@ -2104,16 +2104,17 @@
       margin-bottom: 12px;
     }
 
+    /* Empty frame: still, so it does not look like a generation is running. */
     .scene-image.placeholder {
-      background: linear-gradient(110deg, var(--bg-elevated) 30%, var(--bg-surface) 50%, var(--bg-elevated) 70%);
-      background-size: 200% 100%;
-      animation: shimmer 2.5s ease infinite;
+      background: var(--bg-elevated);
       aspect-ratio: 1;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--text-dim);
-      font-size: 14px;
+      padding: 16px;
+      text-align: center;
+      color: var(--text-secondary, var(--text-dim));
+      font-size: 16px;
     }
 
     @keyframes shimmer {

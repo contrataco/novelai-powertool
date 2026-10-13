@@ -601,4 +601,39 @@ export function init() {
       } catch { /* ignore */ }
     }
   });
+
+  // Opening a story shows its newest saved image instead of the previous
+  // story's image or an empty frame.
+  bus.on('story:changed', ({ storyId } = {}) => showLastSavedImage(storyId || state.currentStoryId));
+}
+
+function showEmptyImage() {
+  imageContainer.innerHTML = '<div class="scene-image placeholder">No image yet for this story. Click "Generate Image" to make one.</div>';
+}
+
+async function showLastSavedImage(storyId) {
+  state.currentImageData = null;
+  state.currentGenerationMeta = null;
+  commitBtn.disabled = true;
+  showEmptyImage();
+  if (!storyId) return;
+  try {
+    const items = await window.powertool.mediaList(storyId, { type: 'image' });
+    for (const item of items || []) {
+      const data = await window.powertool.mediaGetFull(storyId, item.id);
+      // A new image or another story may have arrived while this was loading.
+      if (state.currentStoryId !== storyId || imageContainer.querySelector('img')) return;
+      if (!data) continue;
+      imageContainer.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = data;
+      img.className = 'scene-image';
+      img.alt = 'Last generated scene';
+      img.title = item.prompt || '';
+      imageContainer.appendChild(img);
+      return;
+    }
+  } catch (e) {
+    console.warn('[ImageGen] Could not load the last saved image:', e.message);
+  }
 }
