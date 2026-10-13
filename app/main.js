@@ -211,6 +211,12 @@ function createWindow() {
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     webPreferences.preload = path.join(__dirname, 'webview-preload.js');
   });
+  // NovelAI stays hidden behind the headless editor. Chromium throttles timers
+  // on hidden pages, which delays the PowerTool script's replies past the
+  // proxy's 15s timeout, so every lorebook call failed.
+  mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
+    try { guest.setBackgroundThrottling(false); } catch (e) { console.log('[Main] Could not stop throttling the NovelAI page:', e.message); }
+  });
 
   // Lorebook work happens in the renderer; copy its lore lines to the app log.
   mainWindow.webContents.on('console-message', (_e, level, message) => {
