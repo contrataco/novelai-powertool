@@ -222,7 +222,7 @@ function createWindow() {
   mainWindow.webContents.on('console-message', (_e, level, message) => {
     // Lore and story-loading lines, and every renderer warning or error, so a
     // failure the user saw on screen can be read from the log afterwards.
-    if (/^\[(Lore|LoreCat|LoreOpt|Direct|StorySelector|HeadlessSync|Dashboard|Renderer)\]/.test(message) || level >= 2) console.log('[Renderer]' + (level >= 2 ? ' (warn)' : ''), message.slice(0, 500));
+    if (/^\[(Lore|LoreCat|LoreOpt|Direct|StorySelector|HeadlessSync|ScrollLoad|Dashboard|Renderer)\]/.test(message) || level >= 2) console.log('[Renderer]' + (level >= 2 ? ' (warn)' : ''), message.slice(0, 500));
   });
 
   // Open DevTools in development
@@ -2776,9 +2776,10 @@ ipcMain.handle('lore:list-backups', (_e, storyId) => {
 });
 // Automatic backup ({getCategories, getEntriesExpanded}, the shape Restore
 // reads). Skipped when empty or unchanged since the newest automatic one;
-// only the newest 20 automatic backups per story are kept. Hand-made backups
+// only the newest 50 automatic backups per story are kept (about 100 KB each;
+// the adjustment while writing can add several an hour). Hand-made backups
 // (no "-auto") are never removed.
-const AUTO_BACKUPS_KEPT = 20;
+const AUTO_BACKUPS_KEPT = 50;
 ipcMain.handle('lore:save-backup', (_e, storyId, data) => {
   const prefix = String(storyId || '').slice(0, 8);
   if (!/^[0-9a-f]{8}$/.test(prefix)) return { saved: false, reason: 'bad story id' };

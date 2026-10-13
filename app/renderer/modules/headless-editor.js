@@ -342,6 +342,7 @@ async function scrollToLoadAll() {
     if (!scrollInfo) {
       console.log('[HeadlessSync] Scroll-to-load: no ProseMirror found');
     } else {
+      console.log('[ScrollLoad] start: ' + JSON.stringify(scrollInfo) + ' container was hidden: ' + wasHidden);
       const step = Math.max(scrollInfo.viewportHeight * 0.7, 200);
       let pos = scrollInfo.scrollTop;
       let prevLength = scrollInfo.textLength;
