@@ -48,8 +48,8 @@ export function init() {
     saveCustomizationToStore: editor.saveCustomizationToStore,
     updateStorySelectorVisibility,
     triggerGeneration: generation.triggerGeneration,
-    triggerUndo: generation.triggerUndo,
-    triggerRedo: generation.triggerRedo,
+    triggerUndo: editor.undoLocal,
+    triggerRedo: editor.redoLocal,
     triggerAiAction: generation.triggerAiAction,
     toggleSearchBar: misc.toggleSearchBar,
     showStoryStats: misc.showStoryStats,
@@ -74,8 +74,8 @@ export function init() {
   // Context menu
   contextMenu.init({
     generate: generation.triggerGeneration,
-    undo: generation.triggerUndo,
-    redo: generation.triggerRedo,
+    undo: editor.undoLocal,
+    redo: editor.redoLocal,
     rewrite: () => generation.triggerAiAction('rewrite'),
     expand: () => generation.triggerAiAction('expand'),
     summarize: () => generation.triggerAiAction('summarize'),
@@ -87,6 +87,9 @@ export function init() {
     updateStorySelectorVisibility();
   });
 
+  const isOtherTextField = (t) => !!t && t !== refs.storyEditor && !refs.storyEditor?.contains(t) &&
+    (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+
   // --- Single keyboard shortcut dispatcher ---
   window.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey) {
@@ -97,15 +100,17 @@ export function init() {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         generation.triggerGeneration();
-      } else if (e.key === 'z' && !e.shiftKey) {
+      } else if ((e.key === 'z' || e.key === 'Z' || e.key === 'y') && isOtherTextField(e.target)) {
+        // Other text boxes keep the browser's own undo.
+      } else if ((e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
         e.preventDefault();
-        generation.triggerUndo();
-      } else if (e.key === 'z' && e.shiftKey) {
+        editor.undoLocal();
+      } else if ((e.key === 'z' || e.key === 'Z') && e.shiftKey) {
         e.preventDefault();
-        generation.triggerRedo();
+        editor.redoLocal();
       } else if (e.key === 'y') {
         e.preventDefault();
-        generation.triggerRedo();
+        editor.redoLocal();
       } else if (e.key === 'F' && e.shiftKey) {
         e.preventDefault();
         editor.toggleFocusMode();

@@ -123,8 +123,41 @@ async function saveRecovery(localText) {
     null, 'warn', { persistent: true });
 }
 
-/** A write was refused as stale: keep the local text, then take NovelAI's. */
-async function handleSyncConflict(localText) {
+/**
+ * Both sides changed since `base`. The headless editor is the source of
+ * truth: when NovelAI's change and the local one touch different parts of the
+ * text (the AI appended at the end while the user edited earlier), the result
+ * keeps both. Returns null only when they overlap - a real clash.
+ */
+export function mergeEdits(base, local, nai) {
+  if (local === nai) return local;
+  if (local === base) return nai;
+  if (nai === base) return local;
+  const a = diffText(base, local), b = diffText(base, nai);
+  const aEnd = a.prefixLen + a.removed.length, bEnd = b.prefixLen + b.removed.length;
+  if (aEnd < b.prefixLen || (aEnd === b.prefixLen && a.removed.length + b.removed.length > 0 && a.prefixLen < b.prefixLen)) {
+    return base.slice(0, a.prefixLen) + a.added + base.slice(aEnd, b.prefixLen) + b.added + base.slice(bEnd);
+  }
+  if (bEnd < a.prefixLen || (bEnd === a.prefixLen && a.removed.length + b.removed.length > 0 && b.prefixLen < a.prefixLen)) {
+    return base.slice(0, b.prefixLen) + b.added + base.slice(bEnd, a.prefixLen) + a.added + base.slice(aEnd);
+  }
+  return null;
+}
+
+/** A write was refused as stale: merge if the changes don't clash, else keep a copy and take NovelAI's. */
+async function handleSyncConflict(localText, base) {
+  const rich = await readRichFromWebview();
+  const merged = rich && typeof base === 'string' ? mergeEdits(base, localText, rich.text) : null;
+  if (merged !== null && merged !== undefined) {
+    console.log('[HeadlessSync] NovelAI changed elsewhere in the text; keeping both changes');
+    state.naiRuns = rich.runs;
+    lastKnownWebviewText = rich.text;
+    if (editorText(storyEditor) !== merged) applyDiff(storyEditor, merged);
+    lastEditorTextForAnnotation = merged;
+    await syncToWebview();
+    return;
+  }
+  console.warn('[HeadlessSync] NovelAI changed the same text that was edited here; keeping NovelAI\'s copy and saving the local one');
   await saveRecovery(localText);
   await syncFromWebview(true, { recovered: true });
 }
@@ -162,13 +195,32 @@ export async function syncFromWebview(force = false, { recovered = false } = {})
     const local = editorText(storyEditor);
     const unsent = lastKnownWebviewText !== null && local !== lastKnownWebviewText;
     if (unsent && text === lastKnownWebviewText) { pushInstead = true; return; }
-    if (unsent && text !== local && !recovered) await saveRecovery(local);
+    if (unsent && text !== local && !recovered) {
+      // The headless editor is the source of truth: keep both changes when
+      // they don't clash, then push the local one on top of NovelAI's.
+      const merged = mergeEdits(lastKnownWebviewText, local, text);
+      if (merged !== null) {
+        console.log('[HeadlessSync] NovelAI changed elsewhere in the text; keeping both changes');
+        if (rich) state.naiRuns = rich.runs;
+        noteExternalChange(local);
+        if (merged !== local) applyDiff(storyEditor, merged);
+        lastKnownWebviewText = text;
+        lastEditorTextForAnnotation = merged;
+        state.lastKnownStoryLength = text.length;
+        scheduleAnnotation();
+        pushInstead = true;
+        return;
+      }
+      console.warn('[HeadlessSync] NovelAI changed the same text that was edited here; keeping NovelAI\'s copy and saving the local one');
+      await saveRecovery(local);
+    }
 
     if (rich) state.naiRuns = rich.runs;
     const changed = text !== local;
 
     if (changed) {
       console.log('[HeadlessSync] Syncing text from webview');
+      if (state.storyTextLoaded) noteExternalChange(local);
       if (force) setEditorText(storyEditor, text);
       else applyDiff(storyEditor, text);
       if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Ready';
@@ -200,8 +252,12 @@ export async function syncFromWebview(force = false, { recovered = false } = {})
  * edit, marked the way NovelAI marks typing (user_text, or edit_text inside AI
  * text). Never rewrites the whole document and never falls back to the DOM.
  */
+let resyncWanted = false;
 export async function syncToWebview() {
-  if (isSyncingFromWebview || isSyncingToWebview) return;
+  // A push while another sync runs was dropped, and nothing retried it, so
+  // fast typing could sit unsent until the next keystroke. Retry afterwards.
+  if (isSyncingFromWebview || isSyncingToWebview) { resyncWanted = true; return; }
+  resyncWanted = false;
   // No confirmed read of NovelAI's text yet (story still loading, or only
   // cached text shown): there is no safe baseline to diff against.
   if (lastKnownWebviewText === null) { setSyncStatus('Waiting for NovelAI', 'busy'); return; }
@@ -240,8 +296,12 @@ export async function syncToWebview() {
     isSyncingToWebview = false;
   }
 
-  if (conflict) await handleSyncConflict(text);
+  if (conflict) await handleSyncConflict(text, base);
   else await refreshMarks();
+  if (resyncWanted) {
+    resyncWanted = false;
+    setTimeout(() => { syncToWebview(); }, 50);
+  }
 }
 
 /** Every text position in [start, end) is covered by a run carrying `mark`. */
@@ -578,24 +638,108 @@ export function toggleReadOnlyMode() {
 
 // --- Streaming Listener ---
 
+let streamUndoNoted = false;
 export function handleStreamingText(text) {
   if (!storyEditor || isSyncingToWebview) return;
   isSyncingFromWebview = true;
   try {
     const local = editorText(storyEditor);
-    if (lastKnownWebviewText !== null && local !== lastKnownWebviewText && text !== local) saveRecovery(local);
+    // One undo step takes back the whole generation.
+    if (!streamUndoNoted) { noteExternalChange(local); streamUndoNoted = true; }
+    // Typing during generation is kept when it doesn't touch the AI's text;
+    // it is pushed after the generation.
+    let shown = text;
+    if (lastKnownWebviewText !== null && local !== lastKnownWebviewText && text !== local) {
+      const merged = mergeEdits(lastKnownWebviewText, local, text);
+      if (merged !== null) shown = merged;
+      else saveRecovery(local);
+    }
     // New text stays uncolored until the post-generation read brings its marks.
-    const d = diffText(lastEditorTextForAnnotation || local, text);
+    const d = diffText(lastEditorTextForAnnotation || local, shown);
     state.naiRuns = shiftRuns(state.naiRuns || [], d.prefixLen, d.removed.length, d.added.length);
-    applyDiff(storyEditor, text);
+    applyDiff(storyEditor, shown);
     lastKnownWebviewText = text;
-    lastEditorTextForAnnotation = text;
+    lastEditorTextForAnnotation = shown;
     updateStatusMetrics();
     // Keep last-paragraph indicator current during streaming
     scheduleAnnotation();
   } finally {
     isSyncingFromWebview = false;
   }
+}
+
+// --- Undo / redo in the headless editor ---
+// Ctrl+Z used to send NovelAI's own undo to the hidden page. That undid
+// NovelAI's last transaction (often an older push, or several at once), and
+// with typing not yet pushed the next read saw both sides changed and kept
+// NovelAI's copy: recent typing vanished and deleted text came back. Undo now
+// works on the editor's own history and is pushed like any other edit.
+const UNDO_LIMIT = 300;
+const UNDO_GROUP_MS = 800;
+const undoStack = [];
+const redoStack = [];
+let undoGroupOpen = false;
+let undoGroupTimer = null;
+
+function pushUndoPoint(text) {
+  if (typeof text !== 'string') return;
+  if (undoStack.length && undoStack[undoStack.length - 1] === text) return;
+  undoStack.push(text);
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack.length = 0;
+}
+
+function closeUndoGroup() {
+  undoGroupOpen = false;
+  if (undoGroupTimer) { clearTimeout(undoGroupTimer); undoGroupTimer = null; }
+}
+
+/** Typing: one undo step per burst (a pause of UNDO_GROUP_MS ends it). */
+function noteUserEdit(textBefore) {
+  if (!undoGroupOpen) { pushUndoPoint(textBefore); undoGroupOpen = true; }
+  if (undoGroupTimer) clearTimeout(undoGroupTimer);
+  undoGroupTimer = setTimeout(closeUndoGroup, UNDO_GROUP_MS);
+}
+
+/** A change that came from NovelAI (AI text, a read): its own undo step. */
+function noteExternalChange(textBefore) {
+  closeUndoGroup();
+  pushUndoPoint(textBefore);
+}
+
+function resetUndoHistory() {
+  closeUndoGroup();
+  undoStack.length = 0;
+  redoStack.length = 0;
+}
+
+function applyHistoryText(target) {
+  const current = editorText(storyEditor);
+  const d = diffText(current, target);
+  state.naiRuns = shiftRuns(state.naiRuns || [], d.prefixLen, d.removed.length, d.added.length);
+  applyDiff(storyEditor, target);
+  lastEditorTextForAnnotation = target;
+  updateStatusMetrics();
+  scheduleAnnotation();
+  restoreCursor(storyEditor, d.prefixLen + d.added.length);
+  syncToWebview();
+}
+
+export function undoLocal() {
+  closeUndoGroup();
+  const current = editorText(storyEditor);
+  while (undoStack.length && undoStack[undoStack.length - 1] === current) undoStack.pop();
+  if (!undoStack.length) { showToast('Nothing to undo'); return; }
+  redoStack.push(current);
+  applyHistoryText(undoStack.pop());
+}
+
+export function redoLocal() {
+  closeUndoGroup();
+  if (!redoStack.length) { showToast('Nothing to redo'); return; }
+  const current = editorText(storyEditor);
+  undoStack.push(current);
+  applyHistoryText(redoStack.pop());
 }
 
 // --- Init: Editor input listeners, story change, customization sliders ---
@@ -607,6 +751,7 @@ export function init() {
   let syncTimeout = null;
   storyEditor.addEventListener('input', () => {
     if (isSyncingFromWebview) return;
+    noteUserEdit(lastEditorTextForAnnotation);
     if (syncTimeout) clearTimeout(syncTimeout);
     syncTimeout = setTimeout(() => {
       syncToWebview();
@@ -742,6 +887,7 @@ export function init() {
   bus.on('story:changed', async ({ storyTitle } = {}) => {
     const storyId = state.currentStoryId;
     console.log('[HeadlessSync] Story changed:', storyId);
+    resetUndoHistory();
     if (refs.editorStoryTitle) refs.editorStoryTitle.textContent = storyTitle || 'Untitled Story';
     loadCustomizationFromStore();
 
@@ -871,6 +1017,7 @@ export function init() {
   // Generation complete: re-read text and marks, so the new AI text gets
   // NovelAI's own ai_text coloring.
   bus.on('headless:generation-complete', async () => {
+    streamUndoNoted = false;
     if (refs.editorAiStatus) refs.editorAiStatus.textContent = 'Ready';
     if (refs.editorAiIndicator) refs.editorAiIndicator.className = 'status-indicator';
     await syncFromWebview(false);
