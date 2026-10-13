@@ -899,6 +899,7 @@ async function scriptUpdatesAreSafe() {
 }
 
 export async function loreCall(method, ...args) {
+  if (/^(create|update|remove)Category$/.test(method)) _lbCatsPromise = null;
   if (method === 'batchUpdateAdvanced' && !(await scriptUpdatesAreSafe())) {
     console.warn('[Lore] Not sending lorebook optimizations: the PowerTool script in NovelAI is older than 4.1.3. Update it in the Scripts tab.');
     return { success: 0, failed: (args[0] || []).length, errors: ['script too old for safe updates'] };
@@ -1252,6 +1253,55 @@ function showLoreError(msg) {
   loreError.classList.remove('u-hidden');
 }
 
+// Lorebook categories for the move cards; one read serves a whole list of cards.
+let _lbCatsPromise = null, _lbCatsAt = 0;
+function lorebookCategoriesCached() {
+  if (!_lbCatsPromise || Date.now() - _lbCatsAt > 10000) {
+    _lbCatsAt = Date.now();
+    _lbCatsPromise = loreCall('getCategories')
+      .then(cs => (cs || []).filter(c => c && c.id && c.name).sort((a, b) => a.name.localeCompare(b.name)))
+      .catch(() => { _lbCatsPromise = null; return []; });
+  }
+  return _lbCatsPromise;
+}
+
+// Move card: show where the entry is now, and let the user pick any category
+// the lorebook has (or one of the app's categories, created when moved).
+async function fillCleanupTarget(card, cleanup) {
+  const sel = card.querySelector('.cleanup-target');
+  const cur = card.querySelector('.cleanup-current');
+  if (!sel) return;
+  const cats = await lorebookCategoriesCached();
+  const curName = cats.find(c => c.id === cleanup.currentCategory)?.name;
+  if (cur) cur.textContent = 'Now in: ' + (curName || (cleanup.currentCategory ? 'a category that no longer exists' : 'no category'));
+  const wanted = (cleanup.proposedCategory || cleanup.expectedCategoryName ||
+    (cleanup.proposedType ? getCategoryDisplayName(cleanup.proposedType) : '') || '').toLowerCase();
+  const pickedId = cleanup.proposedCategoryId || cleanup.expectedCategoryId;
+  sel.innerHTML = '';
+  const add = (value, text) => { const o = document.createElement('option'); o.value = value; o.textContent = text; sel.appendChild(o); return o; };
+  add('', 'Choose a category');
+  for (const c of cats) if (c.id !== cleanup.currentCategory) add('id:' + c.id, c.name);
+  const have = new Set(cats.map(c => c.name.toLowerCase()));
+  const extra = new Set();
+  for (const def of state.categoryRegistry || []) if (!have.has(def.displayName.toLowerCase())) extra.add(def.displayName);
+  if (wanted && !have.has(wanted) && cleanup.proposedCategory) extra.add(cleanup.proposedCategory);
+  for (const n of extra) add('name:' + n, n + ' (new)');
+  const match = [...sel.options].find(o => (pickedId && o.value === 'id:' + pickedId)) ||
+    [...sel.options].find(o => o.value && o.textContent.replace(/ \(new\)$/, '').toLowerCase() === wanted);
+  sel.value = match ? match.value : '';
+  const pick = () => {
+    const v = sel.value;
+    const id = v.startsWith('id:') ? v.slice(3) : null;
+    const name = v ? sel.selectedOptions[0].textContent.replace(/ \(new\)$/, '') : '';
+    if (cleanup.proposedCategoryId === id && cleanup.proposedCategory === name) return false;
+    cleanup.proposedCategoryId = id;
+    cleanup.proposedCategory = name;
+    return true;
+  };
+  sel.onchange = () => { pick(); saveLoreState(); };
+  if (sel.value && pick()) saveLoreState();
+}
+
 // The lorebook is empty and a backup exists: restore it, or scan without it.
 function offerRestoreBeforeScan(backup, scanType) {
   showLoreError(`The lorebook in NovelAI is empty. A backup has ${backup.entries} entries. Restore it before scanning? A scan first would keep its own entries, and the backed-up entries with the same names would not come back.`);
@@ -1300,9 +1350,12 @@ async function findOrCreateLorebookCategory(catName) {
   if (!state.loreState) return undefined;
   if (!state.loreState.loreCategoryIds) state.loreState.loreCategoryIds = {};
   const known = state.loreState.loreCategoryIds[catName];
-  if (known) return known;
   try {
     const cats = (await loreCall('getCategories') || []).filter(c => c && c.id && c.name);
+    // A remembered id can belong to a category that was removed since
+    // (merged, or the lorebook was emptied); moving entries there loses them.
+    if (known && cats.some(c => c.id === known)) return known;
+    if (known) delete state.loreState.loreCategoryIds[catName];
     const exact = cats.find(c => c.name.toLowerCase() === catName.toLowerCase());
     let match = exact || null;
     if (!match && cats.length) {
@@ -1316,6 +1369,8 @@ async function findOrCreateLorebookCategory(catName) {
     }
   } catch (e) {
     console.warn('[Lore] Lorebook category lookup failed:', e.message);
+    if (known) return known;
+    return undefined;
   }
   try {
     const catId = await loreCall('createCategory', { name: catName });
@@ -1336,9 +1391,7 @@ async function getCategoryForType(entryType) {
   }
   if (!state.loreState.loreCategoryIds) state.loreState.loreCategoryIds = {};
 
-  const catName = getCategoryDisplayName(entryType);
-  if (state.loreState.loreCategoryIds[catName]) return state.loreState.loreCategoryIds[catName];
-  return findOrCreateLorebookCategory(catName);
+  return findOrCreateLorebookCategory(getCategoryDisplayName(entryType));
 }
 
 // Accept entry: write to lorebook via proxy
@@ -1752,26 +1805,28 @@ async function runLoreScan(scanType = 'all') {
         await loadCategoryRegistry();
       }
 
-      // Apply Pass 7 category moves for existing entries (fire-and-forget)
-      if (result.pendingCategoryMoves && result.pendingCategoryMoves.length > 0 && state.loreProxyReady) {
-        (async () => {
-          try {
-            for (const move of result.pendingCategoryMoves) {
-              // Get or create the NovelAI category for the proposed name
-              const catId = await findOrCreateLorebookCategory(move.proposedCategory);
-              if (catId && catId !== move.currentCategory) {
-                // Move entry to new category via proxy
-                await loreCall('updateEntry', move.entryId, { category: catId });
-                console.log(`[LoreCat] Moved "${move.entryName}" to "${move.proposedCategory}"`);
-              }
-            }
-            await saveLoreState();
-            console.log(`[LoreCat] Applied ${result.pendingCategoryMoves.length} category reassignments`);
-            await cleanupLorebookCategories({ force: true });
-          } catch (e) {
-            console.log('[LoreCat] Failed to apply category moves:', e.message);
-          }
-        })();
+      // Pass 7 category moves are suggestions: each becomes a move card the
+      // user accepts or dismisses (they once moved 30 entries, many wrongly).
+      if (result.pendingCategoryMoves && result.pendingCategoryMoves.length > 0) {
+        const cats = await lorebookCategoriesCached();
+        const nameOf = new Map(cats.map(c => [c.id, c.name.toLowerCase()]));
+        if (!state.loreState.pendingCleanups) state.loreState.pendingCleanups = [];
+        const dismissed = new Set(state.loreState.dismissedCleanupIds || []);
+        const queued = new Set(state.loreState.pendingCleanups.map(c => c.id));
+        let added = 0;
+        for (const move of result.pendingCategoryMoves) {
+          const id = `recategorize_${move.entryId}`;
+          if (dismissed.has(id) || queued.has(id)) continue;
+          if (nameOf.get(move.currentCategory) === (move.proposedCategory || '').toLowerCase()) continue;
+          state.loreState.pendingCleanups.push({
+            id, type: 'recategorize', entryId: move.entryId, displayName: move.entryName,
+            currentCategory: move.currentCategory || null, proposedCategory: move.proposedCategory, proposedCategoryId: null,
+          });
+          queued.add(id);
+          added++;
+        }
+        await saveLoreState();
+        console.log(`[LoreCat] Suggested ${added} category moves (not applied)`);
       }
 
       // Apply Pass 6 optimizations to lorebook via proxy (fire-and-forget)
@@ -1964,25 +2019,25 @@ function createCleanupCard(cleanup) {
   } else {
     // recategorize or legacy-move
     const label = cleanup.type === 'legacy-move' ? 'UNCATEGORIZED' : 'MISPLACED';
-    const proposedDef = getCategoryDef(cleanup.proposedType);
-    const proposedLabel = proposedDef ? proposedDef.singularName.toUpperCase() : (cleanup.proposedType || '').toUpperCase();
     card.className = `lore-card cleanup ${cleanup.proposedType || ''}`;
     card.innerHTML = `
       <div class="lore-card-header">
         <span class="category-badge cleanup">${label}</span>
-        <span class="entry-name">${cleanup.displayName}</span>
+        <span class="entry-name">${escapeHtml(cleanup.displayName || '')}</span>
       </div>
-      <div class="flex-row-wrap mb-sm detail-muted" style="color:var(--text-tertiary);">
-        <span class="detail-muted">${cleanup.currentCategory}</span>
-        <span class="cleanup-arrow"> → </span>
-        <span class="category-badge editable ${cleanup.proposedType || ''}" title="Click to change">${proposedLabel}</span>
-        <button class="btn-new-cat btn-xs" style="background:none;border:1px solid var(--border-strong);color:var(--text-muted);border-radius:var(--radius-xs);cursor:pointer;">+ New</button>
+      <div class="cleanup-move-row" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;font-size:16px;">
+        <span class="cleanup-current">Now in: ${cleanup.currentCategory ? '...' : 'no category'}</span>
+        <label style="display:flex;flex-direction:column;gap:4px;">Move to:
+          <select class="cleanup-target" style="min-height:40px;font-size:16px;"><option value="">Loading categories...</option></select>
+        </label>
+        <button class="btn-new-cat" style="min-height:40px;font-size:16px;background:none;border:1px solid var(--border-strong);color:var(--text-muted);border-radius:var(--radius-xs);cursor:pointer;">+ New category</button>
       </div>
+      <span class="category-badge editable u-hidden"></span>
       <div class="cleanup-new-cat-form u-hidden">
-        <input type="text" placeholder="Category name" class="new-cat-name rpg-edit-input" style="width:120px;">
-        <input type="color" value="#ff9900" class="new-cat-color" style="width:28px;height:22px;border:none;padding:0;cursor:pointer;background:transparent;">
-        <button class="new-cat-confirm btn-xs" style="background:var(--cat-rpg);color:#fff;border:none;border-radius:var(--radius-xs);cursor:pointer;">Add</button>
-        <button class="new-cat-cancel btn-xs" style="background:none;border:1px solid var(--border-strong);color:var(--text-muted);border-radius:var(--radius-xs);cursor:pointer;">Cancel</button>
+        <input type="text" placeholder="Category name" class="new-cat-name rpg-edit-input" style="width:100%;min-height:40px;font-size:16px;">
+        <input type="color" value="#ff9900" class="new-cat-color" style="width:40px;height:40px;border:none;padding:0;cursor:pointer;background:transparent;">
+        <button class="new-cat-confirm" style="min-height:40px;font-size:16px;background:var(--cat-rpg);color:#fff;border:none;border-radius:var(--radius-xs);cursor:pointer;">Add</button>
+        <button class="new-cat-cancel" style="min-height:40px;font-size:16px;background:none;border:1px solid var(--border-strong);color:var(--text-muted);border-radius:var(--radius-xs);cursor:pointer;">Cancel</button>
       </div>
       <div class="lore-card-actions">
         <button class="btn-accept" data-action="accept-cleanup">Move</button>
@@ -1990,16 +2045,8 @@ function createCleanupCard(cleanup) {
       </div>
     `;
 
-    // Wire category badge cycling
-    card.querySelector('.category-badge.editable').addEventListener('click', (e) => {
-      e.stopPropagation();
-      cycleCategoryBadge(e.target, () => cleanup.proposedType, (newCat) => {
-        cleanup.proposedType = newCat;
-        cleanup.proposedCategory = getCategoryDisplayName(newCat);
-        cleanup.proposedCategoryId = null;
-        saveLoreState();
-      });
-    });
+    for (const b of card.querySelectorAll('.lore-card-actions button')) b.style.cssText += ';min-height:40px;font-size:16px;';
+    fillCleanupTarget(card, cleanup);
 
     // Wire "+ New" button
     const newCatForm = card.querySelector('.cleanup-new-cat-form');
@@ -2038,6 +2085,7 @@ function createCleanupCard(cleanup) {
         for (const cat of getCategoryIds()) card.classList.remove(cat);
         card.classList.add(id);
         saveLoreState();
+        fillCleanupTarget(card, cleanup);
         showToast(`Added category "${singular}"`);
         newCatForm.classList.add('u-hidden');
         nameInput.value = '';
@@ -2147,7 +2195,12 @@ async function acceptCleanup(cleanupId) {
     }
   } else {
     // recategorize or legacy-move
-    const catId = cleanup.proposedCategoryId || await getCategoryForType(cleanup.proposedType);
+    if (!cleanup.proposedCategoryId && !cleanup.proposedCategory) { showToast('Choose a category first'); return; }
+    const cats = await lorebookCategoriesCached();
+    const catId = (cleanup.proposedCategoryId && cats.some(c => c.id === cleanup.proposedCategoryId))
+      ? cleanup.proposedCategoryId
+      : await findOrCreateLorebookCategory(cleanup.proposedCategory);
+    _lbCatsPromise = null;
     if (catId) {
       await loreCall('updateEntry', cleanup.entryId, { category: catId });
       showToast(`Moved "${cleanup.displayName}" to ${cleanup.proposedCategory}`);
