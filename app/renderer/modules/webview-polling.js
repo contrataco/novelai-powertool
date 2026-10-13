@@ -757,16 +757,22 @@ export function init() {
       const entries = await loreCall('getEntriesExpanded');
       if (!entries || entries.length === 0) return;
 
-      const profileId = state.loreOptProfile || 'general';
+      // The story's own profile. state.loreOptProfile is set on story:changed,
+      // often before the story settings have loaded, and then says 'general':
+      // that profile turned "always on" off for every party member.
+      if (!state.storySettings) { state._loreOptLastLen = lastLen; return; }
+      const profileId = state.storySettings.lorebookProfile || state.loreOptProfile || 'general';
       const result = await window.powertool.loreAdjustEntries(
         entries, profileId, state.currentStoryId
       );
 
       if (result.success && result.adjustments && result.adjustments.length > 0) {
+        const { backupLorebook } = await import('./lore-creator.js');
+        await backupLorebook('before automatic adjustment (' + profileId + ')');
         // Apply adjustments via proxy
         const updates = result.adjustments.map(a => ({ id: a.entryId, fields: a.delta }));
         await loreCall('batchUpdateAdvanced', updates);
-        console.log(`[LoreOpt] Continuous adjustment: ${updates.length} entries updated`);
+        console.log(`[LoreOpt] Continuous adjustment (${profileId}): ${updates.length} entries updated, always-on now ${result.adjustments.filter(a => a.delta.forceActivation === true).length} set / ${result.adjustments.filter(a => a.delta.forceActivation === false).length} cleared`);
       }
     } catch (e) {
       // Silent fail for continuous adjustment
