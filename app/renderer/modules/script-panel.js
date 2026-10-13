@@ -5,6 +5,10 @@ import * as refs from './dom-refs.js';
 import { showToast } from './utils.js';
 
 const POWERTOOL_SCRIPT_NAME = 'NovelAI PowerTool';
+// Older scripts PowerTool replaced. NovelAI shows one script sidebar panel at
+// a time, and an enabled old proxy can take it, cutting the app off from the
+// lorebook.
+const LEGACY_SCRIPT_NAMES = new Set(['Lore Creator Proxy', 'Memory Manager Proxy']);
 let cachedScripts = [];
 let bundledInfo = null;
 
@@ -54,6 +58,15 @@ function renderScriptCard(script, bundledVersion) {
   `;
 
   const actions = card.querySelector('.script-card-actions');
+
+  if (LEGACY_SCRIPT_NAMES.has(script.name)) {
+    const note = document.createElement('div');
+    note.className = 'script-legacy-note' + (script.enabled ? ' is-on' : '');
+    note.textContent = script.enabled
+      ? 'Old script, replaced by NovelAI PowerTool. Disable it: while it runs, PowerTool cannot reach the lorebook.'
+      : 'Old script, replaced by NovelAI PowerTool. Keep it disabled.';
+    actions.before(note);
+  }
 
   // Toggle button
   const toggleBtn = document.createElement('button');

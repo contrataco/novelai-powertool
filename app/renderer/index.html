@@ -881,6 +881,25 @@
                 <button id="loreAddCategoryBtn" style="font-size:10px;padding:2px 6px;background:var(--bg-elevated);border:1px solid var(--border-subtle);color:var(--text-tertiary);border-radius:3px;cursor:pointer;">+ Add Category</button>
                 <button id="loreDetectCategoriesBtn" style="font-size:10px;padding:2px 6px;background:var(--bg-elevated);border:1px solid var(--border-subtle);color:var(--text-tertiary);border-radius:3px;cursor:pointer;">Detect from Lorebook</button>
               </div>
+              <button id="loreMergeToolsBtn" class="lore-merge-btn" aria-expanded="false">Merge or un-merge categories</button>
+              <div id="loreMergeTools" class="lore-merge-tools u-hidden">
+                <div class="lore-merge-heading">Merge a lorebook category</div>
+                <label class="lore-merge-field">Move everything from
+                  <select id="loreMergeFrom"></select>
+                </label>
+                <label class="lore-merge-field">into
+                  <select id="loreMergeInto"></select>
+                </label>
+                <button id="loreMergeGo" class="lore-merge-btn">Merge</button>
+                <div class="lore-merge-heading">Past merges</div>
+                <div id="loreMergeHistory"></div>
+                <div class="lore-merge-heading">Restore lorebook entries</div>
+                <label class="lore-merge-field">From backup
+                  <select id="loreBackupSelect"></select>
+                </label>
+                <button id="loreRestoreGo" class="lore-merge-btn">Restore missing entries</button>
+                <div id="loreRestoreStatus" class="lore-merge-empty" aria-live="polite"></div>
+              </div>
               <div id="loreAddCategoryForm" class="u-hidden" style="margin-top:4px;padding:6px;background:var(--bg-elevated);border-radius:4px;border:1px solid var(--border-subtle);">
                 <div style="display:flex;gap:4px;align-items:center;">
                   <input id="loreNewCategoryName" type="text" placeholder="Category name" style="flex:1;font-size:11px;padding:3px 6px;background:var(--bg-surface);border:1px solid var(--border-subtle);color:var(--text-primary);border-radius:3px;">

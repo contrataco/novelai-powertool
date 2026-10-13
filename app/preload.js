@@ -181,6 +181,8 @@ contextBridge.exposeInMainWorld('powertool', {
   loreSetLlmProvider: (config) => ipcRenderer.invoke('lore:set-llm-provider', config),
   loreCheckOllama: () => ipcRenderer.invoke('lore:check-ollama'),
   loreGetCategoryRegistry: (storyId) => ipcRenderer.invoke('lore:get-category-registry', storyId),
+  loreListBackups: (storyId) => ipcRenderer.invoke('lore:list-backups', storyId),
+  loreReadBackup: (name) => ipcRenderer.invoke('lore:read-backup', name),
   loreAddCustomCategory: (storyId, category) => ipcRenderer.invoke('lore:add-custom-category', { storyId, category }),
   loreRemoveCustomCategory: (storyId, categoryId) => ipcRenderer.invoke('lore:remove-custom-category', { storyId, categoryId }),
   lorePlanCategoryMerges: (cats, opts) => ipcRenderer.invoke('lore:plan-category-merges', cats, opts),

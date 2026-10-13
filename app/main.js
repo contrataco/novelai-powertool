@@ -212,6 +212,11 @@ function createWindow() {
     webPreferences.preload = path.join(__dirname, 'webview-preload.js');
   });
 
+  // Lorebook work happens in the renderer; copy its lore lines to the app log.
+  mainWindow.webContents.on('console-message', (_e, level, message) => {
+    if (/^\[(Lore|LoreCat|Direct)\]/.test(message)) console.log('[Renderer]' + (level >= 2 ? ' (warn)' : ''), message.slice(0, 500));
+  });
+
   // Open DevTools in development
   if (process.argv.includes('--enable-logging')) {
     mainWindow.webContents.openDevTools();
@@ -2743,6 +2748,28 @@ ipcMain.handle('lore:set-settings', (event, settings) => {
 const KEPT_CATEGORY_SOURCES = loreCreator.KEPT_CATEGORY_SOURCES;
 
 const tidyStoryCategories = (loreState) => loreCreator.tidyStoryCategories(loreState);
+
+// Lorebook backups: {userData}/lorebook-backups/<first 8 of storyId>-lorebook-*.json,
+// each { getCategories: [...], getEntriesExpanded: [...] } read from NovelAI.
+const LOREBOOK_BACKUP_DIR = () => path.join(app.getPath('userData'), 'lorebook-backups');
+ipcMain.handle('lore:list-backups', (_e, storyId) => {
+  try {
+    const prefix = String(storyId || '').slice(0, 8);
+    if (!prefix) return [];
+    return fs.readdirSync(LOREBOOK_BACKUP_DIR())
+      .filter(f => f.startsWith(prefix + '-lorebook-') && f.endsWith('.json'))
+      .sort().reverse()
+      .map(f => {
+        let entries = 0;
+        try { entries = (JSON.parse(fs.readFileSync(path.join(LOREBOOK_BACKUP_DIR(), f), 'utf8')).getEntriesExpanded || []).length; } catch (_) {}
+        return { name: f, entries };
+      });
+  } catch (_) { return []; }
+});
+ipcMain.handle('lore:read-backup', (_e, name) => {
+  if (!/^[0-9a-f]{8}-lorebook-[\w.-]+\.json$/.test(String(name || ''))) throw new Error('bad backup name');
+  return JSON.parse(fs.readFileSync(path.join(LOREBOOK_BACKUP_DIR(), name), 'utf8'));
+});
 
 ipcMain.handle('lore:get-category-registry', (event, storyId) => {
   if (!storyId) return loreCreator.buildCategoryRegistry([]);

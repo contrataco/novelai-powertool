@@ -6698,3 +6698,41 @@
 }
 .nai-symbol-use { margin-top: 4px; color: #dfe4ff; font-size: 15px; line-height: 1.4; }
 .nai-symbol-meta { margin-top: 2px; color: #b8c0e0; font-size: 14px; }
+
+/* Lore settings: merge or un-merge categories */
+.lore-merge-btn {
+  display: block; width: 100%; min-height: 40px; margin-top: 8px; padding: 6px 12px;
+  font-size: 16px; color: var(--text-primary); background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; text-align: left;
+}
+.lore-merge-btn:disabled { opacity: 0.6; cursor: default; }
+.lore-merge-tools {
+  margin-top: 8px; padding: 10px; background: var(--bg-surface);
+  border: 1px solid var(--border-subtle); border-radius: 6px;
+}
+.lore-merge-heading { margin-top: 10px; font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.lore-merge-heading:first-child { margin-top: 0; }
+.lore-merge-field { display: block; margin-top: 8px; font-size: 16px; color: var(--text-primary); }
+.lore-merge-field select {
+  display: block; width: 100%; min-height: 40px; margin-top: 4px; padding: 4px 8px;
+  font-size: 16px; color: var(--text-primary); background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle); border-radius: 6px;
+}
+.lore-merge-row { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
+.lore-merge-label { font-size: 16px; color: var(--text-primary); line-height: 1.4; }
+.lore-merge-undo {
+  min-height: 40px; min-width: 96px; margin-top: 6px; padding: 6px 14px; font-size: 16px;
+  color: #fff; background: var(--accent, #e94560); border: none; border-radius: 6px; cursor: pointer;
+}
+.lore-merge-undo:disabled { opacity: 0.6; cursor: default; }
+.lore-merge-empty { margin-top: 6px; font-size: 16px; color: var(--text-primary); }
+
+/* Scripts tab: note on old proxy scripts */
+.script-legacy-note { margin: 6px 0; font-size: 16px; line-height: 1.4; color: var(--text-primary); }
+.script-legacy-note.is-on { padding: 6px 8px; border: 2px solid #ffb74d; border-radius: 6px; background: rgba(255, 183, 77, 0.12); color: #ffe0b2; }
+.script-card .script-card-actions button {
+  min-height: 40px; min-width: 110px; padding: 6px 16px; font-size: 16px;
+  color: var(--text-primary); background: var(--bg-elevated); border: 1px solid var(--border-default);
+}
+.script-card .script-card-actions button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+.script-card .script-card-actions button:disabled { opacity: 0.6; }

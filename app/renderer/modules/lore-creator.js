@@ -64,6 +64,7 @@ function deriveSingularPlural(name) {
   } else if (/s$/i.test(name)) {
     return { singular: name.slice(0, -1), plural: name };
   }
+  if (/[^aeiou]y$/i.test(name)) return { singular: name, plural: name.slice(0, -1) + 'ies' };
   return { singular: name, plural: name + 's' };
 }
 
@@ -291,48 +292,148 @@ export async function cleanupLorebookCategories({ force = false } = {}) {
     const log = [];
     for (const plan of decision.merges || []) {
       for (const m of plan.merge) {
-        const moving = inCat.get(m.id) || [];
-        const moved = [];
-        for (const e of moving) {
-          const ok = await loreCall('updateEntry', e.id, { category: plan.keep.id });
-          if (ok === false) break;
-          moved.push(e.id);
-        }
-        const step = { at: Date.now(), from: { id: m.id, name: m.name }, into: { id: plan.keep.id, name: plan.keep.name }, entryIds: moved, why: plan.why || '' };
-        if (moved.length < moving.length) {
-          console.warn(`[LoreCat] Moved ${moved.length} of ${moving.length} entries out of "${m.name}"; left the category in place`);
-          if (moved.length) log.push(step);
-          continue;
-        }
-        let removed = false;
-        try { removed = (await loreCall('removeCategory', m.id)) !== false; } catch (err) {
-          console.log(`[LoreCat] "${m.name}" is empty but could not be removed (${err.message}); update the PowerTool script to remove it`);
-        }
-        step.removed = removed;
-        const ids = state.loreState.loreCategoryIds || {};
-        for (const [n, id] of Object.entries(ids)) if (id === m.id) ids[n] = plan.keep.id;
-        // The app's saved list follows the lorebook.
-        try { await window.powertool.loreRemoveCustomCategory(storyId, slugifyCategory(m.name)); } catch (_) {}
-        log.push(step);
-        console.log(`[LoreCat] Merged "${m.name}" into "${plan.keep.name}" (${moved.length} entries): ${step.why}`);
+        const step = await moveCategoryInto(storyId, m, plan.keep, inCat.get(m.id) || [], plan.why || '');
+        if (step) log.push(step);
       }
     }
-    if (log.length) {
-      state.loreState.categoryMergeLog = [...(state.loreState.categoryMergeLog || []), ...log].slice(-50);
-    }
-    await saveLoreState();
-    if (log.length) {
-      const text = log.map(s => `${s.from.name} into ${s.into.name}`).join('; ');
-      showToast(`Merged lorebook categories: ${text}`, 0, 'success', {
-        persistent: true, undoLabel: 'Undo', onUndo: () => undoCategoryMerges(log),
-      });
-      await loadCategoryRegistry();
-    }
+    await finishCategoryMerges(log);
     return log;
   } catch (e) {
     console.log('[LoreCat] Category cleanup skipped:', e.message);
     return [];
   }
+}
+
+// Move every entry of lorebook category `m` into `keep`, then remove `m`.
+// Returns the merge-log step (null when nothing moved).
+async function moveCategoryInto(storyId, m, keep, moving, why) {
+  const moved = [];
+  for (const e of moving) {
+    const ok = await loreCall('updateEntry', e.id, { category: keep.id });
+    if (ok === false) break;
+    moved.push(e.id);
+  }
+  const step = { at: Date.now(), from: { id: m.id, name: m.name }, into: { id: keep.id, name: keep.name }, entryIds: moved, why };
+  if (moved.length < moving.length) {
+    console.warn(`[LoreCat] Moved ${moved.length} of ${moving.length} entries out of "${m.name}"; left the category in place`);
+    return moved.length ? step : null;
+  }
+  let removed = false;
+  try { removed = (await loreCall('removeCategory', m.id)) !== false; } catch (err) {
+    console.log(`[LoreCat] "${m.name}" is empty but could not be removed (${err.message}); update the PowerTool script to remove it`);
+  }
+  step.removed = removed;
+  const ids = state.loreState.loreCategoryIds || {};
+  for (const [n, id] of Object.entries(ids)) if (id === m.id) ids[n] = keep.id;
+  // The app's saved list follows the lorebook.
+  try { await window.powertool.loreRemoveCustomCategory(storyId, slugifyCategory(m.name)); } catch (_) {}
+  console.log(`[LoreCat] Merged "${m.name}" into "${keep.name}" (${moved.length} entries): ${why}`);
+  return step;
+}
+
+async function finishCategoryMerges(log) {
+  if (log.length) {
+    state.loreState.categoryMergeLog = [...(state.loreState.categoryMergeLog || []), ...log].slice(-50);
+  }
+  await saveLoreState();
+  if (log.length) {
+    const text = log.map(s => `${s.from.name} into ${s.into.name}`).join('; ');
+    showToast(`Merged lorebook categories: ${text}`, 0, 'success', {
+      persistent: true, undoLabel: 'Undo', onUndo: () => undoCategoryMerges(log),
+    });
+    await loadCategoryRegistry();
+    renderMergeHistory();
+  }
+}
+
+/**
+ * Put lorebook entries back from a backup file (lore:read-backup). Each entry
+ * goes to the category its old one became: the merge log is followed by id,
+ * so a merged-away category lands in the category it was merged into; the
+ * category is found by name or created. Entries whose name is already in the
+ * lorebook are skipped, so running it again adds nothing twice. Only runs on
+ * a script whose updates cannot delete (4.1.3+).
+ */
+export async function restoreLorebookFromBackup(backup, onProgress = () => {}) {
+  const storyId = state.currentStoryId;
+  if (!storyId || !state.loreState) throw new Error('no story open');
+  await checkLoreProxy();
+  if (!state.loreProxyReady) throw new Error('the PowerTool script is not connected');
+  if (!(await scriptUpdatesAreSafe())) throw new Error('update the PowerTool script to 4.1.3 first (Scripts tab)');
+  const saved = backup.getEntriesExpanded || backup.getEntries || [];
+  const oldNames = new Map((backup.getCategories || []).map(c => [c.id, c.name]));
+  const next = new Map();
+  for (const s of state.loreState.categoryMergeLog || []) next.set(s.from.id, s.into);
+  const targetName = (catId) => {
+    let id = catId, name = oldNames.get(catId) || '';
+    for (let hops = 0; next.has(id) && hops < 10; hops++) { const into = next.get(id); id = into.id; name = into.name || name; }
+    return name;
+  };
+  let cats = (await loreCall('getCategories') || []).filter(c => c && c.id);
+  const catIdFor = async (name) => {
+    if (!name) return null;
+    const hit = cats.find(c => (c.name || '').toLowerCase() === name.toLowerCase());
+    if (hit) return hit.id;
+    const id = await loreCall('createCategory', { name });
+    if (!id) throw new Error('could not create category ' + name);
+    cats.push({ id, name });
+    console.log(`[Lore] Restore: created category "${name}"`);
+    return id;
+  };
+  const have = new Set((await loreCall('getEntries') || []).map(e => (e.displayName || '').toLowerCase()));
+  const report = { restored: 0, skipped: 0, failed: [] };
+  for (let i = 0; i < saved.length; i++) {
+    const e = saved[i];
+    onProgress(i, saved.length);
+    if (have.has((e.displayName || '').toLowerCase())) { report.skipped++; continue; }
+    try {
+      const category = e.category ? await catIdFor(targetName(e.category)) : null;
+      const id = await loreCall('createEntry', { displayName: e.displayName, text: e.text, keys: e.keys || [], enabled: e.enabled !== false, ...(category ? { category } : {}) });
+      if (!id) throw new Error('create refused');
+      if (e.forceActivation === true) {
+        const ok = await loreCall('updateEntry', id, { forceActivation: true });
+        if (ok === false) console.warn(`[Lore] Restore: "${e.displayName}" restored, but "always on" could not be set`);
+      }
+      have.add((e.displayName || '').toLowerCase());
+      report.restored++;
+    } catch (err) {
+      // A slow reply can time out after NovelAI already made the entry.
+      const made = (await loreCall('getEntries').catch(() => []) || []).find(x => (x.displayName || '').toLowerCase() === (e.displayName || '').toLowerCase());
+      if (made) {
+        have.add((e.displayName || '').toLowerCase());
+        report.restored++;
+        report.slow = [...(report.slow || []), made.id];
+        console.warn(`[Lore] Restore: "${e.displayName}" answered late but is in the lorebook`);
+        continue;
+      }
+      report.failed.push(e.displayName);
+      console.warn(`[Lore] Restore: "${e.displayName}" failed: ${err.message}`);
+    }
+  }
+  onProgress(saved.length, saved.length);
+  const now = await loreCall('getEntries') || [];
+  report.lorebookNow = now.length;
+  console.log(`[Lore] Restore done: ${report.restored} restored, ${report.skipped} already there, ${report.failed.length} failed; lorebook now has ${now.length} entries`);
+  await loadCategoryRegistry();
+  return report;
+}
+
+/** Merge one lorebook category into another because the user asked to. */
+export async function mergeCategoryByHand(fromId, intoId) {
+  const storyId = state.currentStoryId;
+  if (!storyId || !state.loreState || !fromId || !intoId || fromId === intoId) return null;
+  await checkLoreProxy();
+  const cats = await loreCall('getCategories') || [];
+  const from = cats.find(c => c.id === fromId);
+  const into = cats.find(c => c.id === intoId);
+  if (!from || !into) throw new Error('category not found in the lorebook');
+  const entries = (await loreCall('getEntries') || []).filter(e => e.category === from.id);
+  const step = await moveCategoryInto(storyId, { id: from.id, name: from.name }, { id: into.id, name: into.name }, entries, 'merged by hand');
+  // The user wants this pair together, so drop any earlier "keep apart".
+  const key = [from.name.toLowerCase(), into.name.toLowerCase()].sort().join('||');
+  state.loreState.categoryKeepApart = (state.loreState.categoryKeepApart || []).filter(k => k !== key);
+  await finishCategoryMerges(step ? [step] : []);
+  return step;
 }
 
 /**
@@ -342,34 +443,94 @@ export async function cleanupLorebookCategories({ force = false } = {}) {
 export async function undoCategoryMerges(steps) {
   const storyId = state.currentStoryId;
   if (!storyId || !state.loreState) return;
+  // One merge can span several logged steps (it ran in more than one
+  // session, or a same-name copy was folded in first), so undo each
+  // "from -> into" pair as a whole: one category, every entry it lost.
+  const pairs = new Map();
+  for (const s of steps) {
+    const k = s.from.name.toLowerCase() + '||' + s.into.name.toLowerCase();
+    if (!pairs.has(k)) pairs.set(k, []);
+    pairs.get(k).push(s);
+  }
   const undone = [];
-  for (const s of [...steps].reverse()) {
+  for (const group of pairs.values()) {
+    const { from, into } = group[group.length - 1];
     try {
-      let catId = s.from.id;
-      if (s.removed !== false) {
-        catId = await loreCall('createCategory', { name: s.from.name });
-        if (!catId) throw new Error('could not recreate the category');
+      const cats = await loreCall('getCategories') || [];
+      const existing = cats.find(c => group.some(s => s.from.id === c.id)) || cats.find(c => (c.name || '').toLowerCase() === from.name.toLowerCase());
+      const catId = existing ? existing.id : await loreCall('createCategory', { name: from.name });
+      if (!catId) throw new Error('could not recreate the category');
+      // Only entries still sitting in the kept category go back; anything
+      // moved elsewhere since stays where the user put it.
+      const wanted = new Set(group.flatMap(s => s.entryIds || []));
+      const entries = await loreCall('getEntries') || [];
+      const intoIds = new Set(group.map(s => s.into.id));
+      for (const e of entries) {
+        if (wanted.has(e.id) && intoIds.has(e.category)) await loreCall('updateEntry', e.id, { category: catId });
       }
-      for (const id of s.entryIds) await loreCall('updateEntry', id, { category: catId });
       const ids = state.loreState.loreCategoryIds || {};
-      if (ids[s.from.name] === s.into.id) ids[s.from.name] = catId;
+      if (intoIds.has(ids[from.name])) ids[from.name] = catId;
       await window.powertool.loreAddCustomCategory(storyId, {
-        id: slugifyCategory(s.from.name), displayName: s.from.name, singularName: deriveSingularPlural(s.from.name).singular,
+        id: slugifyCategory(from.name), displayName: from.name, singularName: deriveSingularPlural(from.name).singular,
         color: '#607d8b', source: 'lorebook', explicit: true,
       });
-      const key = [s.from.name.toLowerCase(), s.into.name.toLowerCase()].sort().join('||');
+      const key = [from.name.toLowerCase(), into.name.toLowerCase()].sort().join('||');
       state.loreState.categoryKeepApart = [...new Set([...(state.loreState.categoryKeepApart || []), key])];
-      state.loreState.categoryMergeLog = (state.loreState.categoryMergeLog || []).filter(x => !(x.at === s.at && x.from.id === s.from.id));
-      undone.push(s.from.name);
+      state.loreState.categoryMergeLog = (state.loreState.categoryMergeLog || []).filter(x => !group.some(s => x.at === s.at && x.from.id === s.from.id));
+      undone.push(from.name);
+      console.log(`[LoreCat] Put back "${from.name}" from "${into.name}"`);
     } catch (e) {
-      console.warn(`[LoreCat] Undo of "${s.from.name}" failed: ${e.message}`);
+      console.warn(`[LoreCat] Undo of "${from.name}" failed: ${e.message}`);
     }
   }
   await saveLoreState();
   await loadCategoryRegistry();
-  showToast(undone.length === steps.length
+  renderMergeHistory();
+  showToast(undone.length === pairs.size
     ? `Put back: ${undone.join(', ')}. They will stay separate.`
-    : `Put back ${undone.length} of ${steps.length} categories; see the log for the rest.`, 6000, undone.length === steps.length ? 'success' : 'warn');
+    : `Put back ${undone.length} of ${pairs.size} categories; see the log for the rest.`, 6000, undone.length === pairs.size ? 'success' : 'warn');
+}
+
+/**
+ * Past merges list (lore settings): one row per category that was merged
+ * into a differently named one, with its own Undo. Same-name folds are not
+ * listed; undoing them would only recreate a duplicate.
+ */
+export function renderMergeHistory() {
+  const list = document.getElementById('loreMergeHistory');
+  if (!list || document.getElementById('loreMergeTools')?.classList.contains('u-hidden')) return;
+  const pairs = new Map();
+  for (const s of state.loreState?.categoryMergeLog || []) {
+    if (s.from.name.toLowerCase() === s.into.name.toLowerCase()) continue;
+    const k = s.from.name.toLowerCase() + '||' + s.into.name.toLowerCase();
+    if (!pairs.has(k)) pairs.set(k, []);
+    pairs.get(k).push(s);
+  }
+  list.innerHTML = '';
+  if (!pairs.size) {
+    list.innerHTML = '<div class="lore-merge-empty">No category merges to undo.</div>';
+    return;
+  }
+  for (const group of pairs.values()) {
+    const { from, into } = group[group.length - 1];
+    const n = new Set(group.flatMap(s => s.entryIds || [])).size;
+    const row = document.createElement('div');
+    row.className = 'lore-merge-row';
+    const label = document.createElement('div');
+    label.className = 'lore-merge-label';
+    label.textContent = `${from.name} into ${into.name} (${n} ${n === 1 ? 'entry' : 'entries'})`;
+    const btn = document.createElement('button');
+    btn.className = 'lore-merge-undo';
+    btn.textContent = 'Undo';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Undoing...';
+      try { await checkLoreProxy(); await undoCategoryMerges(group); } catch (e) { showToast('Undo failed: ' + e.message, 6000, 'warn'); }
+      renderMergeHistory();
+    });
+    row.append(label, btn);
+    list.appendChild(row);
+  }
 }
 
 // =========================================================================
@@ -708,7 +869,25 @@ async function proxyCall(cmdLabel, resPrefix, resEnd, method, args) {
 }
 
 // Smart wrappers -- try CDP first, then webview proxy, then direct fallbacks
+// Script 4.1.2 and older "updated" advanced fields by deleting the entry and
+// recreating it; NovelAI refused the recreate and the entry was lost (a whole
+// lorebook on 2026-10-12). Advanced updates go only to a script whose ping
+// says its updates never delete (4.1.3+).
+let _safeUpdatesConfirmed = false;
+async function scriptUpdatesAreSafe() {
+  if (_safeUpdatesConfirmed) return true;
+  try {
+    const p = await proxyCall('__LORE_PROXY_CMD__', '__LORE_PROXY_RES__', '__LORE_PROXY_END__', 'ping', []);
+    _safeUpdatesConfirmed = !!(p && p.safeUpdates === true);
+  } catch (_) { _safeUpdatesConfirmed = false; }
+  return _safeUpdatesConfirmed;
+}
+
 export async function loreCall(method, ...args) {
+  if (method === 'batchUpdateAdvanced' && !(await scriptUpdatesAreSafe())) {
+    console.warn('[Lore] Not sending lorebook optimizations: the PowerTool script in NovelAI is older than 4.1.3. Update it in the Scripts tab.');
+    return { success: 0, failed: (args[0] || []).length, errors: ['script too old for safe updates'] };
+  }
   // Try proxy first if available
   if (state.loreProxyReady) {
     try {
@@ -1460,7 +1639,7 @@ async function runLoreScan(scanType = 'all') {
     if (existingEntries.length === 0 && acceptedCount > 0) {
       console.warn('[Lore] getEntries returned empty but we have', acceptedCount, 'accepted entries — lorebook read may have failed');
       scanHadError = true;
-      showLoreError('Could not read lorebook entries. Open Script Manager and ensure the Lore Creator Proxy script is active.');
+      showLoreError('Could not read lorebook entries. In the Scripts tab, make sure NovelAI PowerTool is enabled and the old Lore Creator Proxy and Memory Manager Proxy scripts are disabled (only one script panel can run, and they take it over).');
       return;
     }
 
@@ -2827,6 +3006,102 @@ export function init() {
       }
     });
   }
+  const mergeToolsBtn = document.getElementById('loreMergeToolsBtn');
+  const mergeTools = document.getElementById('loreMergeTools');
+  const mergeFrom = document.getElementById('loreMergeFrom');
+  const mergeInto = document.getElementById('loreMergeInto');
+  const mergeGo = document.getElementById('loreMergeGo');
+  const fillMergeSelects = async () => {
+    let cats = [];
+    try { await checkLoreProxy(); cats = await loreCall('getCategories') || []; } catch (_) {}
+    cats = cats.filter(c => c && c.id && c.name).sort((a, b) => a.name.localeCompare(b.name));
+    for (const sel of [mergeFrom, mergeInto]) {
+      const keep = sel.value;
+      sel.innerHTML = '';
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = cats.length ? 'Choose a category' : 'No lorebook categories';
+      sel.appendChild(none);
+      for (const c of cats) {
+        const o = document.createElement('option');
+        o.value = c.id;
+        o.textContent = c.name;
+        sel.appendChild(o);
+      }
+      if (cats.some(c => c.id === keep)) sel.value = keep;
+    }
+  };
+  const backupSelect = document.getElementById('loreBackupSelect');
+  const restoreGo = document.getElementById('loreRestoreGo');
+  const restoreStatus = document.getElementById('loreRestoreStatus');
+  const fillBackups = async () => {
+    if (!backupSelect) return;
+    const list = state.currentStoryId ? await window.powertool.loreListBackups(state.currentStoryId) : [];
+    backupSelect.innerHTML = '';
+    for (const b of list) {
+      const o = document.createElement('option');
+      o.value = b.name;
+      o.textContent = `${b.name.replace(/^[0-9a-f]{8}-lorebook-/, '').replace(/\.json$/, '')} (${b.entries} entries)`;
+      backupSelect.appendChild(o);
+    }
+    if (!list.length) {
+      const o = document.createElement('option');
+      o.value = '';
+      o.textContent = 'No backups for this story';
+      backupSelect.appendChild(o);
+    }
+  };
+  if (mergeToolsBtn && mergeTools) {
+    mergeToolsBtn.addEventListener('click', async () => {
+      const open = mergeTools.classList.toggle('u-hidden') === false;
+      mergeToolsBtn.setAttribute('aria-expanded', String(open));
+      if (open) { renderMergeHistory(); await fillMergeSelects(); await fillBackups(); }
+    });
+  }
+  if (restoreGo) {
+    restoreGo.addEventListener('click', async () => {
+      if (!backupSelect.value) { showToast('No backup selected'); return; }
+      restoreGo.disabled = true;
+      restoreGo.textContent = 'Restoring...';
+      try {
+        const backup = await window.powertool.loreReadBackup(backupSelect.value);
+        const r = await restoreLorebookFromBackup(backup, (i, n) => { restoreStatus.textContent = `Restoring ${i} of ${n}...`; });
+        restoreStatus.textContent = `Restored ${r.restored}. Already there: ${r.skipped}. Failed: ${r.failed.length}. Lorebook now has ${r.lorebookNow} entries.`;
+        showToast(`Lorebook restore: ${r.restored} restored, ${r.failed.length} failed`, 8000, r.failed.length ? 'warn' : 'success');
+      } catch (e) {
+        restoreStatus.textContent = 'Restore stopped: ' + e.message;
+        showToast('Restore stopped: ' + e.message, 8000, 'warn');
+      } finally {
+        restoreGo.disabled = false;
+        restoreGo.textContent = 'Restore missing entries';
+        await fillMergeSelects();
+      }
+    });
+  }
+  if (mergeGo) {
+    mergeGo.addEventListener('click', async () => {
+      const fromName = mergeFrom.selectedOptions[0]?.textContent;
+      const intoName = mergeInto.selectedOptions[0]?.textContent;
+      if (!mergeFrom.value || !mergeInto.value) { showToast('Choose both categories first'); return; }
+      if (mergeFrom.value === mergeInto.value) { showToast('Choose two different categories'); return; }
+      mergeGo.disabled = true;
+      mergeGo.textContent = 'Merging...';
+      try {
+        const step = await mergeCategoryByHand(mergeFrom.value, mergeInto.value);
+        if (!step) showToast(`Nothing was moved out of ${fromName}`, 6000, 'warn');
+        else if (step.removed === false) showToast(`Moved ${step.entryIds.length} entries into ${intoName}, but ${fromName} could not be removed`, 6000, 'warn');
+      } catch (e) {
+        showToast('Merge failed: ' + e.message, 6000, 'warn');
+      } finally {
+        mergeGo.disabled = false;
+        mergeGo.textContent = 'Merge';
+        mergeFrom.value = '';
+        await fillMergeSelects();
+        renderMergeHistory();
+      }
+    });
+  }
+
   if (loreDetectCategoriesBtn) {
     loreDetectCategoriesBtn.addEventListener('click', async () => {
       if (!state.currentStoryId) return;

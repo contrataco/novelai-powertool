@@ -4,7 +4,7 @@ id: e02be7b4-4993-4ebf-abc0-ca7ed996744f
 name: NovelAI PowerTool
 createdAt: 1766945065236
 updatedAt: 1774381797637
-version: 4.1.2
+version: 4.1.3
 author: Contrataco
 description: Unified PowerTool script — story relay, lorebook proxy, memory proxy, suggestion insertion
 memoryLimit: 16
@@ -151,69 +151,47 @@ async function refreshStoryIdentity(): Promise<void> {
 // LOREBOOK OPERATIONS
 // ============================================================================
 
+// Change an entry IN PLACE. This never removes an entry: an earlier version
+// fell back to delete + recreate, NovelAI's createEntry rejected the advanced
+// keys, and every "optimized" entry was lost while the call reported success.
+// Keys an entry does not have (searchRange, budgetPriority, loreBias, ...) are
+// not written; the call succeeds only when every requested key was saved.
 async function updateLorebookEntry(rawEntry: any, updates: Record<string, any>): Promise<boolean> {
   const entryId = rawEntry.id;
-
-  // Split updates into basic (accepted by updateEntry API) vs advanced (need direct mutation)
-  const ADVANCED_KEYS = new Set(['searchRange', 'forceActivation', 'keyRelative', 'nonStoryActivatable',
-    'budgetPriority', 'contextConfig', 'loreBias', 'contextSize']);
-  const basicUpdates: Record<string, any> = {};
-  const advancedUpdates: Record<string, any> = {};
-  for (const [key, value] of Object.entries(updates)) {
-    if (ADVANCED_KEYS.has(key)) advancedUpdates[key] = value;
-    else basicUpdates[key] = value;
+  const BASIC = new Set(['displayName', 'text', 'keys', 'category', 'enabled']);
+  const own = new Set(Object.keys(rawEntry || {}));
+  const writable: Record<string, any> = {};
+  const skipped: string[] = [];
+  for (const [key, value] of Object.entries(updates || {})) {
+    if (BASIC.has(key) || own.has(key)) writable[key] = value;
+    else skipped.push(key);
   }
-
-  let basicOk = Object.keys(basicUpdates).length === 0; // vacuously true if no basic fields
-
-  // Strategy 1: updateEntry API for basic fields only
-  if (!basicOk) {
+  if (Object.keys(writable).length) {
     try {
-      await (api.v1.lorebook as any).updateEntry(entryId, basicUpdates);
-      basicOk = true;
-    } catch (_) {}
-  }
-
-  // Strategy 2: Direct mutation for basic (if Strategy 1 failed) + advanced fields
-  const mutationFields = basicOk ? advancedUpdates : updates;
-  if (Object.keys(mutationFields).length > 0) {
-    try {
-      for (const [key, value] of Object.entries(mutationFields)) {
-        rawEntry[key] = value;
+      await (api.v1.lorebook as any).updateEntry(entryId, writable);
+    } catch (e) {
+      // Some own keys may still be refused; keep the basic part.
+      const basic: Record<string, any> = {};
+      for (const [k, v] of Object.entries(writable)) if (BASIC.has(k)) basic[k] = v;
+      for (const k of Object.keys(writable)) if (!BASIC.has(k)) skipped.push(k);
+      if (!Object.keys(basic).length) {
+        api.v1.error(`${LOG_PREFIX} Update refused for ${rawEntry.displayName}:`, e);
+        return false;
       }
-      if (typeof rawEntry.save === 'function') {
-        await rawEntry.save();
-        api.v1.log(`${LOG_PREFIX} Updated ${rawEntry.displayName} (api:${basicOk}, mutation:${Object.keys(mutationFields).join(',')})`);
-        return true;
+      try {
+        await (api.v1.lorebook as any).updateEntry(entryId, basic);
+      } catch (e2) {
+        api.v1.error(`${LOG_PREFIX} Update failed for ${rawEntry.displayName}:`, e2);
+        return false;
       }
-    } catch (_) {}
-  } else if (basicOk) {
-    api.v1.log(`${LOG_PREFIX} Updated via updateEntry: ${rawEntry.displayName}`);
-    return true;
-  }
-
-  // Strategy 3: Delete + recreate (preserve advanced fields)
-  try {
-    await (api.v1.lorebook as any).removeEntry(entryId);
-    const recreated: any = {
-      displayName: updates.displayName ?? rawEntry.displayName,
-      text: updates.text ?? rawEntry.text,
-      keys: updates.keys ?? rawEntry.keys ?? [],
-      enabled: rawEntry.enabled !== false,
-    };
-    const finalCategory = updates.category ?? rawEntry.category;
-    if (finalCategory) recreated.category = finalCategory;
-    for (const key of ADVANCED_KEYS) {
-      const val = updates[key] ?? rawEntry[key];
-      if (val !== undefined) recreated[key] = val;
     }
-    await (api.v1.lorebook as any).createEntry(recreated);
-    api.v1.log(`${LOG_PREFIX} Updated via delete+recreate: ${recreated.displayName}`);
-    return true;
-  } catch (e) {
-    api.v1.error(`${LOG_PREFIX} All update strategies failed for ${rawEntry.displayName}:`, e);
+  }
+  if (skipped.length) {
+    api.v1.log(`${LOG_PREFIX} ${rawEntry.displayName}: not written (NovelAI has no such field): ${skipped.join(', ')}`);
     return false;
   }
+  api.v1.log(`${LOG_PREFIX} Updated in place: ${rawEntry.displayName}`);
+  return true;
 }
 
 async function proxyGetEntries(): Promise<any[]> {
@@ -501,7 +479,7 @@ async function handleLoreRequest(req: { id: string; method: string; args: any[] 
     case 'inspectCategory': return proxyInspectCategory();
     case 'testAdvancedWrite': return proxyTestAdvancedWrite();
     case 'batchUpdateAdvanced': return proxyBatchUpdateAdvanced(req.args[0]);
-    case 'ping': return { ok: true, ts: Date.now() };
+    case 'ping': return { ok: true, ts: Date.now(), version: SCRIPT_VERSION, safeUpdates: true };
     default: return { __error: 'Unknown lore method: ' + req.method };
   }
 }
@@ -514,7 +492,7 @@ async function handleMemoryRequest(req: { id: string; method: string; args: any[
     case 'setAuthorNote': return proxySetAuthorNote(req.args[0]);
     case 'getStoryText': return proxyGetStoryText();
     case 'countTokens': return proxyCountTokens(req.args[0]);
-    case 'ping': return { ok: true, ts: Date.now() };
+    case 'ping': return { ok: true, ts: Date.now(), version: SCRIPT_VERSION, safeUpdates: true };
     default: return { __error: 'Unknown memory method: ' + req.method };
   }
 }
@@ -522,6 +500,10 @@ async function handleMemoryRequest(req: { id: string; method: string; args: any[
 // ============================================================================
 // PROXY COMMAND/RESPONSE CHANNELS
 // ============================================================================
+
+// Reported by ping; the app sends advanced-field updates only to 4.1.3+,
+// where an update can never delete an entry.
+const SCRIPT_VERSION = '4.1.3';
 
 const DOM_IDS = {
   loreCmd: '__lore_proxy_dom_cmd__',
