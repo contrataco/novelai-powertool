@@ -183,6 +183,7 @@ contextBridge.exposeInMainWorld('powertool', {
   loreGetCategoryRegistry: (storyId) => ipcRenderer.invoke('lore:get-category-registry', storyId),
   loreListBackups: (storyId) => ipcRenderer.invoke('lore:list-backups', storyId),
   loreReadBackup: (name) => ipcRenderer.invoke('lore:read-backup', name),
+  loreSaveBackup: (storyId, data) => ipcRenderer.invoke('lore:save-backup', storyId, data),
   loreAddCustomCategory: (storyId, category) => ipcRenderer.invoke('lore:add-custom-category', { storyId, category }),
   loreRemoveCustomCategory: (storyId, categoryId) => ipcRenderer.invoke('lore:remove-custom-category', { storyId, categoryId }),
   lorePlanCategoryMerges: (cats, opts) => ipcRenderer.invoke('lore:plan-category-merges', cats, opts),

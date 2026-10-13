@@ -262,6 +262,23 @@ const _categoryCleanupDone = new Set();
  * is never touched, and each merge is logged so Undo can put it back.
  * Runs once per story per session unless forced.
  */
+// Save the lorebook to {userData}/lorebook-backups before anything that moves
+// or changes entries, so Restore always has a recent copy. Never blocks the
+// caller: a failed backup is logged and the work goes on.
+export async function backupLorebook(reason) {
+  const storyId = state.currentStoryId;
+  if (!storyId || !state.loreProxyReady) return null;
+  try {
+    const [getCategories, getEntriesExpanded] = [await loreCall('getCategories'), await loreCall('getEntriesExpanded')];
+    const r = await window.powertool.loreSaveBackup(storyId, { reason, getCategories, getEntriesExpanded });
+    console.log('[Lore] Backup ' + (r.saved ? `saved: ${r.name} (${r.entries} entries)` : `not needed: ${r.reason}`) + ' - ' + reason);
+    return r;
+  } catch (e) {
+    console.warn('[Lore] Backup failed (' + reason + '):', e.message);
+    return null;
+  }
+}
+
 export async function cleanupLorebookCategories({ force = false } = {}) {
   const storyId = state.currentStoryId;
   if (!storyId || !state.loreProxyReady || !state.loreState) return [];
@@ -289,6 +306,7 @@ export async function cleanupLorebookCategories({ force = false } = {}) {
     if (decision.apart?.length) {
       state.loreState.categoryKeepApart = [...new Set([...(state.loreState.categoryKeepApart || []), ...decision.apart])];
     }
+    if (decision.merges?.length) await backupLorebook('before category cleanup');
     const log = [];
     for (const plan of decision.merges || []) {
       for (const m of plan.merge) {
@@ -1754,8 +1772,7 @@ async function runLoreScan(scanType = 'all') {
     if (existingEntries.length === 0 && !state.loreState?.restoreOfferDeclined) {
       let backups = [];
       try { backups = await window.powertool.loreListBackups(state.currentStoryId) || []; } catch (_) {}
-      const best = backups.filter(b => b.entries > 0)
-        .sort((a, b) => b.entries - a.entries || b.name.localeCompare(a.name))[0];
+      const best = backups.find(b => b.entries > 0); // listed newest first
       if (best) {
         console.warn('[Lore] Lorebook is empty in NovelAI and backup', best.name, 'has', best.entries, 'entries; asking before scanning');
         scanHadError = true;
@@ -1767,6 +1784,7 @@ async function runLoreScan(scanType = 'all') {
       state.loreState.acceptedEntryIds = [];
       await saveLoreState();
     }
+    if (existingEntries.length) await backupLorebook('before scan');
 
     // Build scan options based on type
     const scanOptions = {};

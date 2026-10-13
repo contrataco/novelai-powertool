@@ -220,7 +220,9 @@ function createWindow() {
 
   // Lorebook work happens in the renderer; copy its lore lines to the app log.
   mainWindow.webContents.on('console-message', (_e, level, message) => {
-    if (/^\[(Lore|LoreCat|Direct)\]/.test(message)) console.log('[Renderer]' + (level >= 2 ? ' (warn)' : ''), message.slice(0, 500));
+    // Lore and story-loading lines, and every renderer warning or error, so a
+    // failure the user saw on screen can be read from the log afterwards.
+    if (/^\[(Lore|LoreCat|LoreOpt|Direct|StorySelector|HeadlessSync|Dashboard|Renderer)\]/.test(message) || level >= 2) console.log('[Renderer]' + (level >= 2 ? ' (warn)' : ''), message.slice(0, 500));
   });
 
   // Open DevTools in development
@@ -2771,6 +2773,35 @@ ipcMain.handle('lore:list-backups', (_e, storyId) => {
         return { name: f, entries };
       });
   } catch (_) { return []; }
+});
+// Automatic backup ({getCategories, getEntriesExpanded}, the shape Restore
+// reads). Skipped when empty or unchanged since the newest automatic one;
+// only the newest 20 automatic backups per story are kept. Hand-made backups
+// (no "-auto") are never removed.
+const AUTO_BACKUPS_KEPT = 20;
+ipcMain.handle('lore:save-backup', (_e, storyId, data) => {
+  const prefix = String(storyId || '').slice(0, 8);
+  if (!/^[0-9a-f]{8}$/.test(prefix)) return { saved: false, reason: 'bad story id' };
+  const entries = (data && data.getEntriesExpanded) || [];
+  if (!entries.length) return { saved: false, reason: 'lorebook is empty' };
+  const dir = LOREBOOK_BACKUP_DIR();
+  fs.mkdirSync(dir, { recursive: true });
+  const autos = fs.readdirSync(dir).filter(f => f.startsWith(prefix + '-lorebook-') && f.endsWith('-auto.json')).sort();
+  const body = JSON.stringify({ getCategories: data.getCategories || [], getEntriesExpanded: entries });
+  const newest = autos[autos.length - 1];
+  if (newest) {
+    try {
+      const old = JSON.parse(fs.readFileSync(path.join(dir, newest), 'utf8'));
+      if (JSON.stringify({ getCategories: old.getCategories || [], getEntriesExpanded: old.getEntriesExpanded || [] }) === body) return { saved: false, reason: 'unchanged', name: newest };
+    } catch (_) {}
+  }
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const name = `${prefix}-lorebook-${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}-auto.json`;
+  fs.writeFileSync(path.join(dir, name), JSON.stringify({ savedAt: d.toISOString(), reason: String((data && data.reason) || ''), ...JSON.parse(body) }));
+  const all = [...autos, name].sort();
+  for (const f of all.slice(0, Math.max(0, all.length - AUTO_BACKUPS_KEPT))) fs.unlinkSync(path.join(dir, f));
+  return { saved: true, name, entries: entries.length };
 });
 ipcMain.handle('lore:read-backup', (_e, name) => {
   if (!/^[0-9a-f]{8}-lorebook-[\w.-]+\.json$/.test(String(name || ''))) throw new Error('bad backup name');
