@@ -758,7 +758,17 @@ function execInWebview(code, ms, label) {
   ]).finally(() => clearTimeout(timer));
 }
 
-async function proxyCall(cmdLabel, resPrefix, resEnd, method, args) {
+// One proxy call at a time: the script reads one command input and shows one
+// reply, so a second call sent before the first is answered overwrites it and
+// one of the two never gets a reply (15s timeout, then empty fallback data).
+let _proxyQueue = Promise.resolve();
+function proxyCall(...a) {
+  const run = _proxyQueue.then(() => sendProxyCall(...a));
+  _proxyQueue = run.catch(() => {});
+  return run;
+}
+
+async function sendProxyCall(cmdLabel, resPrefix, resEnd, method, args) {
   const reqId = 'r' + Date.now() + Math.random().toString(36).slice(2, 8);
   const payload = JSON.stringify({ id: reqId, method, args: args || [] });
   // DOM response element written by naiscript's writeDomResponse (works even when panel update fails)
@@ -858,8 +868,13 @@ async function proxyCall(cmdLabel, resPrefix, resEnd, method, args) {
           } catch(e) { /* not valid JSON yet, keep polling */ }
         }
         // Wall clock, not a poll count: throttled timers make 150 polls far longer than 15s.
-        if (Date.now() - started < 15000) setTimeout(poll, 100);
-        else reject(new Error('Proxy response timeout (15s)'));
+        if (Date.now() - started < 15000) { setTimeout(poll, 100); return; }
+        // Say what the page looked like, so a timeout can be diagnosed.
+        var inputs = document.querySelectorAll('input[placeholder="' + CMD_LABEL + '"], textarea[placeholder="' + CMD_LABEL + '"]').length;
+        var last = readResponse();
+        var lastId = null; try { lastId = last ? JSON.parse(last).id : null; } catch (e) { lastId = 'unparsable'; }
+        reject(new Error('Proxy response timeout (15s) [inputs=' + inputs + ' sentTo=' + (cmdInput ? (cmdInput.isConnected ? 'panel' : 'stale-panel') : 'none') + (domCmdEl ? '+dom' : '') +
+          ' lastReplyId=' + (lastId === REQ_ID ? 'ours' : lastId) + ' hidden=' + document.hidden + ' focus=' + document.hasFocus() + ']'));
       }
       setTimeout(poll, 50);
     })
@@ -893,6 +908,12 @@ export async function loreCall(method, ...args) {
     try {
       return await proxyCall('__LORE_PROXY_CMD__', '__LORE_PROXY_RES__', '__LORE_PROXY_END__', method, args);
     } catch (e) {
+      // The page fallback cannot see lorebook entries or categories, so it
+      // answers "none". A failed read must not look like an empty lorebook
+      // (Restore would re-create entries that are there).
+      if (method === 'getEntries' || method === 'getCategories') {
+        throw new Error('Could not read the lorebook from NovelAI: ' + e.message);
+      }
       console.log('[Lore] Proxy call failed, trying direct:', method, e.message);
     }
   }
