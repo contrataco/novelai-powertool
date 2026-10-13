@@ -1252,6 +1252,46 @@ function showLoreError(msg) {
   loreError.classList.remove('u-hidden');
 }
 
+// The lorebook is empty and a backup exists: restore it, or scan without it.
+function offerRestoreBeforeScan(backup, scanType) {
+  showLoreError(`The lorebook in NovelAI is empty. A backup has ${backup.entries} entries. Restore it before scanning? A scan first would keep its own entries, and the backed-up entries with the same names would not come back.`);
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:10px';
+  const mk = (label) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.style.cssText = 'min-height:40px;font-size:16px;padding:6px 12px';
+    row.appendChild(b);
+    return b;
+  };
+  const restoreBtn = mk(`Restore ${backup.entries} entries first`);
+  const scanBtn = mk('Scan without restoring');
+  const status = document.createElement('div');
+  status.style.cssText = 'font-size:16px;margin-top:8px';
+  row.appendChild(status);
+  loreError.appendChild(row);
+  restoreBtn.addEventListener('click', async () => {
+    restoreBtn.disabled = scanBtn.disabled = true;
+    try {
+      const data = await window.powertool.loreReadBackup(backup.name);
+      const r = await restoreLorebookFromBackup(data, (i, n) => { status.textContent = `Restoring ${i} of ${n}...`; });
+      status.textContent = `Restored ${r.restored}. Already there: ${r.skipped}. Failed: ${r.failed.length}. Lorebook now has ${r.lorebookNow} entries. You can scan now.`;
+      showToast(`Lorebook restore: ${r.restored} restored, ${r.failed.length} failed`, 8000, r.failed.length ? 'warn' : 'success');
+    } catch (e) {
+      status.textContent = 'Restore stopped: ' + e.message;
+      restoreBtn.disabled = scanBtn.disabled = false;
+    }
+  });
+  scanBtn.addEventListener('click', async () => {
+    state.loreState.restoreOfferDeclined = true;
+    state.loreState.acceptedEntryIds = [];
+    await saveLoreState();
+    loreError.classList.add('u-hidden');
+    runLoreScan(scanType);
+  });
+}
+
 // The lorebook category to use for a name: the one the app made before, else a
 // lorebook category with that name or an overlapping one ("Abilities" for
 // "Crawler Abilities"), else a new one. Never makes a near-copy of a category
@@ -1654,14 +1694,25 @@ async function runLoreScan(scanType = 'all') {
     let existingEntries = await loreCall('getEntries');
     if (!existingEntries || !Array.isArray(existingEntries)) existingEntries = [];
 
-    // Safety: if we have accepted entries but getEntries returned nothing,
-    // the proxy/fallback likely failed — warn rather than create duplicates
-    const acceptedCount = (state.loreState?.acceptedEntryIds || []).length;
-    if (existingEntries.length === 0 && acceptedCount > 0) {
-      console.warn('[Lore] getEntries returned empty but we have', acceptedCount, 'accepted entries — lorebook read may have failed');
-      scanHadError = true;
-      showLoreError('Could not read lorebook entries. In the Scripts tab, make sure NovelAI PowerTool is enabled and the old Lore Creator Proxy and Memory Manager Proxy scripts are disabled (only one script panel can run, and they take it over).');
-      return;
+    // A failed read throws (loreCall), so an empty list really is an empty
+    // lorebook. With a backup on disk, ask first: Restore skips names already
+    // in the lorebook, so scanning first would keep the scan's entries and
+    // leave the backed-up versions out.
+    if (existingEntries.length === 0 && !state.loreState?.restoreOfferDeclined) {
+      let backups = [];
+      try { backups = await window.powertool.loreListBackups(state.currentStoryId) || []; } catch (_) {}
+      const best = backups.filter(b => b.entries > 0)
+        .sort((a, b) => b.entries - a.entries || b.name.localeCompare(a.name))[0];
+      if (best) {
+        console.warn('[Lore] Lorebook is empty in NovelAI and backup', best.name, 'has', best.entries, 'entries; asking before scanning');
+        scanHadError = true;
+        offerRestoreBeforeScan(best, scanType);
+        return;
+      }
+    }
+    if (existingEntries.length === 0 && (state.loreState?.acceptedEntryIds || []).length) {
+      state.loreState.acceptedEntryIds = [];
+      await saveLoreState();
     }
 
     // Build scan options based on type
