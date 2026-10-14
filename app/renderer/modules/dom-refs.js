@@ -399,6 +399,7 @@ export const loreOptStatus = document.getElementById('loreOptStatus');
 // Lore settings elements
 export const loreAutoScan = document.getElementById('loreAutoScan');
 export const loreAutoUpdates = document.getElementById('loreAutoUpdates');
+export const lorePropagateNames = document.getElementById('lorePropagateNames');
 export const loreMinChars = document.getElementById('loreMinChars');
 export const loreMinCharsValue = document.getElementById('loreMinCharsValue');
 export const loreTemp = document.getElementById('loreTemp');

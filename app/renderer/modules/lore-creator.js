@@ -14,7 +14,7 @@ import {
   loreCreateInput, loreCreateBtn, loreCreateCategory, loreCreatePreview,
   loreEnrichInput, loreEnrichBtn, loreEnrichPreview, loreEnrichTarget,
   loreEnrichOld, loreEnrichNew, loreEnrichAcceptBtn, loreEnrichEditBtn, loreEnrichRejectBtn,
-  loreAutoScan, loreAutoUpdates, loreMinChars, loreMinCharsValue,
+  loreAutoScan, loreAutoUpdates, lorePropagateNames, loreMinChars, loreMinCharsValue,
   loreTemp, loreTempValue, loreDetailLevel,
   loreLlmSelect, loreNovelaiModelSettings, novelaiTextModelSelect, lorePerchanceModelSettings, perchanceTextModelSelect, loreOllamaSettings, loreOllamaModelSelect, loreOllamaUrlInput, loreOllamaUrlStatus, loreOllamaRefreshBtn,
   loreHybridToggle,
@@ -2803,8 +2803,10 @@ function saveLoreSettings() {
     });
   }
   state.loreSettings = {
+    ...(state.loreSettings || {}),
     autoScan: loreAutoScan.checked,
     autoDetectUpdates: loreAutoUpdates.checked,
+    propagateFamilyNames: lorePropagateNames.checked,
     minNewCharsForScan: parseInt(loreMinChars.value),
     temperature: parseFloat(loreTemp.value),
     detailLevel: loreDetailLevel.value,
@@ -3022,6 +3024,7 @@ export function init() {
       state.loreSettings = await window.powertool.loreGetSettings();
       loreAutoScan.checked = state.loreSettings.autoScan;
       loreAutoUpdates.checked = state.loreSettings.autoDetectUpdates;
+      lorePropagateNames.checked = state.loreSettings.propagateFamilyNames !== false;
       loreMinChars.value = state.loreSettings.minNewCharsForScan;
       loreMinCharsValue.textContent = state.loreSettings.minNewCharsForScan;
       loreTemp.value = state.loreSettings.temperature;
@@ -3054,6 +3057,7 @@ export function init() {
   // Settings change handlers
   loreAutoScan.addEventListener('change', saveLoreSettings);
   loreAutoUpdates.addEventListener('change', saveLoreSettings);
+  lorePropagateNames.addEventListener('change', saveLoreSettings);
   loreHybridToggle.addEventListener('change', async () => {
     saveLoreSettings();
     const llmConfig = await window.powertool.loreGetLlmProvider();

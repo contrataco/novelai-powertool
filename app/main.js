@@ -2746,7 +2746,8 @@ ipcMain.handle('lore:get-settings', () => {
 });
 
 ipcMain.handle('lore:set-settings', (event, settings) => {
-  store.set('loreSettings', settings);
+  // Merge: other handlers keep keys here too (enabledCategories from category add/remove)
+  store.set('loreSettings', { ...(store.get('loreSettings') || loreCreator.DEFAULT_SETTINGS), ...settings });
   return { success: true };
 });
 

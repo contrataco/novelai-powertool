@@ -82,6 +82,10 @@ export function init() {
     symbols: (x, y) => symbols.openSymbolPicker(x, y),
   });
 
+  // Undo/Redo under the story: same history as Ctrl+Z / Ctrl+Shift+Z
+  refs.editorUndoBtn?.addEventListener('click', () => editor.undoLocal());
+  refs.editorRedoBtn?.addEventListener('click', () => editor.redoLocal());
+
   // Dashboard state changes
   bus.on('headless:dashboard-state-changed', () => {
     updateStorySelectorVisibility();

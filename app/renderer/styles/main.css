@@ -259,7 +259,7 @@
       word-wrap: break-word;
       padding: 60px 80px;
       overflow-y: auto;
-      min-height: 100%;
+      min-height: 0; /* 100% here pushed the action and status bars below the window */
       max-width: 1100px;
       margin: 0 auto;
       width: 100%;
@@ -338,6 +338,47 @@
     }
     .lore-card.highlight-flash {
       animation: highlightFlash 1.5s ease-out;
+    }
+
+    .editor-action-bar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      background: var(--bg-base);
+      border-top: 1px solid var(--border-default);
+      flex-shrink: 0;
+    }
+
+    .editor-action-btn {
+      min-height: 40px;
+      min-width: 80px;
+      padding: 0 16px;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+    }
+
+    .editor-action-btn:hover:not(:disabled) {
+      border-color: var(--accent);
+    }
+
+    .editor-action-btn.editor-generate-btn {
+      min-width: 150px;
+      color: #fff;
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .editor-action-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
     }
 
     .editor-status-bar {
@@ -1877,6 +1918,19 @@
       color: var(--text-muted);
       margin-bottom: 6px;
       cursor: pointer;
+    }
+
+    .lore-settings label.lore-setting-large {
+      min-height: 40px;
+      font-size: 16px;
+      color: var(--text-primary);
+      gap: 10px;
+    }
+
+    .lore-settings label.lore-setting-large input[type="checkbox"] {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
     }
 
     .lore-settings select,

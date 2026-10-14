@@ -113,10 +113,6 @@
           <button id="editorContextBtn" class="btn-sm tertiary" title="View AI Context">Context</button>
           <button id="editorSettingsBtn" class="btn-sm tertiary" title="AI Generation Settings">AI Settings</button>
           <div class="toolbar-divider"></div>
-          <button id="editorGenerateBtn" class="btn-sm primary" title="Generate next text (Ctrl+Enter)">Generate</button>
-          <button id="editorUndoBtn" class="btn-sm tertiary" title="Undo (Ctrl+Z)">Undo</button>
-          <button id="editorRedoBtn" class="btn-sm tertiary" title="Redo (Ctrl+Shift+Z)">Redo</button>
-          <div class="toolbar-divider"></div>
           <button id="editorHistoryBtn" class="btn-sm tertiary" title="Story History">History</button>
           <button id="editorLockBtn" class="btn-sm tertiary" title="Toggle Read-Only Mode">Lock</button>
         </div>
@@ -462,7 +458,14 @@
           <button id="headlessHistoryRefreshBtn" class="btn secondary">Refresh</button>
         </div>
       </div>
-      
+
+      <!-- Under the story, bottom right, like NovelAI's own Send row -->
+      <div class="editor-action-bar">
+        <button id="editorUndoBtn" class="editor-action-btn" title="Undo (Ctrl+Z)">Undo</button>
+        <button id="editorRedoBtn" class="editor-action-btn" title="Redo (Ctrl+Shift+Z)">Redo</button>
+        <button id="editorGenerateBtn" class="editor-action-btn editor-generate-btn" title="Generate next text (Ctrl+Enter)">Generate</button>
+      </div>
+
       <div class="editor-status-bar">
         <!-- Floating Selection Toolbar -->
         <div id="selectionToolbar" class="selection-toolbar">
@@ -810,6 +813,10 @@
             <label>
               <input type="checkbox" id="loreAutoUpdates" checked>
               Detect entry updates
+            </label>
+            <label class="lore-setting-large" title="Lore scans may give a first-name-only character a family's last name. Turn off to keep names as written.">
+              <input type="checkbox" id="lorePropagateNames" checked>
+              Add last names to characters automatically
             </label>
             <label>
               Min chars for scan: <span id="loreMinCharsValue">500</span>

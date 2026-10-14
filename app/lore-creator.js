@@ -373,6 +373,7 @@ const ALL_CATEGORIES = BUILTIN_CATEGORIES.map(c => c.id);
 const DEFAULT_SETTINGS = {
   autoScan: true,
   autoDetectUpdates: true,
+  propagateFamilyNames: true, // Pass 5: give first-name-only characters a family last name
   hybridEnabled: true,
   minNewCharsForScan: 500,
   temperature: 0.4,
@@ -2492,8 +2493,13 @@ async function pass4_enrichReformat(ctx) {
  * Returns count of name proposals.
  */
 async function pass5_propagateNames(ctx) {
-  const { existingEntries, storyText, generateTextFn, onProgress, comprehensionContext, state } = ctx;
+  const { existingEntries, storyText, generateTextFn, onProgress, comprehensionContext, state, settings } = ctx;
   let nameProposals = 0;
+
+  if (settings && settings.propagateFamilyNames === false) {
+    console.log(`${LOG_PREFIX} Pass 5: Skipped (automatic last names turned off)`);
+    return 0;
+  }
 
   const allCharEntries = [
     ...existingEntries.filter(e => e.text && (e.category === 'character' || looksLikeCharacterEntry(e.text))),

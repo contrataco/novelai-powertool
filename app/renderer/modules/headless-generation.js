@@ -115,7 +115,15 @@ async function storyGenerating(on) {
   try { await window.powertool.novelaiStoryGenerating?.(on); } catch (e) { console.warn('[HeadlessSync] story-generating signal failed:', e); }
 }
 
+function setGenerateButtonBusy(busy) {
+  const btn = refs.editorGenerateBtn;
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.textContent = busy ? 'Generating...' : 'Generate';
+}
+
 function showGenerationIndicator() {
+  setGenerateButtonBusy(true);
   if (!storyEditor) return;
   if (document.getElementById('ai-typing-indicator')) return;
 
@@ -128,6 +136,7 @@ function showGenerationIndicator() {
 }
 
 export function hideGenerationIndicator() {
+  setGenerateButtonBusy(false);
   const indicator = document.getElementById('ai-typing-indicator');
   if (indicator) indicator.remove();
 }
