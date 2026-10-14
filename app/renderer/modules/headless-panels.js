@@ -41,11 +41,17 @@ export function init() {
     });
   });
 
-  // Close panel on click outside
+  // Close panel on click outside. Decide "outside" in the capture phase, before
+  // any handler runs: a panel that re-renders on click (lore category tree)
+  // removes e.target, and by the bubble phase closest() and composedPath()
+  // no longer reach the panel.
+  const KEEP_OPEN = '.headless-panel, .editor-toolbar-center, #editorSettingsBtn';
+  let clickStartedInside = false;
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.headless-panel') &&
-        !e.target.closest('.editor-toolbar-center') &&
-        !e.target.closest('#editorSettingsBtn')) {
+    clickStartedInside = !!(e.target instanceof Element && e.target.closest(KEEP_OPEN));
+  }, true);
+  document.addEventListener('click', () => {
+    if (!clickStartedInside) {
       document.querySelectorAll('.headless-panel').forEach(p => p.classList.remove('active'));
     }
   });
