@@ -311,8 +311,8 @@ contextBridge.exposeInMainWorld('powertool', {
     ipcRenderer.invoke('tts:remove-character-voice', { storyId, characterName }),
 
   // Character Persona
-  personaScan: (storyId, storyText, existingEntries) =>
-    ipcRenderer.invoke('persona:scan', { storyId, storyText, existingEntries }),
+  personaScan: (storyId, storyText, existingEntries, opts = {}) =>
+    ipcRenderer.invoke('persona:scan', { storyId, storyText, existingEntries, fullRescan: !!opts.fullRescan }),
   onPersonaScanProgress: (callback) => {
     ipcRenderer.removeAllListeners('persona:scan-progress');
     ipcRenderer.on('persona:scan-progress', (event, data) => callback(data));

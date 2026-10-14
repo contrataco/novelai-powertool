@@ -2592,7 +2592,7 @@ ipcMain.handle('lore:scan', async (event, { storyText, existingEntries, storyId,
       // First scan — run LitRPG detection (lightweight, keep synchronous)
       try {
         const detection = await litrpgTracker.detectLitRPG(storyText, generateTextFn);
-        const newRpgState = rpgState || { ...db.LITRPG_STATE_DEFAULTS };
+        const newRpgState = rpgState || { ...structuredClone(db.LITRPG_STATE_DEFAULTS) };
         newRpgState.detected = detection.detected;
         newRpgState.systemType = detection.systemType;
         db.setLitrpgState(storyId, newRpgState);
@@ -3284,7 +3284,7 @@ ipcMain.handle('litrpg:detect', async (event, { storyText, storyId }) => {
     const generateTextFn = makeLoreGenerateTextFn();
     const result = await litrpgTracker.detectLitRPG(storyText, generateTextFn);
     // Save detection result
-    const rpgState = db.getLitrpgState(storyId) || { ...db.LITRPG_STATE_DEFAULTS };
+    const rpgState = db.getLitrpgState(storyId) || { ...structuredClone(db.LITRPG_STATE_DEFAULTS) };
     rpgState.detected = result.detected;
     rpgState.systemType = result.systemType;
     db.setLitrpgState(storyId, rpgState);
@@ -3356,7 +3356,7 @@ function saveRpgReaderCheckpoint(storyId) {
 
 ipcMain.handle('litrpg:scan', async (event, { storyText, storyId, loreEntries, forceReEnrich, fullRescan }) => {
   try {
-    const rpgState = db.getLitrpgState(storyId) || { ...db.LITRPG_STATE_DEFAULTS };
+    const rpgState = db.getLitrpgState(storyId) || { ...structuredClone(db.LITRPG_STATE_DEFAULTS) };
     if (!rpgState.enabled) return { success: false, error: 'LitRPG mode not enabled' };
 
     const generateTextFn = makeLoreGenerateTextFn();
@@ -3519,19 +3519,19 @@ ipcMain.handle('litrpg:delete-character', (event, { storyId, characterId }) => {
 });
 
 ipcMain.handle('litrpg:reset-state', (event, { storyId }) => {
-  const freshState = { ...db.LITRPG_STATE_DEFAULTS };
+  const freshState = { ...structuredClone(db.LITRPG_STATE_DEFAULTS) };
   db.setLitrpgState(storyId, freshState);
   return { success: true, state: freshState };
 });
 
 ipcMain.handle('litrpg:reverse-sync', (event, { entryText, entryName, storyId }) => {
-  const rpgState = db.getLitrpgState(storyId) || { ...db.LITRPG_STATE_DEFAULTS };
+  const rpgState = db.getLitrpgState(storyId) || { ...structuredClone(db.LITRPG_STATE_DEFAULTS) };
   const result = litrpgTracker.reverseSyncCharacter(entryText, entryName, rpgState);
   return result;
 });
 
 ipcMain.handle('litrpg:reverse-sync-all', (event, { entries, storyId }) => {
-  const rpgState = db.getLitrpgState(storyId) || { ...db.LITRPG_STATE_DEFAULTS };
+  const rpgState = db.getLitrpgState(storyId) || { ...structuredClone(db.LITRPG_STATE_DEFAULTS) };
   const results = [];
   let updatedCount = 0;
   let failedCount = 0;
@@ -3575,34 +3575,67 @@ ipcMain.handle('litrpg:reverse-sync-all', (event, { entries, storyId }) => {
 
 // IPC Handlers — Character Persona
 
-// The Cast Scan for stories without LitRPG tracking: personality, story role
-// and looks for every lorebook character, plus relationships from their
-// entries. Never writes RPG fields.
-ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntries }) => {
+// The Cast Scan for stories without LitRPG tracking. (1) Reads the whole story
+// (same chunk reader and cache as the RPG scan) and adds everyone it names as
+// a person, with where they appear. (2) Personality, story role and looks for
+// lorebook characters and the most-seen people without an entry. (3)
+// Relationships from lorebook entries. Never writes RPG fields.
+const CAST_SCAN_MAX_UNLISTED = 20;
+ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntries, fullRescan }) => {
   try {
+    const progress = (p) => { if (!event.sender.isDestroyed()) event.sender.send('persona:scan-progress', p); };
     const generateTextFn = makeLoreGenerateTextFn();
+    const entries = existingEntries || [];
+    const startState = db.getOrCreateLitrpgState(storyId);
+    const before = new Set(Object.keys(startState.characters || {}));
+
+    let castResult = { addedIds: [], read: 0, failed: 0, total: 0 };
+    if ((storyText || '').trim().length >= 100) {
+      const loreSettings = store.get('loreSettings') || {};
+      const secondary = loreSettings.hybridEnabled !== false ? await pickSecondaryGenerateTextFn('Cast scan') : null;
+      const read = await withTimeout(
+        litrpgTracker.readStoryForCast({
+          state: startState, storyText, loreEntries: entries,
+          providers: secondary ? [generateTextFn, secondary] : [generateTextFn],
+          onProgress: progress, onCheckpoint: saveRpgReaderCheckpoint(storyId), fullRescan: !!fullRescan,
+        }),
+        SCAN_TIMEOUT_MS, 'Cast scan story read'
+      );
+      // Apply to what is saved now (the read takes minutes), then save at once.
+      const latest = db.getOrCreateLitrpgState(storyId);
+      castResult = litrpgTracker.applyCastRead(latest, read, storyText, entries);
+      db.setLitrpgState(storyId, latest);
+      console.log(`[Cast] Story read: ${castResult.total} parts (${castResult.read} new, ${castResult.failed} failed), ${castResult.addedIds.length} people added`);
+    }
+
     const litrpgState = db.getOrCreateLitrpgState(storyId);
     const compState = db.getComprehension(storyId);
     const comprehensionCtx = compState
       ? loreComprehension.formatComprehensionContext(compState.masterSummary, compState.entityProfiles)
       : '';
     const metadata = require('./metadata');
-    const characterEntries = (existingEntries || []).filter(e => {
-      const type = metadata.getEntryType(e.text, e.displayName);
-      return type === 'character';
-    });
-    if (!characterEntries.length) return { success: true, state: litrpgState, noCharacters: true };
-    const before = new Set(Object.keys(litrpgState.characters || {}));
+    const loreCharacters = entries.filter(e => metadata.getEntryType(e.text, e.displayName) === 'character');
+    // People without a lorebook entry are described from the story alone; the
+    // ones seen in the most parts first.
+    const unlisted = Object.values(litrpgState.characters || {})
+      .filter(c => !c.loreEntryName && !c.isVoice && c.appearances)
+      .sort((a, b) => b.appearances.parts - a.appearances.parts)
+      .slice(0, CAST_SCAN_MAX_UNLISTED)
+      .map(c => ({ displayName: c.name, keys: [], text: `@type: character\nName: ${c.name}` }));
+    const characterEntries = [...loreCharacters, ...unlisted];
+    if (!characterEntries.length) {
+      return { success: true, state: litrpgState, noCharacters: true, readFailed: castResult.failed };
+    }
     const personaExtractor = require('./persona-extractor');
     const ctx = {
       storyText, characterEntries, generateTextFn,
       state: litrpgState, comprehensionCtx,
-      onProgress: (p) => event.sender.send('persona:scan-progress', p),
+      onProgress: progress,
     };
     const personaResult = await personaExtractor.runPersonaExtraction(ctx);
     // Merge into what is saved now: a lore scan's persona run may have saved meanwhile.
     const personaState = mergePersonaIntoLatest(storyId, personaResult?.state || ctx.state);
-    litrpgTracker.r3c_extractInterCharRelationships({ state: personaState, characterEntries });
+    litrpgTracker.r3c_extractInterCharRelationships({ state: personaState, characterEntries: loreCharacters });
     const visualProfileUpdatedIds = (personaResult?.visualProfileUpdatedIds || []).filter(id => personaState.characters?.[id]);
     const newCharacterIds = Object.keys(personaState.characters || {}).filter(id => !before.has(id));
     db.setLitrpgState(storyId, personaState);
@@ -3610,7 +3643,11 @@ ipcMain.handle('persona:scan', async (event, { storyId, storyText, existingEntri
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('litrpg:state-updated', { state: personaState, visualProfileUpdatedIds });
     }
-    return { success: true, state: personaState, newCharacterIds, characterCount: characterEntries.length };
+    return {
+      success: true, state: personaState, newCharacterIds,
+      characterCount: Object.keys(personaState.characters || {}).length,
+      addedFromStory: castResult.addedIds.length, readFailed: castResult.failed,
+    };
   } catch (err) {
     console.error('[Persona] Scan failed:', err);
     return { success: false, error: err.message };

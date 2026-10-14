@@ -1031,9 +1031,9 @@
           </button>
           <button id="graphToggleBtn" class="rpg-action-btn u-hidden" title="Character relationship graph">Graph</button>
         </div>
-        <div id="rpgCastScanHint" class="rpg-cast-hint u-hidden">Cast Scan reads the recent story for every character in the lorebook: personality, role in the story, looks, and relationships. It does not track stats or items.</div>
+        <div id="rpgCastScanHint" class="rpg-cast-hint u-hidden">Cast Scan reads the whole story for everyone it names, and where they appear. It also fills in personality, role in the story, looks and relationships. It does not track stats or items. Parts it has read before are not read again.</div>
         <label class="rpg-option-label rpg-only-option"><input type="checkbox" id="rpgForceReEnrich"> Re-enrich all descriptions</label>
-        <label class="rpg-option-label rpg-only-option" title="Every scan reads the whole story but reuses earlier reads of unchanged parts. This rereads every part from scratch."><input type="checkbox" id="rpgFullRescan"> Full rescan (reread the whole story)</label>
+        <label class="rpg-option-label" title="Every scan reads the whole story but reuses earlier reads of unchanged parts. This rereads every part from scratch."><input type="checkbox" id="rpgFullRescan"> Full rescan (reread the whole story)</label>
 
         <!-- Scan Status -->
         <div class="rpg-scan-status u-hidden" id="rpgScanStatus">

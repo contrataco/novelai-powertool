@@ -1194,6 +1194,98 @@ function mergeCharacterInto(keeper, other) {
   for (const f of ['faction', 'disposition', 'npcRole', 'npcRelationship']) if (keeper[f] == null && other[f] != null) keeper[f] = other[f];
 }
 
+// ============================================================================
+// CAST SCAN (stories without LitRPG tracking)
+// ============================================================================
+
+/**
+ * Read the whole story for its cast, with the same chunk reader and cache as
+ * R1. Slow (one LLM call per unread chunk); changes nothing. Pass the result
+ * to applyCastRead on the freshest saved state.
+ */
+async function readStoryForCast({ state, storyText, loreEntries, providers, onProgress, onCheckpoint, fullRescan }) {
+  const characterEntries = loreEntries.filter(isCharacterLoreEntry);
+  const cache = fullRescan ? null : state.storyReaderCache;
+  const pov = reader.detectPov(storyText);
+  const loreProt = characterEntries.find(e => parseMetadata(e.text).protagonist);
+  const protHint = (loreProt && loreProt.displayName) || (pov !== 'third' && reader.findSelfName(storyText)) || state.protagonist?.name || null;
+  const knownNames = [...new Set([
+    ...characterEntries.map(e => e.displayName),
+    ...Object.values(cache?.chunks || {}).flatMap(r => (r.people || []).map(p => p.name)),
+  ])].filter(n => n && !isNarratorPlaceholder(n)).slice(0, 40);
+  return reader.readStoryChunks(storyText, cache, providers, {
+    povLine: povPromptLine(pov, protHint),
+    knownNames,
+    contextHint: 'The story may have no game elements at all; then list the people and leave the other lists empty.',
+    label: 'Cast-read',
+    onCheckpoint,
+    onProgress: (p) => onProgress && onProgress({ phase: 'cast-reading', current: p.current, total: p.total }),
+  });
+}
+
+/**
+ * Add or update everyone the story names as a person: name, other names, the
+ * protagonist, and which parts of the story they appear in. Never touches
+ * stats, items, quests or LitRPG settings, and never removes a character.
+ * Synchronous, so it can run on a state read just before saving.
+ */
+function applyCastRead(state, read, storyText, loreEntries) {
+  if (!state.characters) state.characters = {};
+  state.storyReaderCache = read.cache;
+  const characterEntries = loreEntries.filter(isCharacterLoreEntry);
+  const roster = reader.buildRoster({ loreEntries: characterEntries, stateChars: state.characters, chunks: read.chunks });
+  const prot = reader.resolveProtagonist({ storyText, loreEntries: characterEntries, stateChars: state.characters, chunks: read.chunks, roster });
+  if (!prot.person && prot.name) prot.person = roster.add(prot.name, { source: 'story' });
+  const fold = reader.foldChunks(read.chunks, roster, (i) => prot.at(i), prot.pov);
+
+  // Same filters as R1: classes, skills, items and other lorebook things are not people.
+  const classKeys = new Set([...fold.classes.values()].map(c => reader.nameKey(c.name)));
+  const thingKeys = new Set();
+  for (const sh of fold.sheets.values()) {
+    for (const x of [...sh.abilities, ...sh.inventory, ...sh.equipment]) thingKeys.add(reader.nameKey(x.name));
+  }
+  const otherLoreKeys = new Set(loreEntries.filter(e => !isCharacterLoreEntry(e)).map(e => reader.nameKey(e.displayName)));
+  const removedKeys = new Set((state.removedCharacterNames || []).map(n => reader.nameKey(n)));
+
+  const total = read.chunks.length;
+  const addedIds = [];
+  const now = Date.now();
+  for (const p of roster.people) {
+    const key = reader.nameKey(p.name);
+    if (!p.sources.has('story') || !p.chunksSeen.size) continue;
+    if (removedKeys.has(key) || isNarratorPlaceholder(p.name)) continue;
+    if (!p.loreEntry && (p.ambiguous || classKeys.has(key) || thingKeys.has(key) || otherLoreKeys.has(key))) continue;
+
+    let id = p.stateIds.find(i => state.characters[i]);
+    if (!id) {
+      id = generateRpgId('char');
+      state.characters[id] = {
+        ...CHARACTER_PERSONA_DEFAULTS,
+        persona: { ...CHARACTER_PERSONA_DEFAULTS.persona },
+        narrative: { ...CHARACTER_PERSONA_DEFAULTS.narrative },
+        visual: { ...CHARACTER_PERSONA_DEFAULTS.visual },
+        id, name: p.loreEntry?.displayName || p.name, loreEntryName: null, aliases: [],
+        isPartyMember: false, isNPC: true, partyRole: null, relationships: [],
+        _fromCastScan: true, lastUpdated: now,
+      };
+      addedIds.push(id);
+    }
+    const c = state.characters[id];
+    const manual = new Set(c._manualFields || []);
+    if (p.loreEntry) c.loreEntryName = p.loreEntry.displayName;
+    c.aliases = [...new Set([...(c.aliases || []), ...p.aliases, ...(c.name !== p.name ? [p.name] : [])])]
+      .filter(a => a && a !== c.name && !isNarratorPlaceholder(a));
+    if (p.kinds.has('voice') && !p.kinds.has('person')) c.isVoice = true;
+    const seen = [...p.chunksSeen].sort((a, b) => a - b);
+    c.appearances = { parts: seen.length, first: seen[0] + 1, last: seen[seen.length - 1] + 1, total };
+    if (p === prot.person && !manual.has('storyFunction')) {
+      c.narrative = { ...CHARACTER_PERSONA_DEFAULTS.narrative, ...(c.narrative || {}), storyFunction: 'protagonist' };
+    }
+    c.lastUpdated = now;
+  }
+  return { addedIds, read: read.read, failed: read.failed, total };
+}
+
 /**
  * Pass R1: read the whole story and rebuild the cast and every character sheet.
  *
@@ -1794,7 +1886,7 @@ async function r5_enrichDescriptions(ctx) {
 async function scanForRPGData(storyText, rpgState, loreEntries, generateTextFn, onProgress, comprehensionContext, secondaryGenerateTextFn, options = {}) {
   const { forceReEnrich = false } = options;
   // options.manual: the user pressed Scan. options.fullRescan: forget cached reads and reread everything.
-  const state = { ...LITRPG_STATE_DEFAULTS, ...rpgState };
+  const state = { ...structuredClone(LITRPG_STATE_DEFAULTS), ...rpgState };
   migrateLitrpgState(state);
   const systemType = state.systemType || 'generic';
   const preR1CharIds = new Set(Object.keys(state.characters || {}));
@@ -2653,6 +2745,9 @@ function clearPlayerPin(state) {
 
 module.exports = {
   r3c_extractInterCharRelationships,
+  readStoryForCast,
+  applyCastRead,
+  isCharacterLoreEntry,
   setPlayer,
   clearPlayerPin,
   // Detection

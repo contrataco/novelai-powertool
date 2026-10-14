@@ -300,8 +300,22 @@ function buildPersonaCardHTML(char) {
           ${roleLabel ? `<span class="persona-role-badge" style="background:${roleColor}22;color:${roleColor};border-color:${roleColor}55;">${escapeHtml(roleLabel)}</span>` : ''}
           ${importance ? `<span class="persona-importance-badge">${escapeHtml(importance)}</span>` : ''}
         </div>
+        ${appearanceLine(char)}
+        ${char.loreEntryName ? '' : `
+          <div class="cast-unlisted">Not in the lorebook</div>
+          ${char.loreDraftAt
+            ? '<button class="cast-add-lore-btn" disabled>Draft is in the Lore tab</button>'
+            : `<button class="cast-add-lore-btn" data-action="cast-add-lore" data-id="${escapeHtml(char.id)}">Add to lorebook</button>`}`}
       </div>
     </div>`;
+}
+
+// "In 4 of 12 parts, last in part 12" from the Cast Scan's whole-story read.
+function appearanceLine(char) {
+  const a = char.appearances;
+  if (!a || !a.parts) return '';
+  const where = a.parts === 1 ? `Only in part ${a.first}` : `In ${a.parts} of ${a.total} parts, last in part ${a.last}`;
+  return `<div class="cast-appearances">${escapeHtml(where)}</div>`;
 }
 
 function buildCastSectionHTML(title, chars, open = false) {
@@ -326,7 +340,7 @@ function renderPersonaCast(rpg) {
   if (allChars.length === 0) {
     rpgCastView.innerHTML = `<div class="rpg-party-empty">
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      <div style="font-size:16px;">No characters yet. Click <b>Cast Scan</b> to fill in the cast from the lorebook's characters. If the lorebook has none yet, run a <b>Lore Scan</b> first.</div>
+      <div style="font-size:16px;">No characters yet. Click <b>Cast Scan</b> to find everyone the story names.</div>
     </div>`;
     return;
   }
@@ -373,8 +387,59 @@ function renderPersonaCast(rpg) {
 
   // Wire click handlers — open stat overlay for all persona cards
   rpgCastView.querySelectorAll('.rpg-character-card-v2').forEach(card => {
-    card.addEventListener('click', () => openStatOverlay(card.dataset.charId, rpg));
+    card.addEventListener('click', (e) => {
+      const addBtn = e.target.closest('[data-action="cast-add-lore"]');
+      if (addBtn) { e.stopPropagation(); draftLoreEntryForCast(addBtn.dataset.id, addBtn); return; }
+      openStatOverlay(card.dataset.charId, rpg);
+    });
   });
+}
+
+// "Add to lorebook" on a person the story names who has no entry: drafts an
+// entry from the story and puts it in the Lore tab's review list. Nothing is
+// written to the lorebook until it is accepted there.
+async function draftLoreEntryForCast(charId, btn) {
+  const char = getRpgState().characters?.[charId];
+  if (!char || !state.currentStoryId) return;
+  const storyId = state.currentStoryId;
+  btn.disabled = true;
+  btn.textContent = 'Writing a draft...';
+  try {
+    let storyText = '';
+    try { storyText = (await loreCall('getStoryText')) || ''; } catch (_) { /* fall back below */ }
+    if (storyText.trim().length < 100) storyText = (await readStoryTextFromDOM()) || storyText;
+    const known = [
+      char.aliases?.length ? `also called ${char.aliases.join(', ')}` : '',
+      char.persona?.personalityTraits?.length ? `personality: ${char.persona.personalityTraits.join(', ')}` : '',
+    ].filter(Boolean).join('; ');
+    const prompt = `${char.name}, a character in this story${known ? ` (${known})` : ''}. Describe only what the story says about them.`;
+    const result = await window.powertool.loreCreateFromPrompt(prompt, 'character', storyText, storyId);
+    if (state.currentStoryId !== storyId) return;
+    const drafts = (result?.entries || []).filter(e => e && e.displayName);
+    if (!result?.success || !drafts.length) {
+      showToast(`Could not write an entry for ${char.name}: ${result?.error || 'no draft came back'}`, 5000, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Add to lorebook';
+      return;
+    }
+    if (!state.loreState) state.loreState = { pendingEntries: [], rejectedNames: [] };
+    if (!state.loreState.pendingEntries) state.loreState.pendingEntries = [];
+    for (const d of drafts) {
+      state.loreState.pendingEntries.push({ id: d.id || `lore_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`, category: d.category || 'character', ...d });
+    }
+    await saveLoreState();
+    refreshLoreUI();
+    btn.textContent = 'Draft is in the Lore tab';
+    // Remembered so a redraw does not offer a second draft; the next Cast Scan
+    // links the character once the entry is accepted.
+    char.loreDraftAt = Date.now();
+    saveLitrpgState();
+    showToast(`Draft entry for ${char.name} is in the Lore tab, ready to review and accept.`, 6000, 'success');
+  } catch (err) {
+    showToast(`Could not write an entry for ${char.name}: ${err.message}`, 5000, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Add to lorebook';
+  }
 }
 
 // =========================================================================
@@ -2066,6 +2131,7 @@ let scanElapsedTimer = null;
 let lastEtaText = '';
 
 const CAST_PHASE_LABELS = {
+  'cast-reading': 'Reading the whole story for people (parts not read before)',
   'persona-P1': 'Reading personalities',
   'persona-P2': 'Working out story roles',
   'persona-P3': 'Reading what characters look like',
@@ -2101,17 +2167,23 @@ async function runCastScan() {
     const entries = await loreCall('getEntries');
     const loreEntries = Array.isArray(entries) ? entries : [];
 
-    const result = await window.powertool.personaScan(state.currentStoryId, storyText, loreEntries);
+    const fullRescan = !!rpgFullRescan?.checked;
+    if (rpgFullRescan) rpgFullRescan.checked = false;
+    const result = await window.powertool.personaScan(state.currentStoryId, storyText, loreEntries, { fullRescan });
     if (state.currentStoryId !== startedForStory) return;
     if (!result?.success) {
       showToast(`Cast scan failed: ${result?.error || 'Unknown error'}`, 5000, 'error');
     } else if (result.noCharacters) {
-      showToast('No characters in the lorebook yet. Run a Lore Scan first, then the Cast Scan.', 6000, 'warn');
+      showToast('No characters found in the story or the lorebook yet.', 6000, 'warn');
     } else {
       state.litrpgState = result.state;
       // Portraits: the litrpg:state-updated event sent with this result queues them.
       refreshRpgUI();
-      showToast(`Cast scan complete: ${result.characterCount} character${result.characterCount === 1 ? '' : 's'} read`, 4000, 'success');
+      const added = result.addedFromStory || 0;
+      showToast(`Cast scan complete: ${result.characterCount} in the cast${added ? `, ${added} new from the story` : ''}`, 5000, 'success');
+    }
+    if (result?.readFailed) {
+      showToast(`${result.readFailed} part${result.readFailed === 1 ? '' : 's'} of the story could not be read. The next Cast Scan tries them again.`, 6000, 'warn');
     }
   } catch (err) {
     showToast(`Cast scan error: ${err.message || 'Unknown error'}`, 5000, 'error');

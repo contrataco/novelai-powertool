@@ -238,7 +238,7 @@ function setMemoryState(storyId, data) {
 function getLitrpgState(storyId) {
   const data = getData('litrpg_state', storyId);
   if (!data) return null;
-  return { ...LITRPG_STATE_DEFAULTS, ...data };
+  return { ...structuredClone(LITRPG_STATE_DEFAULTS), ...data };
 }
 
 function setLitrpgState(storyId, data) {
@@ -247,15 +247,15 @@ function setLitrpgState(storyId, data) {
 
 function getOrCreateLitrpgState(storyId) {
   const data = getData('litrpg_state', storyId);
-  return { ...LITRPG_STATE_DEFAULTS, ...(data || {}) };
+  return { ...structuredClone(LITRPG_STATE_DEFAULTS), ...(data || {}) };
 }
 
 const TTS_STATE_DEFAULTS = { characterVoices: {} };
 
 function getTtsState(storyId) {
   const data = getData('tts_state', storyId);
-  if (!data) return { ...TTS_STATE_DEFAULTS };
-  return { ...TTS_STATE_DEFAULTS, ...data };
+  if (!data) return { ...structuredClone(TTS_STATE_DEFAULTS) };
+  return { ...structuredClone(TTS_STATE_DEFAULTS), ...data };
 }
 
 function setTtsState(storyId, data) {
