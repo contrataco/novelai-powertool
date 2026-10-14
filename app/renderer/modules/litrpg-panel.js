@@ -303,11 +303,17 @@ function buildPersonaCardHTML(char) {
         ${appearanceLine(char)}
         ${char.loreEntryName ? '' : `
           <div class="cast-unlisted">Not in the lorebook</div>
-          ${char.loreDraftAt
-            ? '<button class="cast-add-lore-btn" disabled>Draft is in the Lore tab</button>'
+          ${hasPendingLoreDraft(char.name)
+            ?'<button class="cast-add-lore-btn" disabled>Draft is in the Lore tab</button>'
             : `<button class="cast-add-lore-btn" data-action="cast-add-lore" data-id="${escapeHtml(char.id)}">Add to lorebook</button>`}`}
       </div>
     </div>`;
+}
+
+// A draft for this name is waiting in the Lore tab (from this button or a Lore Scan).
+function hasPendingLoreDraft(name) {
+  const key = (name || '').trim().toLowerCase();
+  return !!key && (state.loreState?.pendingEntries || []).some(e => (e.displayName || '').trim().toLowerCase() === key);
 }
 
 // "In 4 of 12 parts, last in part 12" from the Cast Scan's whole-story read.
@@ -402,6 +408,11 @@ async function draftLoreEntryForCast(charId, btn) {
   const char = getRpgState().characters?.[charId];
   if (!char || !state.currentStoryId) return;
   const storyId = state.currentStoryId;
+  if (hasPendingLoreDraft(char.name)) {
+    showToast(`A draft entry for ${char.name} is already in the Lore tab.`, 5000);
+    renderPersonaCast(getRpgState());
+    return;
+  }
   btn.disabled = true;
   btn.textContent = 'Writing a draft...';
   try {
@@ -425,15 +436,14 @@ async function draftLoreEntryForCast(charId, btn) {
     if (!state.loreState) state.loreState = { pendingEntries: [], rejectedNames: [] };
     if (!state.loreState.pendingEntries) state.loreState.pendingEntries = [];
     for (const d of drafts) {
+      if (hasPendingLoreDraft(d.displayName)) continue;
       state.loreState.pendingEntries.push({ id: d.id || `lore_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`, category: d.category || 'character', ...d });
     }
     await saveLoreState();
     refreshLoreUI();
-    btn.textContent = 'Draft is in the Lore tab';
-    // Remembered so a redraw does not offer a second draft; the next Cast Scan
-    // links the character once the entry is accepted.
-    char.loreDraftAt = Date.now();
-    saveLitrpgState();
+    // The card shows "Draft is in the Lore tab" while the draft waits there; once
+    // it is accepted, the next Cast Scan links the character to the entry.
+    renderPersonaCast(getRpgState());
     showToast(`Draft entry for ${char.name} is in the Lore tab, ready to review and accept.`, 6000, 'success');
   } catch (err) {
     showToast(`Could not write an entry for ${char.name}: ${err.message}`, 5000, 'error');

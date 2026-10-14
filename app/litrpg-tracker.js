@@ -1216,7 +1216,9 @@ async function readStoryForCast({ state, storyText, loreEntries, providers, onPr
   return reader.readStoryChunks(storyText, cache, providers, {
     povLine: povPromptLine(pov, protHint),
     knownNames,
-    contextHint: 'The story may have no game elements at all; then list the people and leave the other lists empty.',
+    // R1's own prompt: replies are cached by chunk text only, so a read made
+    // here must serve an RPG scan just as well if the story turns LitRPG later.
+    contextHint: (SYSTEM_TYPE_PROMPTS[state.systemType] || SYSTEM_TYPE_PROMPTS.generic).contextHint,
     label: 'Cast-read',
     onCheckpoint,
     onProgress: (p) => onProgress && onProgress({ phase: 'cast-reading', current: p.current, total: p.total }),
