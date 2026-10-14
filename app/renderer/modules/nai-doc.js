@@ -67,6 +67,42 @@ export function readRich(view) {
 }
 
 /**
+ * INJECTED. How much of the story the EditorView holds. NovelAI opens a story
+ * with only its last paragraphs and adds earlier ones (about 30 at a time)
+ * while its scroller sits at the top. Its React `document` prop lists every
+ * paragraph id in `order`; the view is complete when its first paragraph is
+ * the story's first. `order` itself lags behind edits, so it is only used
+ * for that first id, never as the text.
+ */
+export function storyLoadState(view) {
+  var doc = view.state.doc;
+  var first = doc.firstChild;
+  var storyFirstId = null;
+  var storyParas = null;
+  var el = view.dom;
+  for (var d = 0; el && d < 12 && storyFirstId === null; d++, el = el.parentElement) {
+    var fk = Object.keys(el).find(function (k) { return k.indexOf('__reactFiber$') === 0; });
+    if (!fk) continue;
+    for (var f = el[fk], h = 0; f && h < 60; f = f.return, h++) {
+      var p = f.memoizedProps;
+      var dm = p && p.document;
+      if (dm && dm.order && dm.sections) {
+        var order = Array.isArray(dm.order) ? dm.order : Array.from(dm.order);
+        if (order.length) { storyFirstId = String(order[0]); storyParas = order.length; }
+        break;
+      }
+    }
+  }
+  return {
+    paras: doc.childCount,
+    chars: doc.textBetween(0, doc.content.size, '\n').length,
+    firstId: first && first.attrs && first.attrs.id != null ? String(first.attrs.id) : null,
+    storyFirstId: storyFirstId,
+    storyParas: storyParas,
+  };
+}
+
+/**
  * INJECTED. Apply text edits - `args.edits` [{from, to, insert}] in offsets
  * of `expected`, or a single from/to/insert - as one transaction, last edit
  * first so earlier positions stay valid. Follows NovelAI's own marking: text

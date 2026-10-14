@@ -6,7 +6,7 @@ import { readStoryTextFromDOM } from './webview-polling.js';
 import { loreCall, switchPanelTab, refreshLoreKeywords } from './lore-creator.js';
 import { updateVisibility as updateStorySelectorVisibility } from './story-selector.js';
 import { applyDiff, annotateEditor, diffText, planEdits, shiftRuns, editorText, setEditorText, selectionOffsets, restoreCursor } from './diff.js';
-import { injected, readRich, applyTextEdit, applyMarkEdit } from './nai-doc.js';
+import { injected, readRich, applyTextEdit, applyMarkEdit, storyLoadState } from './nai-doc.js';
 import { showToast } from './utils.js';
 import * as imageEmbed from './headless-image-embed.js';
 import { getNovelaiStyle } from './headless-theme.js';
@@ -37,9 +37,14 @@ function scheduleAnnotation() {
 
 // --- Story text cache ---
 let cacheWriteTimeout = null;
+// True once scrollToLoadAll got NovelAI to load the story from its first
+// paragraph. Until then a read is only the story's end, and must never
+// replace the cached full text.
+let storyLoadComplete = false;
+let reloadAfterRead = false;
 
 function debouncedCacheWrite(text, source) {
-  if (!state.currentStoryId) return;
+  if (!state.currentStoryId || !storyLoadComplete) return;
   if (cacheWriteTimeout) clearTimeout(cacheWriteTimeout);
   cacheWriteTimeout = setTimeout(() => {
     window.powertool.storyTextSet(state.currentStoryId, text, source || 'editor');
@@ -48,7 +53,7 @@ function debouncedCacheWrite(text, source) {
 }
 
 function flushCacheWrite() {
-  if (cacheWriteTimeout && state.currentStoryId && storyEditor) {
+  if (cacheWriteTimeout && state.currentStoryId && storyEditor && storyLoadComplete) {
     clearTimeout(cacheWriteTimeout);
     cacheWriteTimeout = null;
     window.powertool.storyTextSet(state.currentStoryId, editorText(storyEditor), 'editor');
@@ -193,6 +198,16 @@ export async function syncFromWebview(force = false, { recovered = false } = {})
     // debounce, or a push failed). If NovelAI has not changed, push them
     // instead of reading over them. If both changed, keep a copy first.
     const local = editorText(storyEditor);
+    // A read that is only the end of what the editor holds means NovelAI no
+    // longer has the start loaded. Never show that as the story: load it again.
+    if (storyLoadComplete && text.length < local.length && local.endsWith(text)) {
+      const load = await webview.executeJavaScript(injected(storyLoadState)).catch(() => null);
+      if (load && load.storyFirstId && load.firstId !== load.storyFirstId) {
+        console.warn('[HeadlessSync] NovelAI dropped the start of the story; reloading it instead of reading', text.length, 'chars');
+        reloadAfterRead = true;
+        return;
+      }
+    }
     const unsent = lastKnownWebviewText !== null && local !== lastKnownWebviewText;
     if (unsent && text === lastKnownWebviewText) { pushInstead = true; return; }
     if (unsent && text !== local && !recovered) {
@@ -244,6 +259,7 @@ export async function syncFromWebview(force = false, { recovered = false } = {})
   } finally {
     isSyncingFromWebview = false;
   }
+  if (reloadAfterRead) { reloadAfterRead = false; await scrollToLoadAll(); return; }
   if (pushInstead) await syncToWebview();
 }
 
@@ -349,6 +365,7 @@ export async function toggleFormat(mark) {
  */
 async function scrollToLoadAll() {
   if (!webview) return;
+  storyLoadComplete = false;
 
   // Temporarily give the webview real dimensions — in headless mode it has
   // display:none / 0px viewport, so ProseMirror's lazy loader never triggers.
@@ -374,110 +391,53 @@ async function scrollToLoadAll() {
     if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'Loading full story...';
     if (refs.editorSyncIndicator) refs.editorSyncIndicator.className = 'status-indicator busy';
 
-    // Renderer-driven scroll loop — enables real-time progress reporting.
-    // Each iteration scrolls one step, reads text length, updates UI.
-    const scrollInfo = await webview.executeJavaScript(`
-      (function() {
-        var pm = document.querySelector('.ProseMirror');
-        if (!pm) return null;
-        var scrollEl = document.querySelector('.conversation-main') || pm.closest('[class*="conversation"]');
-        if (!scrollEl) {
-          scrollEl = pm;
-          while (scrollEl && scrollEl !== document.body) {
-            if (scrollEl.scrollHeight > scrollEl.clientHeight + 10) break;
-            scrollEl = scrollEl.parentElement;
-          }
-        }
-        if (!scrollEl || scrollEl === document.body) scrollEl = pm;
-        return {
-          viewportHeight: scrollEl.clientHeight || 600,
-          scrollHeight: scrollEl.scrollHeight,
-          scrollTop: scrollEl.scrollTop,
-          textLength: pm.textContent.length,
-          scrollSelector: '.' + (scrollEl.className || '').split(' ')[0]
-        };
-      })()
-    `);
-
-    if (!scrollInfo) {
-      console.log('[HeadlessSync] Scroll-to-load: no ProseMirror found');
+    // NovelAI opens a story with its last paragraphs only and adds about 30
+    // earlier ones each time its scroller sits at the top, which takes up to
+    // ~3s per batch. Keep jumping to the top until the first paragraph is the
+    // story's first (storyLoadState), however long a long story takes. Giving
+    // up after a couple of quiet seconds is what loaded only the last part.
+    const jumpToTop = `(function () {
+      var pm = document.querySelector('.ProseMirror');
+      var sc = document.querySelector('.conversation-main');
+      if (!sc && pm) { sc = pm; while (sc && sc !== document.body && !(sc.scrollHeight > sc.clientHeight + 10)) sc = sc.parentElement; }
+      if (sc && sc !== document.body) sc.scrollTop = 0;
+      return !!sc;
+    })()`;
+    const QUIET_LIMIT_MS = 20000; // no new paragraphs for this long while at the top: stop
+    const MAX_MS = 15 * 60 * 1000;
+    const started = Date.now();
+    let load = await webview.executeJavaScript(injected(storyLoadState)).catch(() => null);
+    if (!load || load.noView || load.error) {
+      console.log('[ScrollLoad] no editor view:', JSON.stringify(load));
     } else {
-      console.log('[ScrollLoad] start: ' + JSON.stringify(scrollInfo) + ' container was hidden: ' + wasHidden);
-      const step = Math.max(scrollInfo.viewportHeight * 0.7, 200);
-      let pos = scrollInfo.scrollTop;
-      let prevLength = scrollInfo.textLength;
-      let stableCount = 0;
-      let stepCount = 0;
-      let chunksLoaded = 0;
-      let totalChars = prevLength;
-      let phase = 'up';
-      const stableThreshold = 6;
-      const maxSteps = 300;
-      const sel = scrollInfo.scrollSelector;
-
-      while (stepCount < maxSteps) {
-        stepCount++;
-
-        // Execute one scroll step
-        const stepResult = await webview.executeJavaScript(`
-          (function() {
-            var scrollEl = document.querySelector('${sel}') || document.querySelector('.ProseMirror');
-            var pm = document.querySelector('.ProseMirror');
-            if (!scrollEl || !pm) return null;
-            scrollEl.scrollTop = ${phase === 'up' ? Math.max(0, pos - step) : pos + step};
-            return {
-              textLength: pm.textContent.length,
-              scrollTop: scrollEl.scrollTop,
-              scrollHeight: scrollEl.scrollHeight
-            };
-          })()
-        `).catch(() => null);
-
-        if (!stepResult) break;
-
-        if (phase === 'up') pos = Math.max(0, pos - step);
-        else pos += step;
-
-        if (stepResult.textLength !== prevLength) {
-          chunksLoaded++;
-          totalChars = stepResult.textLength;
-          stableCount = 0;
-          console.log(`[ScrollLoad] ${phase.toUpperCase()} chunk #${chunksLoaded}: ${totalChars} chars (+${stepResult.textLength - prevLength})`);
+      console.log('[ScrollLoad] start: ' + JSON.stringify(load) + ' container was hidden: ' + wasHidden);
+      let lastGrowth = Date.now();
+      let prevParas = load.paras;
+      const isComplete = (l) => l.storyFirstId ? l.firstId === l.storyFirstId : false;
+      while (!isComplete(load) && Date.now() - lastGrowth < QUIET_LIMIT_MS && Date.now() - started < MAX_MS) {
+        await webview.executeJavaScript(jumpToTop).catch(() => {});
+        await new Promise(r => setTimeout(r, 800));
+        const next = await webview.executeJavaScript(injected(storyLoadState)).catch(() => null);
+        if (!next || next.noView || next.error) break;
+        load = next;
+        if (load.paras !== prevParas) {
+          lastGrowth = Date.now();
+          prevParas = load.paras;
+          const of = load.storyParas ? ` of about ${load.storyParas}` : '';
           bus.emit('story:loading-phase', 'parsing',
-            `Retrieving story text... ${chunksLoaded} chunk${chunksLoaded > 1 ? 's' : ''} loaded (${totalChars.toLocaleString()} chars)`);
-          prevLength = stepResult.textLength;
-        } else {
-          stableCount++;
+            `Retrieving story text... ${load.paras}${of} paragraphs (${load.chars.toLocaleString()} characters)`);
         }
-
-        // Phase transitions
-        if (phase === 'up' && stepResult.scrollTop <= 0 && stableCount >= stableThreshold) {
-          console.log(`[ScrollLoad] Reached top after ${chunksLoaded} chunks. Scrolling down...`);
-          phase = 'down';
-          pos = 0;
-          stableCount = 0;
-          prevLength = stepResult.textLength;
-        } else if (phase === 'down') {
-          const atBottom = pos >= stepResult.scrollHeight - scrollInfo.viewportHeight;
-          if (atBottom && stableCount >= stableThreshold) break;
-          if (atBottom) pos = stepResult.scrollHeight - scrollInfo.viewportHeight;
-        }
-
-        await new Promise(r => setTimeout(r, 400));
       }
-
-      console.log(`[ScrollLoad] Done. ${chunksLoaded} chunks, ${totalChars} chars, ${stepCount} steps`);
+      storyLoadComplete = isComplete(load) || (!load.storyFirstId && Date.now() - lastGrowth >= QUIET_LIMIT_MS);
+      console.log(`[ScrollLoad] Done in ${Math.round((Date.now() - started) / 1000)}s: ${load.paras} paragraphs, ${load.chars} chars, ` +
+        (storyLoadComplete ? 'complete' : `INCOMPLETE (first ${load.firstId}, story starts ${load.storyFirstId})`));
+      // Back to the end, where writing happens.
+      await webview.executeJavaScript(`(function () { var sc = document.querySelector('.conversation-main'); if (sc) sc.scrollTop = sc.scrollHeight; })()`).catch(() => {});
     }
 
-    const result = { success: true };
-
-    console.log('[HeadlessSync] Scroll-to-load result:', JSON.stringify(result));
-
-    if (result && result.success) {
-      // Final sync with the now-complete text
-      await syncFromWebview(true);
-      console.log('[HeadlessSync] Full story loaded:', editorText(storyEditor).length, 'chars');
-    }
+    // Final sync with the now-complete text
+    await syncFromWebview(true);
+    console.log('[HeadlessSync] Full story loaded:', editorText(storyEditor).length, 'chars');
 
     if (refs.editorSyncStatus) refs.editorSyncStatus.textContent = 'In Sync';
     if (refs.editorSyncIndicator) refs.editorSyncIndicator.className = 'status-indicator active';
@@ -887,6 +847,7 @@ export function init() {
   bus.on('story:changed', async ({ storyTitle } = {}) => {
     const storyId = state.currentStoryId;
     console.log('[HeadlessSync] Story changed:', storyId);
+    storyLoadComplete = false;
     resetUndoHistory();
     if (refs.editorStoryTitle) refs.editorStoryTitle.textContent = storyTitle || 'Untitled Story';
     loadCustomizationFromStore();
@@ -922,8 +883,8 @@ export function init() {
         await syncFromWebview(true);
         const partialText = lastKnownWebviewText;
         if (partialText) {
+          // Not saved as the story's text: it is only the end of the story.
           console.log('[HeadlessSync] Timeout - using partial text:', partialText.length, 'chars');
-          window.powertool.storyTextSet(storyId, partialText, 'partial');
           finishStoryLoad(storyId);
         } else {
           bus.emit('story:loading-phase', 'error', 'Story text loading timed out. Try selecting the story again.');
@@ -963,7 +924,12 @@ export function init() {
 
         if (fullText && fullText.length > 0) {
           console.log('[HeadlessSync] Full story loaded:', fullText.length, 'chars');
-          window.powertool.storyTextSet(storyId, fullText, 'scroll-to-load');
+          if (storyLoadComplete) {
+            window.powertool.storyTextSet(storyId, fullText, 'scroll-to-load');
+          } else {
+            showToast('NovelAI did not load the start of this story, so the editor shows only its end. ' +
+              'Nothing was removed from the story. Reopen it to try again.', null, 'warn', { persistent: true });
+          }
           finishStoryLoad(storyId);
           await imageEmbed.loadStoryImages(state.currentStoryId);
           await imageEmbed.restoreFigures();

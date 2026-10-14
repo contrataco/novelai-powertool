@@ -335,8 +335,10 @@ export function init() {
     })()`).catch(() => -1);
     let last = await count();
     if (last < 0) return false;
+    // NovelAI can take seconds to add the next batch: stop only after ~5s
+    // without growth (1.2s sometimes stopped at the first 50).
     let steady = 0;
-    for (let i = 0; i < 60 && steady < 3; i++) {
+    for (let i = 0; i < 300 && steady < 12; i++) {
       await new Promise(r => setTimeout(r, 400));
       if (!state.isDashboardActive || state._loadingStoryId) return false; // a story was picked
       const n = await count();
