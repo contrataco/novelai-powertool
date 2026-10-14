@@ -303,6 +303,51 @@ export function init() {
   let webviewReady = false;
   let lastPolledStoryId = null;
   let lastDashboardCheck = 0;
+  let dashboardFullyLoaded = false; // NovelAI draws 50 stories until its list is scrolled
+
+  /**
+   * NovelAI's story list draws its first 50 stories and adds more as it is
+   * scrolled. Scroll it to the end until the count stops growing, then back
+   * to the top. Returns true when the whole list is in the page.
+   */
+  async function loadWholeStoryList() {
+    // A hidden webview never loads more (same trick as scrollToLoadAll in
+    // headless-editor.js): show it on screen behind the story picker overlay.
+    const wvContainer = document.querySelector('.webview-container');
+    const wasHidden = wvContainer && getComputedStyle(wvContainer).display === 'none';
+    if (wasHidden) {
+      Object.assign(wvContainer.style, { display: 'block', position: 'fixed', top: '38px', left: '0', right: '0', bottom: '0', zIndex: '1', pointerEvents: 'none' });
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    try {
+      return await scrollStoryListToEnd();
+    } finally {
+      if (wasHidden) wvContainer.style.cssText = '';
+    }
+  }
+
+  async function scrollStoryListToEnd() {
+    const count = () => webview.executeJavaScript(`(function() {
+      var l = document.querySelector('.story-list');
+      if (!l) return -1;
+      l.scrollTop = l.scrollHeight;
+      return l.children.length;
+    })()`).catch(() => -1);
+    let last = await count();
+    if (last < 0) return false;
+    let steady = 0;
+    for (let i = 0; i < 60 && steady < 3; i++) {
+      await new Promise(r => setTimeout(r, 400));
+      if (!state.isDashboardActive || state._loadingStoryId) return false; // a story was picked
+      const n = await count();
+      if (n < 0) return false;
+      steady = n === last ? steady + 1 : 0;
+      last = n;
+    }
+    await webview.executeJavaScript(`(function() { var l = document.querySelector('.story-list'); if (l) l.scrollTop = 0; })()`).catch(() => {});
+    console.log(`[Renderer] Story list fully loaded: ${last} entries`);
+    return true;
+  }
 
   // Navigation state: prevents race conditions during story loading
   let navigatingToStory = false;
@@ -508,6 +553,7 @@ export function init() {
         // If we just entered the dashboard, trigger an immediate parse
         if (isDashboard) {
           lastDashboardCheck = 0; // Force immediate parse in next check
+          dashboardFullyLoaded = false;
         }
       }
 
@@ -516,11 +562,16 @@ export function init() {
         // but parse immediately if lastDashboardCheck was reset to 0.
         if (lastDashboardCheck === 0 || Date.now() - lastDashboardCheck > 10000) {
           lastDashboardCheck = Date.now();
+          if (state.headlessMode && !dashboardFullyLoaded) {
+            dashboardFullyLoaded = await loadWholeStoryList();
+          }
           console.log('[Renderer] Dashboard active, parsing stories...');
           const stories = await webview.executeJavaScript(`
             (function() {
               var results = [];
-              var TIME_RE = /^(\\d+\\s+(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\\s+ago|just now|yesterday)$/i;
+              // NovelAI writes "2 days ago" but also "an hour ago", "a day ago",
+              // "a few seconds ago": missing those hid the most recent stories.
+              var TIME_RE = /^((less than|about|over|almost)\\s+)?(\\d+|an?|a few)\\s+(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\\s+ago$|^(just now|yesterday|today)$/i;
 
               // NovelAI renders stories as clickable divs with cursor:pointer.
               // Each story card has: title, description preview, and relative timestamp.
