@@ -349,14 +349,23 @@ export function buildRichHtml(text, runs, keywords) {
 
 /**
  * Re-renders a contenteditable element from NovelAI mark runs and lore
- * keywords, preserving the cursor position.
+ * keywords, preserving the cursor position and the scroll position.
+ *
+ * `detach`/`reattach` lift non-text blocks (image embeds) out around the
+ * rebuild. The caret goes back only after they are back: placed while an
+ * image was out, it sat an image-height higher and the browser scrolled to
+ * it, so every keystroke below an image jumped the view.
  */
-export function annotateEditor(el, runs, keywords) {
+export function annotateEditor(el, runs, keywords, { detach, reattach } = {}) {
   const text = editorText(el);
   if (!text) return;
   const cursorOffset = caretOffset(el);
+  const scrollTop = el.scrollTop;
+  const kept = detach ? detach() : null;
   el.innerHTML = buildRichHtml(text, runs, keywords);
+  if (reattach) reattach(kept);
   if (cursorOffset >= 0) restoreCursor(el, cursorOffset);
+  el.scrollTop = scrollTop;
 }
 
 // --- Text <-> DOM position model ---

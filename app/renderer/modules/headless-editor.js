@@ -29,9 +29,10 @@ function scheduleAnnotation() {
   annotationTimeout = setTimeout(() => {
     annotationTimeout = null;
     if (!storyEditor) return;
-    const figures = imageEmbed.detachFigures();
-    annotateEditor(storyEditor, state.naiRuns || [], state.loreKeywords || []);
-    imageEmbed.reattachFigures(figures);
+    annotateEditor(storyEditor, state.naiRuns || [], state.loreKeywords || [], {
+      detach: imageEmbed.detachFigures,
+      reattach: imageEmbed.reattachFigures,
+    });
   }, 300);
 }
 
