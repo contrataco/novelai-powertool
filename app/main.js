@@ -1863,6 +1863,16 @@ ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artS
       ? ((customTags && provider.getArtStyleTags(customTags)) || customTags || resolvedArtStyle || 'anime style, detailed, high quality')
       : customTags;
 
+    // How the image model wants its prompt written. Only ComfyUI varies by
+    // model; it reads the model picked in settings (on Auto, the one the next
+    // generation will queue). Unreachable server = the old tag prompt.
+    const promptGuide = imageProviderId === 'comfyui'
+      ? await comfyuiProvider.getPromptGuide(store).catch((e) => {
+        console.warn('[Main] ComfyUI prompt guide unavailable:', e.message);
+        return null;
+      })
+      : null;
+
     // Build narrative context (shared)
     const narrativeContext = storyId
       ? buildUnifiedContext(storyId, { comprehension: true, memory: true, budget: 2000 })
@@ -1913,7 +1923,7 @@ ipcMain.handle('generate-scene-prompt', async (event, { storyText, entries, artS
           primaryGenerateTextFn: primaryGenFn,
           secondaryGenerateTextFn: secondaryGenFn,
           narrativeContext, rpgData, visualProfiles,
-          forceSequential,
+          forceSequential, promptGuide,
         }),
         LLM_TIMEOUT_MS * 2,
         'Scene prompt pipeline'
@@ -2016,7 +2026,7 @@ Guidelines:
 - Focus on the CURRENT scene, not backstory
 - Describe characters' appearance, poses, expressions
 - Include setting details (location, lighting, atmosphere)
-${sceneFormatGuideline(imageProviderId === 'comfyui' ? comfyuiProvider.getPromptStyle(store) : 'tags')}
+${sceneFormatGuideline(promptGuide?.style || 'tags')}
 ${style
     ? `- MANDATORY style: Include these exact style tags in the prompt: ${style}
 - Do NOT add any other style tags (no "anime style", "detailed", "high quality" unless they appear above)`

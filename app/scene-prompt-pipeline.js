@@ -4,6 +4,7 @@
  * Stage 1a: Scene Analysis (mood, lighting, location, action)
  * Stage 1b: Character Visual Extraction (appearance, clothing, equipment, pose)
  * Stage 2:  Deterministic Assembly (no LLM — template merge)
+ * Stage 3:  Prompt written in the image model's own form (when a promptGuide is given)
  *
  * Stages 1a and 1b run in parallel on separate LLM providers when available.
  */
@@ -383,6 +384,70 @@ function updateVisualProfiles(characterData, existingProfiles) {
   return updated;
 }
 
+// --- Stage 3: Model-Native Prompt ---
+
+/**
+ * Write the final prompt in the form the image model was trained on, straight
+ * from the passage. Tag assembly reads badly to a caption-trained encoder
+ * (Z-Image's Qwen, Flux's T5, SDXL's CLIP-G), and the tag stages only see
+ * characters whose lorebook name appears verbatim, so a scene with unnamed
+ * or unlisted people came out with nobody in it. This stage reads the scene
+ * itself, in tags or prose as the guide says, and uses the extracted data
+ * only for consistent appearances.
+ *
+ * @param {Object} guide - { label, words, text } from the image provider
+ * @returns {Promise<string|null>} the prompt, or null to keep the tag assembly
+ */
+async function writeModelPrompt(generateTextFn, storyText, characterData, visualProfiles, narrativeContext, guide) {
+  const passage = storyText.slice(-2500);
+  const lowerPassage = passage.toLowerCase();
+
+  // Known looks for people in this passage, so a character looks the same
+  // from image to image. Names are given only so the LLM can match them.
+  const looks = [];
+  const seen = new Set();
+  for (const c of characterData?.characters || []) {
+    const parts = [c.appearance, c.clothing, c.equipment, c.injuries].filter(Boolean).join('; ');
+    if (c.name && parts) { looks.push(`${c.name}: ${parts}`); seen.add(c.name.toLowerCase()); }
+  }
+  for (const [name, p] of Object.entries(visualProfiles || {})) {
+    if (!name || seen.has(name.toLowerCase()) || !lowerPassage.includes(name.toLowerCase())) continue;
+    const parts = [p.race, p.build, p.hair, p.eyes, p.distinguishingFeatures, p.currentClothing].filter(Boolean).join('; ');
+    if (parts) looks.push(`${name}: ${parts}`);
+  }
+
+  const systemPrompt = `You write the text prompt for the image model "${guide.label}".
+${guide.text}
+
+Rules:
+- Show the single moment at the END of the passage: who is there, what they are doing right now, where.
+- Describe only what the passage shows or the known appearances state. Do not invent people, props or events.
+- Describe it plainly and accurately, as the passage does. Do not soften, censor or skip anything visible.
+- Never write character names: the image model does not know them. Describe each person by appearance instead.
+- Only visible things: no sounds, thoughts, backstory or feelings that do not show on a face or body.
+- No art style, medium or quality words (no "anime", "illustration", "masterpiece", "highly detailed"); the style is added separately.
+- Length: ${guide.words}.
+- Output ONLY the prompt text. No heading, no quotes, no explanation.`;
+
+  let userContent = `Passage:\n${passage}`;
+  if (looks.length) userContent += `\n\nKnown appearances (keep them consistent, never write the names):\n${looks.join('\n')}`;
+  if (narrativeContext) userContent += `\n\nBackground (for understanding only, do not depict unless it is in the passage):\n${narrativeContext.slice(0, 1500)}`;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userContent },
+  ];
+
+  return retryLLM(async () => {
+    const response = await generateTextFn(messages, { max_tokens: 1500, temperature: 0.4 });
+    let text = String(response?.output || '').trim();
+    text = text.replace(/^```\w*\s*|\s*```$/g, '').replace(/^(image )?prompt\s*:\s*/i, '').trim();
+    text = text.replace(/^["']+|["']+$/g, '').replace(/\s*\n+\s*/g, ' ').trim();
+    if (text.length < 40) return null;
+    return text;
+  }, { passName: 'model-prompt', logPrefix: LOG_PREFIX });
+}
+
 // --- Main Pipeline ---
 
 /**
@@ -398,6 +463,7 @@ function updateVisualProfiles(characterData, existingProfiles) {
  * @param {Object|null} params.rpgData - LitRPG character data
  * @param {Object} params.visualProfiles - Stored visual profiles from DB
  * @param {boolean} params.forceSequential - Force sequential even with 2 providers
+ * @param {Object|null} params.promptGuide - How the image model wants its prompt written ({label, style, words, text}); null = tags
  * @returns {Promise<{success: boolean, prompt?: string, negativePrompt?: string, updatedProfiles?: Object, error?: string}>}
  */
 async function generateScenePromptV2({
@@ -405,8 +471,11 @@ async function generateScenePromptV2({
   primaryGenerateTextFn, secondaryGenerateTextFn,
   narrativeContext, rpgData, visualProfiles,
   forceSequential = false,
+  promptGuide = null,
 }) {
-  console.log(`${LOG_PREFIX} Starting v2 pipeline (parallel=${!!secondaryGenerateTextFn && !forceSequential})`);
+  const writeOwn = !!promptGuide;
+  console.log(`${LOG_PREFIX} Starting v2 pipeline (parallel=${!!secondaryGenerateTextFn && !forceSequential})`
+    + (promptGuide ? ` for ${promptGuide.label} (${promptGuide.style}, ${promptGuide.words})` : ''));
 
   let sceneAnalysis = null;
   let characterData = null;
@@ -417,7 +486,13 @@ async function generateScenePromptV2({
       ? secondaryGenerateTextFn
       : primaryGenerateTextFn;
 
-    if (secondaryGenerateTextFn && !forceSequential) {
+    if (writeOwn) {
+      // Stage 3 reads the scene itself, so the scene analysis would only
+      // cost an LLM call; the heuristic fills the tag fallback below.
+      console.log(`${LOG_PREFIX} Running Stage 1b, then the ${promptGuide.label} prompt`);
+      characterData = await runCharacterExtraction(primaryGenerateTextFn, storyText, entries, rpgData, visualProfiles)
+        .catch(err => { console.warn(`${LOG_PREFIX} Stage 1b failed:`, err.message); return null; });
+    } else if (secondaryGenerateTextFn && !forceSequential) {
       // Parallel execution
       console.log(`${LOG_PREFIX} Running Stage 1a + 1b in parallel`);
       const [sceneResult, charResult] = await Promise.all([
@@ -459,9 +534,18 @@ async function generateScenePromptV2({
 
     // Stage 2: Deterministic assembly
     const assembled = assemblePrompt(sceneAnalysis, characterData, visualProfiles);
-    const prompt = assembled.prompt;
+    let prompt = assembled.prompt;
 
-    if (!assembled.prompt || assembled.prompt.length < 10) {
+    // Stage 3: the image model's own prompt form. On failure the tag
+    // assembly stands, and the provider converts it as it did before.
+    if (writeOwn) {
+      const written = await writeModelPrompt(primaryGenerateTextFn, storyText, characterData, visualProfiles, narrativeContext, promptGuide)
+        .catch(err => { console.warn(`${LOG_PREFIX} Stage 3 failed:`, err.message); return null; });
+      if (written) prompt = written;
+      else console.warn(`${LOG_PREFIX} Stage 3 gave nothing usable, keeping the tag assembly`);
+    }
+
+    if (!prompt || prompt.length < 10) {
       console.warn(`${LOG_PREFIX} Assembly produced insufficient prompt, falling back`);
       return { success: false, error: 'Pipeline produced empty prompt' };
     }
@@ -492,6 +576,7 @@ module.exports = {
   runSceneAnalysis,
   runCharacterExtraction,
   assemblePrompt,
+  writeModelPrompt,
   updateVisualProfiles,
   heuristicSceneAnalysis,
   regexCharacterExtraction,

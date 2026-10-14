@@ -46,6 +46,36 @@ const REQUEST_TIMEOUT_MS = 15000;
 const MAX_SIDE = 2048;
 
 /**
+ * How the scene prompt should be WRITTEN for each kind of text encoder. The
+ * scene pipeline hands `text` to the LLM that writes the final prompt.
+ * `words` is the target length: CLIP-based checkpoints (SDXL, RealVis) read
+ * 75 tokens per chunk and weight the start, while Qwen (Z-Image) and T5
+ * (Flux) encoders were trained on long captions and use every detail.
+ */
+const WRITING_GUIDES = {
+  longCaption: {
+    words: '120-200 words',
+    text: 'This model reads long, detailed natural-language captions. Write one flowing paragraph of plain descriptive sentences. Start with the main subject and the action, then each person (sex, apparent age, build, skin, hair, clothing or lack of it, pose, expression, where they are in the frame and what they are doing to or with whom), then the setting, props, lighting and camera framing. Be concrete and literal; every detail you write will be drawn.',
+  },
+  mediumCaption: {
+    words: '80-150 words',
+    text: 'This model reads natural-language captions. Write a few plain descriptive sentences: main subject and action first, then each person (sex, apparent age, hair, clothing, pose, expression, position in the frame), then setting, lighting and camera framing. Be concrete and literal.',
+  },
+  shortCaption: {
+    words: '40-70 words',
+    text: 'This model reads only the first ~75 tokens closely. Write 2-4 short, dense descriptive sentences with the most important visual facts first: who is in the shot, what they look like and what they are doing, then the setting and lighting. No filler words.',
+  },
+  photoCaption: {
+    words: '40-70 words',
+    text: 'This is a photorealistic model that reads only the first ~75 tokens closely. Write 2-4 short, dense sentences describing the scene as a photograph: who is in the shot, their appearance, clothing, pose and expression, then the setting, lighting and camera framing (shot type, angle). Most important facts first.',
+  },
+  tags: {
+    words: '25-45 tags',
+    text: "This model was trained on booru tags. Write comma-separated tags: count tags (1girl, 2boys) first, then each person's appearance, clothing, pose and expression, then setting, lighting and framing.",
+  },
+};
+
+/**
  * How each checkpoint family wants to be prompted, matched on the filename.
  *
  * `style` picks the prompt form: 'tags' is the comma-separated booru list
@@ -64,6 +94,7 @@ const CHECKPOINT_PROFILES = [
     prefix: 'score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up',
     negative: 'score_6, score_5, score_4',
     clipSkip: -2,
+    writer: 'tags',
   },
   {
     match: /realvis/i,
@@ -71,6 +102,7 @@ const CHECKPOINT_PROFILES = [
     prefix: '',
     negative: 'face asymmetry, eyes asymmetry, deformed eyes, lowres, blurry',
     clipSkip: null,
+    writer: 'photoCaption',
   },
   {
     match: /sd_?xl_base|sdxl[_-]?base/i,
@@ -78,12 +110,13 @@ const CHECKPOINT_PROFILES = [
     prefix: '',
     negative: '',
     clipSkip: null,
+    writer: 'shortCaption',
   },
 ];
 
-const DEFAULT_PROFILE = { style: 'tags', prefix: '', negative: '', clipSkip: null };
+const DEFAULT_PROFILE = { style: 'tags', prefix: '', negative: '', clipSkip: null, writer: 'tags' };
 // Distilled diffusion models: caption-trained encoders, and no negative.
-const DIFFUSION_PROFILE = { style: 'prose', prefix: '', negative: '', clipSkip: null };
+const DIFFUSION_PROFILE = { style: 'prose', prefix: '', negative: '', clipSkip: null, writer: 'mediumCaption' };
 
 // Stored model ids for bare diffusion models carry this prefix, so they can
 // never be confused with a checkpoint of the same filename. A colon cannot
@@ -115,6 +148,7 @@ const DIFFUSION_FAMILIES = [
     steps: 4,
     sampler: 'euler',
     scheduler: 'simple',
+    writer: 'mediumCaption',
   },
   {
     id: 'z-image-turbo',
@@ -126,6 +160,7 @@ const DIFFUSION_FAMILIES = [
     steps: 9,
     sampler: 'res_multistep',
     scheduler: 'simple',
+    writer: 'longCaption',
   },
 ];
 
@@ -148,7 +183,10 @@ function getApiUrl(store) {
 
 /** The built-in profile for a model id, before the user's own additions. */
 function builtInProfile(modelId) {
-  if (isDiffusionId(modelId)) return DIFFUSION_PROFILE;
+  if (isDiffusionId(modelId)) {
+    const family = familyFor(modelId.slice(DIFFUSION_PREFIX.length));
+    return family?.writer ? { ...DIFFUSION_PROFILE, writer: family.writer } : DIFFUSION_PROFILE;
+  }
   return CHECKPOINT_PROFILES.find((p) => p.match.test(basename(modelId || ''))) || DEFAULT_PROFILE;
 }
 
@@ -177,7 +215,12 @@ function profileFor(modelId, settingsId, store) {
  */
 function promptBody(prompt, style, options) {
   if (style !== 'prose') return prompt;
-  if (options.charCaptions?.length || options.baseCaption) {
+  // Rebuild from the captions only when the prompt IS their tag assembly. A
+  // prompt the pipeline wrote for this model, or one the user edited, would
+  // otherwise be thrown away.
+  const assembled = [options.baseCaption, ...(options.charCaptions || []).map((c) => c.char_caption)]
+    .filter(Boolean).join(', ');
+  if (assembled && String(prompt || '').trim() === assembled.trim()) {
     const prose = buildProsePrompt({ baseCaption: options.baseCaption, charCaptions: options.charCaptions });
     if (prose) return prose;
   }
@@ -186,6 +229,27 @@ function promptBody(prompt, style, options) {
 
 // The model the last generation ran on, for gallery and history metadata.
 let lastModelId = '';
+
+/**
+ * The model the next generation will run: the one picked in settings, or on
+ * Auto the first installed checkpoint. Prompt writing and generate() both
+ * use this, so the prompt is always written for the model that runs.
+ */
+async function resolveCheckpoint(store) {
+  const settingsId = store.get('comfyuiCheckpoint') || '';
+  if (settingsId) return settingsId;
+  const baseUrl = getApiUrl(store);
+  let installed;
+  try {
+    installed = await nodeOptions(baseUrl, 'CheckpointLoaderSimple', 'ckpt_name');
+  } catch (e) {
+    throw unreachable(baseUrl, e);
+  }
+  if (!installed.length) {
+    throw new Error('ComfyUI has no checkpoints installed (models/checkpoints is empty)');
+  }
+  return installed[0];
+}
 
 /**
  * Latent sizes must be a multiple of the latent node's step, or the graph is
@@ -486,12 +550,19 @@ module.exports = {
   },
 
   /**
-   * 'prose' or 'tags' for the model the next generation will most likely
-   * use: the saved choice, or on Auto the model the last run resolved to.
+   * How to write the scene prompt for the model the next generation runs:
+   * { modelId, label, style: 'tags'|'prose', words, text }. The user's saved
+   * style for the model wins, as it does at generation time.
    */
-  getPromptStyle(store) {
+  async getPromptGuide(store) {
     const settingsId = store.get('comfyuiCheckpoint') || '';
-    return profileFor(settingsId || lastModelId, settingsId, store).style;
+    const modelId = await resolveCheckpoint(store);
+    const profile = profileFor(modelId, settingsId, store);
+    let writer = profile.writer || 'tags';
+    // A saved style that disagrees with the built-in one picks a matching guide.
+    if (profile.style === 'tags') writer = 'tags';
+    else if (writer === 'tags') writer = 'mediumCaption';
+    return { modelId, label: checkpointLabel(modelId), style: profile.style, ...WRITING_GUIDES[writer] };
   },
 
   /** Display name of the model the last generation ran on. */
@@ -545,19 +616,7 @@ module.exports = {
     const artStyle = ART_STYLES[store.get('comfyuiArtStyle') || 'no-style'] || ART_STYLES['no-style'];
 
     const settingsId = store.get('comfyuiCheckpoint') || '';
-    let checkpoint = settingsId;
-    if (!checkpoint) {
-      let installed;
-      try {
-        installed = await nodeOptions(baseUrl, 'CheckpointLoaderSimple', 'ckpt_name');
-      } catch (e) {
-        throw unreachable(baseUrl, e);
-      }
-      if (!installed.length) {
-        throw new Error('ComfyUI has no checkpoints installed (models/checkpoints is empty)');
-      }
-      checkpoint = installed[0];
-    }
+    const checkpoint = await resolveCheckpoint(store);
 
     const seed = (options.seed !== undefined && options.seed !== null)
       ? Number(options.seed)
