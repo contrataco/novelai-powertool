@@ -12,6 +12,8 @@ import { showToast } from './utils.js';
 let _storyImages = [];
 let _syncToWebview = null;
 let _lastUsedLayout = 'break';
+// When the user last typed in the editor (real keystrokes only).
+let _lastTypedAt = 0;
 
 /**
  * Strip all <figure data-image-id> elements from the editor.
@@ -184,7 +186,43 @@ export async function autoPlaceImage(imageId, dataUrl) {
   _storyImages.push(record);
 
   const fig = await _createFigure(record, dataUrl);
-  if (fig) _insertAtParagraph(editor, fig, paragraphIndex);
+  if (!fig) return;
+  _insertAtParagraph(editor, fig, paragraphIndex);
+  // Not during a story generation: its text is streaming into the end.
+  if (state.isWaitingForGeneration) return;
+  const line = _ensureLineAfter(fig);
+  if (!line) return;
+  // Someone typing when the image lands keeps their caret: moving it would
+  // split what they are writing across the image.
+  if (document.activeElement === editor && Date.now() - _lastTypedAt > 2000) _caretInto(line);
+  _announceEdit(editor);
+}
+
+/**
+ * An image that ends the story gets an empty line after it. Without one,
+ * the caret can only be above the image, so typing and Enter "after" it
+ * went above it. Returns the new paragraph, or null when text follows.
+ */
+function _ensureLineAfter(fig) {
+  if (fig.nextElementSibling) return null;
+  const p = document.createElement('p');
+  p.appendChild(document.createElement('br'));
+  fig.after(p);
+  return p;
+}
+
+function _caretInto(p) {
+  const range = document.createRange();
+  range.setStart(p, 0);
+  range.collapse(true);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+/** The new line is story text: send it through the normal typing path. */
+function _announceEdit(editor) {
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function _getCurrentParagraphIndex(editor) {
@@ -211,6 +249,22 @@ export function init({ syncToWebview }) {
 
   // Reset on story change
   bus.on('story:changed', () => { _storyImages = []; });
+
+  const editor = refs.storyEditor;
+  if (!editor) return;
+  editor.addEventListener('input', (e) => { if (e.isTrusted) _lastTypedAt = Date.now(); });
+  // A click below an image that ends the story (one placed before images
+  // got a line after them) opens a line there to type on.
+  editor.addEventListener('click', (e) => {
+    if (e.target !== editor) return;
+    const last = editor.lastElementChild;
+    if (!last || !last.matches('figure[data-image-id]')) return;
+    if (e.clientY <= last.getBoundingClientRect().bottom) return;
+    const line = _ensureLineAfter(last);
+    if (!line) return;
+    _caretInto(line);
+    _announceEdit(editor);
+  });
 }
 
 // --- Hover Toolbar ---
