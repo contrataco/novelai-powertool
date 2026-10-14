@@ -2,12 +2,14 @@
  * Prompt text for ComfyUI models, built from what the scene pipeline hands
  * over. Pure functions - no store, no network - so they can be checked alone.
  *
- * The scene pipeline writes NovelAI-style booru tags: count tags (1girl,
- * 2boys), scene tags in baseCaption, and one tag list per character in
- * charCaptions with a horizontal position. Tag-trained checkpoints (Pony)
- * take that as-is. Models whose text encoder was trained on captions
- * (Z-Image's Qwen encoder, Flux's T5, SDXL base, RealVisXL) do better with
- * sentences, so 'prose' rewrites the same data without another LLM call.
+ * For ComfyUI the scene pipeline normally writes the prompt in the model's
+ * own form (getPromptGuide in comfyui.js), and that text is used as is. Its
+ * fallback is NovelAI-style booru tags: count tags (1girl, 2boys), scene
+ * tags in baseCaption, and one tag list per character in charCaptions with a
+ * horizontal position. Tag-trained checkpoints (Pony) take that as-is.
+ * Models whose text encoder was trained on captions (Z-Image's Qwen encoder,
+ * Flux's T5, SDXL base, RealVisXL) do better with sentences, so for them
+ * 'prose' rewrites that tag fallback without another LLM call.
  */
 
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
