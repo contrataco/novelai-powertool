@@ -122,23 +122,87 @@ function setGenerateButtonBusy(busy) {
   btn.textContent = busy ? 'Generating...' : 'Generate';
 }
 
+// Animated dots at the end of the story while a generation starts. They live
+// in an overlay on #editorContainer, never inside the editor: a "..." element
+// in the editor was read as a paragraph of story text and pushed to NovelAI
+// just before the generation, so every generation began with "...".
+let dotsTeardown = null;
+
 function showGenerationIndicator() {
   setGenerateButtonBusy(true);
-  if (!storyEditor) return;
-  if (document.getElementById('ai-typing-indicator')) return;
+  const container = refs.editorContainer;
+  if (!storyEditor || !container || dotsTeardown) return;
 
-  const indicator = document.createElement('span');
-  indicator.id = 'ai-typing-indicator';
-  indicator.className = 'ai-typing-indicator';
-  indicator.textContent = '...';
-  storyEditor.appendChild(indicator);
-  indicator.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  const dots = document.createElement('div');
+  dots.id = 'ai-typing-indicator';
+  dots.className = 'ai-typing-indicator';
+  dots.setAttribute('aria-hidden', 'true');
+  for (let i = 0; i < 3; i++) dots.appendChild(document.createElement('span'));
+  container.appendChild(dots);
+
+  const place = () => {
+    const box = container.getBoundingClientRect();
+    const view = storyEditor.getBoundingClientRect();
+    const end = endOfStoryRect();
+    if (!end || end.bottom < view.top || end.top > view.bottom) { dots.style.visibility = 'hidden'; return; }
+    dots.style.visibility = '';
+    dots.style.left = `${Math.round(end.right - box.left + 6)}px`;
+    dots.style.top = `${Math.round(end.top - box.top + (end.height - dots.offsetHeight) / 2)}px`;
+  };
+
+  // Gone the moment generated text shows up in the editor.
+  const before = editorText(storyEditor);
+  const observer = new MutationObserver(() => {
+    if (editorText(storyEditor) !== before) hideDots();
+    else place();
+  });
+  observer.observe(storyEditor, { childList: true, subtree: true, characterData: true });
+  storyEditor.addEventListener('scroll', place);
+  window.addEventListener('resize', place);
+  dotsTeardown = () => {
+    observer.disconnect();
+    storyEditor.removeEventListener('scroll', place);
+    window.removeEventListener('resize', place);
+    dots.remove();
+  };
+
+  place();
+  if (dots.style.visibility === 'hidden') {
+    storyEditor.scrollTo({ top: storyEditor.scrollHeight, behavior: 'smooth' });
+  }
+}
+
+/** Where the story's text ends on screen (images after it are skipped). */
+function endOfStoryRect() {
+  let block = storyEditor.lastElementChild;
+  while (block && block.matches('figure[data-image-id]')) block = block.previousElementSibling;
+  if (!block) return null;
+  // The last character's box: a collapsed range at the end of a paragraph
+  // has no rects in Chromium.
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let last = null;
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.textContent.length) last = n;
+  if (last) {
+    const range = document.createRange();
+    range.setStart(last, last.textContent.length - 1);
+    range.setEnd(last, last.textContent.length);
+    const rects = range.getClientRects();
+    if (rects.length) return rects[rects.length - 1];
+  }
+  // An empty paragraph has no text to measure: use its first line.
+  const r = block.getBoundingClientRect();
+  const line = parseFloat(getComputedStyle(block).lineHeight) || 24;
+  const pad = parseFloat(getComputedStyle(block).paddingLeft) || 0;
+  return { left: r.left + pad, right: r.left + pad, top: r.top, bottom: r.top + line, height: line };
+}
+
+function hideDots() {
+  if (dotsTeardown) { dotsTeardown(); dotsTeardown = null; }
 }
 
 export function hideGenerationIndicator() {
   setGenerateButtonBusy(false);
-  const indicator = document.getElementById('ai-typing-indicator');
-  if (indicator) indicator.remove();
+  hideDots();
 }
 
 // --- Undo / Redo ---
